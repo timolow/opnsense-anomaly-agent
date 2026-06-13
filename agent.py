@@ -792,6 +792,11 @@ class DiscordBot:
         self.running = False
         self._shutdown = Event()
         self.notifier = None
+        # Deduplication: cache of (type, src_ip, dport) -> last_alert_timestamp
+        # Alerts with the same signature are suppressed for ALERT_COOLDOWN_SECONDS
+        from datetime import datetime, timedelta
+        self._alert_cache: dict[tuple[str, str, int], datetime] = {}
+        self._alert_cooldown = timedelta(minutes=5)
 
     def send_alert(self, anomaly):
         """Send an anomaly alert to Discord channel."""
@@ -802,6 +807,27 @@ class DiscordBot:
         atype = anomaly["type"]
         details = anomaly["details"]
         event = anomaly.get("event", {})
+
+        # --- Alert Deduplication ---
+        src_ip = event.get("src_ip", "") or ""
+        dport = event.get("dport", 0) or 0
+        alert_sig = (atype, src_ip, dport)
+        now = datetime.now()
+        if alert_sig in self._alert_cache:
+            last_alert = self._alert_cache[alert_sig]
+            if now - last_alert < self._alert_cooldown:
+                logger.debug(
+                    f"Dedup: suppressing {atype} from {src_ip}:{dport} "
+                    f"(last alert {int((now - last_alert).total_seconds())}s ago)"
+                )
+                return
+        self._alert_cache[alert_sig] = now
+
+        # Clean up cache entries older than 1 hour to prevent unbounded growth
+        cutoff = now - timedelta(hours=1)
+        self._alert_cache = {
+            k: v for k, v in self._alert_cache.items() if v > cutoff
+        }
 
         embed = {
             "title": f"[{severity}] {atype}",

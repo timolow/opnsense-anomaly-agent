@@ -52,31 +52,31 @@ services:
     # This gives the agent direct access to bind on port 1514
     network_mode: host
 
-  vllm:
-    # Optional: vLLM inference server for LLM-based anomaly analysis
-    # Uncomment and configure if you want to run vLLM locally
-    # Requires GPU with at least 40GB VRAM for 35B models
-    image: vllm/vllm-openai:latest
-    container_name: anomaly-vllm
-    restart: unless-stopped
-    environment:
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
-    volumes:
-      - vllm-cache:/root/.cache/huggingface
-    ports:
-      - "8000:8000"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    command: >
-      --model ${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
-      --max-model-len 4096
-      --tensor-parallel-size 1
-      --max-num-seqs 8
+  # vllm:
+  #   # Optional: vLLM inference server for LLM-based anomaly analysis
+  #   # Uncomment and configure if you want to run vLLM locally
+  #   # Requires GPU with at least 40GB VRAM for 35B models
+  #   image: vllm/vllm-openai:latest
+  #   container_name: anomaly-vllm
+  #   restart: unless-stopped
+  #   environment:
+  #     - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+  #   volumes:
+  #     - vllm-cache:/root/.cache/huggingface
+  #   ports:
+  #     - "8000:8000"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   command: >
+  #     --model ${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
+  #     --max-model-len 4096
+  #     --tensor-parallel-size 1
+  #     --max-num-seqs 8
 
-volumes:
-  vllm-cache:
+# volumes:
+#   vllm-cache:
