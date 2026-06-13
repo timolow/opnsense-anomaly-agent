@@ -172,6 +172,10 @@ def parse_syslog_line(line):
                 except (ValueError, IndexError):
                     pass
         
+        # Only return event if we actually parsed a filterlog entry
+        if event["src_ip"] is None and event["dst_ip"] is None and event["proto"] is None:
+            return None
+        
         return event
     except Exception as e:
         logger.warning(f"Error parsing syslog line: {e}")
