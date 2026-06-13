@@ -417,6 +417,17 @@ class JSONLReader:
                 return events
             self._file_size = current_size
 
+            # Clamp marker to actual file line count - handle truncated/rotated files
+            with open(self.config.jsonl_path, 'r') as f:
+                actual_line_count = sum(1 for _ in f)
+            if self.last_line > actual_line_count:
+                logger.info(
+                    f"JSONL file was truncated/rotated: marker {self.last_line} "
+                    f"exceeds actual lines {actual_line_count}, resetting to 0"
+                )
+                self.last_line = 0
+                self._save_marker()
+
             with open(self.config.jsonl_path, 'r') as f:
                 skip_count = self.last_line
                 for i in range(skip_count):
