@@ -808,6 +808,9 @@ class DiscordBot:
         from datetime import datetime, timedelta
         self._alert_cache: dict[tuple[str, str, int], datetime] = {}
         self._alert_cooldown = timedelta(minutes=5)
+        # Global rate limiter: max 1 alert per 60 seconds to prevent Discord 429
+        self._last_global_alert: datetime | None = None
+        self._global_alert_interval = 60  # seconds
 
     def send_alert(self, anomaly):
         """Send an anomaly alert to Discord channel."""
@@ -824,6 +827,17 @@ class DiscordBot:
         dport = event.get("dport", 0) or 0
         alert_sig = (atype, src_ip, dport)
         now = datetime.now()
+        
+        # Global rate limiter: max 1 alert per 60 seconds to prevent Discord 429
+        if self._last_global_alert is not None:
+            elapsed = (now - self._last_global_alert).total_seconds()
+            if elapsed < self._global_alert_interval:
+                logger.debug(
+                    f"Rate limit: suppressing {atype} (only {elapsed:.0f}s since last alert)"
+                )
+                return
+        
+        # Per-sig dedup: suppress repeated alerts for same type+src_ip+dport within 5 min
         if alert_sig in self._alert_cache:
             last_alert = self._alert_cache[alert_sig]
             if now - last_alert < self._alert_cooldown:
@@ -833,6 +847,7 @@ class DiscordBot:
                 )
                 return
         self._alert_cache[alert_sig] = now
+        self._last_global_alert = now
 
         # Clean up cache entries older than 1 hour to prevent unbounded growth
         cutoff = now - timedelta(hours=1)
