@@ -1,0 +1,51 @@
+{
+  "opnsense": {
+    "host": "192.168.1.1",
+    "api_key": "your_api_key_here",
+    "api_secret": "your_api_secret_here",
+    "port": 6666,
+    "verify_ssl": false,
+    "event_stream_url": "/api/core/filterlog",
+    "api_endpoint": "/api/core/filterlog"
+  },
+  "learning": {
+    "short_term_window": 60,
+    "medium_term_window": 1440,
+    "long_term_window": 10080,
+    "anomaly_threshold": 0.75,
+    "confirmation_threshold": 0.85,
+    "learning_rate": 0.01,
+    "decay_factor": 0.95,
+    "min_samples_for_pattern": 10,
+    "pattern_cooldown_minutes": 15
+  },
+  "anomaly": {
+    "max_events_per_window": 10000,
+    "rate_threshold_per_minute": 100,
+    "port_scan_threshold": 10,
+    "failed_connection_threshold": 20,
+    "detect_port_scans": true,
+    "detect_brute_force": true,
+    "detect_ddos": true,
+    "detect_data_exfiltration": true,
+    "detect_unusual_hours": true,
+    "detect_new_services": true
+  },
+  "notification": {
+    "method": "console",
+    "console_output": true,
+    "log_file": "anomaly_log.jsonl",
+    "quiet_hours_start": null,
+    "quiet_hours_end": null
+  },
+  "discord": {
+    "bot_token": "your_discord_bot_token_here",
+    "channel_id": "your_channel_id_here",
+    "enable": true,
+    "respond_in_any_channel": true
+  },
+  "name": "OPNsense Anomaly Agent",
+  "data_dir": "./agent_data",
+  "verbose": true,
+  "save_interval_minutes": 5
+}

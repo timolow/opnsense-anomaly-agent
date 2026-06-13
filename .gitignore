@@ -1,0 +1,17 @@
+# Runtime data
+agent_data/
+agent_output.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Secrets (keep local)
+.env
+config.json
