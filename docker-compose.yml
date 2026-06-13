@@ -1,0 +1,82 @@
+# OPNsense Anomaly Detection Agent
+# docker-compose up -d
+#
+# Usage:
+#   cp .env.example .env       # then edit with your values
+#   docker-compose up -d
+#
+# Services:
+#   agent   - Anomaly detection agent (read JSONL or built-in UDP syslog)
+#   vllm    - Optional vLLM inference server (GPU required)
+#
+# Modes:
+#   SYSLOG_ENABLED=false (default) - agent reads events from JSONL file
+#     (written by an external syslog_listener.py on host or other service)
+#   SYSLOG_ENABLED=true           - agent runs built-in UDP listener on
+#     port 1514, parses syslog, writes to JSONL, feeds detection pipeline
+
+version: "3.8"
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: anomaly-agent
+    restart: unless-stopped
+    environment:
+      # OPNsense API (used for status lookups, not event polling)
+      - OPN_HOST=${OPN_HOST:-192.168.1.1}
+      - OPN_PORT=${OPN_PORT:-6666}
+      - OPN_API_KEY=${OPN_API_KEY:-}
+      - OPN_API_SECRET=${OPN_API_SECRET:-}
+      - OPN_VERIFY_SSL=${OPN_VERIFY_SSL:-false}
+      # Discord bot
+      - DISCORD_TOKEN=${DISCORD_TOKEN:-}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID:-}
+      # Chat command HTTP server
+      - CHAT_PORT=${CHAT_PORT:-8765}
+      # Syslog listener (built-in UDP)
+      - SYSLOG_ENABLED=${SYSLOG_ENABLED:-false}
+      - SYSLOG_UDP_PORT=${SYSLOG_UDP_PORT:-1514}
+      # vLLM inference server (optional, for future LLM-based analysis)
+      - VLLM_BASE_URL=${VLLM_BASE_URL:-}
+      - VLLM_MODEL=${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
+    volumes:
+      # Persist learned patterns and event files across restarts
+      - ./agent_data:/app/agent_data
+    ports:
+      # Chat command HTTP endpoint
+      - "${CHAT_PORT:-8765}:8765/tcp"
+    # Use host networking for syslog UDP receive when SYSLOG_ENABLED=true
+    # This gives the agent direct access to bind on port 1514
+    network_mode: host
+
+  vllm:
+    # Optional: vLLM inference server for LLM-based anomaly analysis
+    # Uncomment and configure if you want to run vLLM locally
+    # Requires GPU with at least 40GB VRAM for 35B models
+    image: vllm/vllm-openai:latest
+    container_name: anomaly-vllm
+    restart: unless-stopped
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      --model ${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
+      --max-model-len 4096
+      --tensor-parallel-size 1
+      --max-num-seqs 8
+
+volumes:
+  vllm-cache:
