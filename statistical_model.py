@@ -332,3 +332,12 @@ class StatisticalModel:
             'unique_ports': len(self._ports_per_min.get(self._bucket_key(datetime.now(timezone.utc)), set())),
             'country_events': 0,  # placeholder until geo lookup is active
         }
+
+    def learn(self, events: List[Dict[str, Any]]):
+        """Learn from a batch of events (agent.py compatibility method).
+
+        Args:
+            events: List of parsed syslog events to record for baseline learning.
+        """
+        for event in events:
+            self.record_event(event)
