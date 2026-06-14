@@ -479,7 +479,7 @@ class DiscordBot:
     def _get_webhook_url(self):
         """Construct webhook URL from token and channel_id."""
         if self.config.discord_token and self.config.discord_channel_id:
-            return f"https://discord.com/api/webhooks/placeholder/{self.config.discord_token}"
+            return f"https://discord.com/api/webhooks/{self.config.discord_channel_id}/{self.config.discord_token}"
         return ""
     
     def send_alert(self, attack, llm_analysis=None):
