@@ -103,13 +103,14 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
     
     if attack_type == 'PORT_SCAN':
         title = "Port Scan Detected"
+        port_list = detail.get('port_list', [])
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
             {'name': 'Scanner', 'value': attack.get('src_ip', 'N/A'), 'inline': True},
-            {'name': 'Scan Type', 'value': detail.get('scan_type', 'unknown'), 'inline': True},
-            {'name': 'Ports Scanned', 'value': str(len(detail.get('ports', []))), 'inline': True},
-            {'name': 'Scanned Ports', 'value': ', '.join(str(p) for p in detail.get('ports', [])[:10]) or 'N/A', 'inline': False},
+            {'name': 'Scan Type', 'value': detail.get('scan_subtype', detail.get('scan_type', 'unknown')), 'inline': True},
+            {'name': 'Ports Scanned', 'value': str(len(port_list)), 'inline': True},
+            {'name': 'Scanned Ports', 'value': ', '.join(str(p) for p in port_list[:10]) or 'N/A', 'inline': False},
             {'name': 'Protocol', 'value': attack.get('proto', 'N/A'), 'inline': True},
         ]
     elif attack_type == 'SYN_FLOOD':
@@ -129,18 +130,25 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
             {'name': 'Attacker', 'value': attack.get('src_ip', 'N/A'), 'inline': True},
-            {'name': 'Service', 'value': f"Port {attack.get('dport', 'N/A')}", 'inline': True},
-            {'name': 'Attempts', 'value': str(detail.get('attempts', 0)), 'inline': True},
+            {'name': 'Service', 'value': f"Port {attack.get('dst_port', 'N/A')}", 'inline': True},
+            {'name': 'Attempts', 'value': str(detail.get('attempt_count', 0)), 'inline': True},
             {'name': 'Window', 'value': f"{detail.get('window_seconds', 0)}s", 'inline': True},
         ]
     elif attack_type == 'PROBE':
         title = "Network Probe"
+        # Build a human-readable signature from detail
+        if 'flags' in detail:
+            sig = detail['flags']
+        elif 'icmp_count' in detail:
+            sig = f"ICMP flood ({detail['icmp_count']} packets)"
+        else:
+            sig = 'N/A'
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
             {'name': 'Prober', 'value': attack.get('src_ip', 'N/A'), 'inline': True},
-            {'name': 'Probe Type', 'value': detail.get('probe_type', 'unknown'), 'inline': True},
-            {'name': 'Signature', 'value': detail.get('signature', 'N/A')[:50] or 'N/A', 'inline': False},
+            {'name': 'Probe Type', 'value': detail.get('scan_subtype', 'unknown'), 'inline': True},
+            {'name': 'Signature', 'value': sig[:50] or 'N/A', 'inline': False},
             {'name': 'Protocol', 'value': attack.get('proto', 'N/A'), 'inline': True},
         ]
     elif attack_type == 'SCAN':
