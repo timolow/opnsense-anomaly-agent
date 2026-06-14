@@ -52,6 +52,7 @@ from statistical_model import StatisticalModel
 from geo_lookup import GeoLookup
 from discord_bot import DiscordBot
 from syslog_listener import SyslogListener
+from reverse_dns import ReverseDNSResolver
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -106,6 +107,10 @@ class Config:
         self.geo_anomaly_threshold = int(os.getenv("GEO_ANOMALY_THRESHOLD", "10"))
         # Dedup
         self.dedup_seconds = int(os.getenv("DEDUP_SECONDS", "300"))
+        # Reverse DNS
+        self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "false").lower() == "true"
+        self.reverse_dns_server = os.getenv("REVERSE_DNS_SERVER", "192.168.1.1")
+        self.reverse_dns_cache_ttl = int(os.getenv("REVERSE_DNS_CACHE_TTL", "3600"))
         # Polling
         self.poll_interval = int(os.getenv("POLL_INTERVAL", "2"))
         self.batch_size = int(os.getenv("BATCH_SIZE", "50"))
@@ -323,6 +328,13 @@ class OPNsenseAgent:
 
         # Adaptive parser instance
         self.adaptive_parser = AdaptiveParser()
+        
+        # Reverse DNS resolver
+        self.reverse_dns = ReverseDNSResolver(
+            dns_server=self.config.reverse_dns_server,
+            enabled=self.config.reverse_dns_enabled,
+            cache_ttl=self.config.reverse_dns_cache_ttl,
+        )
 
         # Counters
         self.event_count = 0
@@ -346,6 +358,15 @@ class OPNsenseAgent:
     def _process_event(self, event: dict):
         """Single-event pipeline: store → stat model → attack detectors → geo → alert."""
         event["processed_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Reverse DNS lookup (before storing/enriching)
+        if self.reverse_dns.enabled:
+            for field in ("src_ip", "dst_ip"):
+                ip = event.get(field)
+                if ip:
+                    hostname = self.reverse_dns.lookup(ip)
+                    if hostname:
+                        event[f"{field}_hostname"] = hostname
 
         # Store
         self.db.insert_event(event)
@@ -398,9 +419,11 @@ class OPNsenseAgent:
         uptime = int(time.time() - self.start_time)
         mode = "syslog" if self.config.syslog_enabled else "direct"
         stats = self.stat_model.get_stats()
+        dns_stats = self.reverse_dns.get_stats() if self.reverse_dns.enabled else None
         logger.info(
             "Status: %s events, %s anomalies, uptime: %ds | mode: %s | "
-            "unique_ips: %s | ports_tracked: %s | country_events: %s",
+            "unique_ips: %s | ports_tracked: %s | country_events: %s"
+            + (f" | reverse_dns: resolves={dns_stats['resolve_count']} misses={dns_stats['miss_count']}" if dns_stats else ""),
             self.event_count,
             self.anomaly_count,
             uptime,

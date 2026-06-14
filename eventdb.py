@@ -96,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_anomalies_severity ON anomalies(severity);
 CREATE INDEX IF NOT EXISTS idx_anomalies_created_at ON anomalies(created_at);
 CREATE INDEX IF NOT EXISTS idx_anomalies_alert_sent ON anomalies(alert_sent);
 CREATE INDEX IF NOT EXISTS idx_baselines_metric ON baselines(metric, time_window);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_baselines_metric_window ON baselines(metric, time_window);
 CREATE INDEX IF NOT EXISTS idx_anomalies_src_ip ON anomalies(src_ip) WHERE src_ip IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_anomalies_timestamp ON anomalies(timestamp);
 """
