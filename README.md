@@ -1,6 +1,6 @@
 # OPNsense Anomaly Detection Agent
 
-A lightweight anomaly detection agent that monitors OPNsense firewall logs via UDP syslog, learns normal traffic patterns, and sends Discord alerts for suspicious activity.
+A lightweight anomaly detection agent that monitors OPNsense firewall logs, learns normal traffic patterns, and sends Discord alerts for suspicious activity.
 
 ## Architecture
 
@@ -9,31 +9,33 @@ OPNsense Firewall
        |
        | (UDP syslog on port 1514)
        v
-┌─────────────────┐
-│ syslog_listener │ ← Runs on host machine
-│    (Python)     │    Parses filterlog CSV, writes JSONL
-└────────┬────────┘
+┌─────────────────────────┐
+│ syslog_listener         │ ← Standalone script OR built-in to Docker
+│                         │    Parses filterlog CSV, writes JSONL
+└────────┬────────────────┘
          |
          | (syslog_events.jsonl)
          v
-┌─────────────────┐
-│  anomaly agent  │ ← Runs in Docker
-│    (Python)     │    Detects anomalies, sends alerts
-└────────┬────────┘
+┌─────────────────────────┐
+│ anomaly agent (Docker)  │    Detects anomalies, sends alerts
+│                         │    Responds to chat commands
+└────────┬────────────────┘
          |
          | (Discord API)
          v
-┌─────────────────┐
-│    Discord      │    Alerts + chat commands
-└─────────────────┘
+┌─────────────────────────┐
+│    Discord              │    Alerts + chat commands
+└─────────────────────────┘
 ```
 
-### Two Components
+### Syslog Listener — Two Modes
 
-| Component | Where | What |
+| Mode | How | When |
 |---|---|---|
-| `syslog_listener.py` | Host machine | Listens for UDP syslog on port 1514, parses OPNsense filterlog CSV, writes events to `agent_data/syslog_events.jsonl` |
-| `agent.py` | Docker container | Reads JSONL events, applies ML-based anomaly detection, sends Discord alerts and responds to chat commands |
+| **Standalone** | Run `python3 syslog_listener.py` on any machine | When you want to decouple log collection from detection |
+| **Built-in** | Included in the Docker container (no separate process) | When you want a single container for everything |
+
+When using **standalone mode**, the JSONL file must be shared with the Docker agent via volume mount or shared directory.
 
 ### Detection Capabilities
 
@@ -42,6 +44,7 @@ OPNsense Firewall
 - **High event rates** — Unusually high volume of firewall events from a single source
 - **Port scans** — Single source connecting to many different destinations
 - **Data exfiltration indicators** — Outbound connections to unusual destinations
+- **Brute force detection** — Repeated auth-related actions from the same source
 
 ## Quick Start
 
@@ -58,8 +61,6 @@ cp .env.example .env
 
 ### 2. Configure Secrets
 
-**Option A: Environment variables (recommended for Docker)**
-
 Edit `.env` with your credentials:
 
 ```bash
@@ -70,24 +71,42 @@ OPN_API_SECRET=your_api_secret_here
 DISCORD_TOKEN=your_discord_bot_token_here
 DISCORD_CHANNEL_ID=your_channel_id_here
 CHAT_PORT=8765
+SYSLOG_UDP_PORT=1514
 ```
-
-**Option B: config.json** (for local runs and Discord fallback)
-
-Edit `config.json` — replace placeholder values. Note: this file is gitignored, so secrets never get committed.
 
 ### 3. Configure OPNsense to Send Syslog
 
 On your OPNsense firewall, configure syslog output:
 
 1. **System > Settings > Log Settings > Log Targets** — Add a new target
-2. **Remote Log Host**: Your Mac's IP address
+2. **Remote Log Host**: Your machine's IP address (where syslog listener will run)
 3. **Protocol**: UDP
-4. **Port**: 1514
+4. **Port**: 1514 (or the port you set in `SYSLOG_UDP_PORT`)
 5. **Log Level**: Select at minimum `Filterlog`
 6. Save and apply
 
-### 4. Run the Syslog Listener (Host)
+---
+
+### Option A: Single Container (Recommended)
+
+Everything runs in one Docker Compose setup. The agent embeds the syslog listener internally.
+
+```bash
+# Start everything
+sudo docker compose up -d
+```
+
+This starts:
+- PostgreSQL for persistent event storage
+- The anomaly agent (which includes the built-in syslog listener on UDP port 1514)
+
+No separate syslog listener process needed.
+
+### Option B: Standalone Syslog Listener + Docker Agent
+
+Run the syslog listener as a standalone script and feed events to the Docker agent via shared JSONL file.
+
+**1. Run the syslog listener (any machine that can receive UDP):**
 
 ```bash
 python3 syslog_listener.py
@@ -99,33 +118,24 @@ Or with environment variables:
 SYSLOG_UDP_PORT=1514 DATA_DIR=./agent_data python3 syslog_listener.py
 ```
 
-The listener writes parsed events to `agent_data/syslog_events.jsonl`.
+This writes parsed events to `agent_data/syslog_events.jsonl`.
 
-### 5. Run the Anomaly Agent (Docker)
+**2. Run the anomaly agent in Docker:**
 
 ```bash
 # Build image
 docker build -t opnsense-anomaly-agent .
 
-# Run container
+# Run container — mount the same agent_data directory
 docker run -d --name anomaly-agent --network host \
   -v "$(pwd)/agent_data:/app/agent_data" \
   --env-file .env \
   opnsense-anomaly-agent
 ```
 
-Or without `.env` file — pass env vars directly:
+The agent reads from the shared JSONL file.
 
-```bash
-docker run -d --name anomaly-agent --network host \
-  -v "$(pwd)/agent_data:/app/agent_data" \
-  -e OPN_HOST=192.168.1.1 \
-  -e OPN_API_KEY=your_key \
-  -e OPN_API_SECRET=your_secret \
-  -e DISCORD_TOKEN=your_token \
-  -e DISCORD_CHANNEL_ID=your_channel_id \
-  opnsense-anomaly-agent
-```
+---
 
 ## Chat Commands
 
@@ -151,7 +161,7 @@ The agent runs a local HTTP server on port 8765 by default. Send commands from a
 | `DISCORD_TOKEN` | *(required)* | Discord bot token |
 | `DISCORD_CHANNEL_ID` | *(required)* | Discord channel ID for alerts |
 | `CHAT_PORT` | `8765` | HTTP port for chat commands |
-| `SYSLOG_UDP_PORT` | `1514` | UDP port to receive syslog |
+| `SYSLOG_UDP_PORT` | `1514` | UDP port to receive syslog (standalone mode) |
 | `DATA_DIR` | `./agent_data` | Directory for JSONL and learned patterns |
 | `JSONL_PATH` | `./agent_data/syslog_events.jsonl` | Path to JSONL event file |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
@@ -170,9 +180,13 @@ For non-secret configuration (learning thresholds, detection options):
 ### Stop/Restart
 
 ```bash
+# For single-container mode:
+docker compose down
+docker compose up -d
+
+# For standalone + agent mode:
 docker stop anomaly-agent
 docker rm anomaly-agent
-# Then run again with docker run ...
 ```
 
 ### View Logs
@@ -205,8 +219,8 @@ These files are gitignored. The data directory is designed to be volume-mounted 
 
 ## Requirements
 
-- Python 3.9+
-- Docker (for the agent container)
+- Python 3.9+ (for standalone syslog listener)
+- Docker and Docker Compose (for the agent)
 - Discord bot token ([create one here](https://discord.com/developers/applications))
 - OPNsense firewall with syslog enabled
 
@@ -216,6 +230,9 @@ These files are gitignored. The data directory is designed to be volume-mounted 
 requests==2.31.0
 discord.py==2.3.2
 numpy<2.0
+psycopg2-binary
+maxminddb
+python-dotenv
 ```
 
 Install for local development:
