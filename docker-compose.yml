@@ -69,9 +69,18 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-50}
       - LEARN_INTERVAL=${LEARN_INTERVAL:-300}
+      # GeoLite2 / MaxMind (optional)
+      - MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID:-}
+      - MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY:-}
     volumes:
       # Persist learned patterns, GeoLite2 DB, and event files across restarts
       - ./agent_data:/app/agent_data
+      # GeoLite2 database (mount only if you have it)
+      - ./data/GeoLite2-Country.mmdb:/app/data/GeoLite2-Country.mmdb:ro
+      - ./data:/app/data
+    environment:
+      # GeoLite2 database path
+      - GEO_DB_PATH=/app/data/GeoLite2-Country.mmdb
     ports:
       # Syslog UDP listener (built-in UDP when SYSLOG_ENABLED=true)
       - "${SYSLOG_UDP_PORT:-1514}:1514/udp"
