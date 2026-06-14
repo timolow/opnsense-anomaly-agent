@@ -2,13 +2,12 @@
 Discord bot for OPNsense anomaly detection agent.
 
 Provides rate-limited alerting to Discord with rich embeds per
-attack type. Uses discord.py library for proper bot API integration.
+attack type. Uses Discord REST API with bot token for reliable
+message delivery.
 """
 
 import os
 import time
-import asyncio
-import threading
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
@@ -103,7 +102,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
     title = ''
     
     if attack_type == 'PORT_SCAN':
-        title = f"Port Scan Detected"
+        title = "Port Scan Detected"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -114,7 +113,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Protocol', 'value': attack.get('proto', 'N/A'), 'inline': True},
         ]
     elif attack_type == 'SYN_FLOOD':
-        title = f"SYN Flood Detected"
+        title = "SYN Flood Detected"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -125,7 +124,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Top Sources', 'value': '\n'.join(f"• {ip}" for ip in detail.get('top_sources', [])[:5]) or 'N/A', 'inline': False},
         ]
     elif attack_type == 'BRUTE_FORCE':
-        title = f"Brute Force Attempt"
+        title = "Brute Force Attempt"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -135,7 +134,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Window', 'value': f"{detail.get('window_seconds', 0)}s", 'inline': True},
         ]
     elif attack_type == 'PROBE':
-        title = f"Network Probe"
+        title = "Network Probe"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -145,7 +144,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Protocol', 'value': attack.get('proto', 'N/A'), 'inline': True},
         ]
     elif attack_type == 'SCAN':
-        title = f"Network Scan"
+        title = "Network Scan"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -155,7 +154,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Ports', 'value': str(detail.get('ports_scanned', 0)), 'inline': True},
         ]
     elif attack_type == 'STATISTICAL_ANOMALY':
-        title = f"Statistical Anomaly"
+        title = "Statistical Anomaly"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Metric', 'value': detail.get('metric', 'N/A'), 'inline': True},
@@ -166,7 +165,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Samples', 'value': str(detail.get('sample_count', 'N/A')), 'inline': True},
         ]
     else:
-        title = f"{attack_type}"
+        title = attack_type
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Details', 'value': description[:500], 'inline': False},
@@ -192,55 +191,47 @@ def anomaly_to_embed(anomaly: Dict[str, Any]) -> Optional[AlertEmbed]:
 
 
 # ============================================================
-# Discord bot client using discord.py
+# Discord bot client using REST API with bot token
 # ============================================================
 
 
+DISCORD_API = "https://discord.com/api/v10"
+
+
 class DiscordClient:
-    """Discord bot client using discord.py library."""
+    """Discord bot client using REST API with bot token.
+    
+    Uses the standard Discord REST API with Authorization: Bot <token>
+    to send messages to a channel. Simple, no async/threading needed.
+    """
     
     def __init__(self, token: str, channel_id: str):
         self.token = token
-        self.channel_id = int(channel_id) if channel_id else 0
+        self.channel_id = channel_id
         self.rate_limiter = RateLimiter(interval=60, dedup_window=300)
-        self._bot = None
+        self._test_result = None
     
-    def start(self):
-        """Start the discord.py bot in a thread."""
+    def _post(self, endpoint: str, data: Dict[str, Any]) -> bool:
+        """POST to Discord API with bot token auth."""
+        import requests
+        url = f"{DISCORD_API}/{endpoint}"
+        headers = {
+            'Authorization': f'Bot {self.token}',
+            'Content-Type': 'application/json',
+        }
         try:
-            import discord
-            intents = discord.Intents.default()
-            self._bot = discord.Bot(intents=intents)
-            
-            @self._bot.event
-            async def on_ready():
-                logger.info("Discord bot logged in as %s", self._bot.user)
-            
-            @self._bot.event
-            async def on_interaction(interaction):
-                if not interaction.data:
-                    return
-                command = interaction.data.get('name', '')
-                args = ' '.join(
-                    opt.get('value', '') 
-                    for opt in interaction.data.get('options', [])
-                )
-                result = handle_command(command, args)
-                await interaction.respond(content=result.get('content', ''), embeds=result.get('embeds', []))
-            
-            logger.info("Discord bot starting...")
-            self._bot.run(self.token)
+            resp = requests.post(url, json=data, headers=headers, timeout=10)
+            if resp.status_code == 200 or resp.status_code == 204:
+                logger.debug("Discord API %s %s", resp.status_code, endpoint)
+                return True
+            else:
+                logger.error("Discord API error: %s %s", resp.status_code, resp.text[:200])
+                return False
         except Exception as e:
-            logger.error("Discord bot error: %s", e)
+            logger.error("Discord API request failed: %s", e)
+            return False
     
-    def stop(self):
-        if self._bot:
-            try:
-                self._bot.stop()
-            except Exception:
-                pass
-    
-    async def send_alert(self, attack: Dict[str, Any]) -> bool:
+    def send_alert(self, attack: Dict[str, Any]) -> bool:
         dedup_key = f"{attack.get('attack_type')}:{attack.get('src_ip', 'x')}:{attack.get('dst_ip', 'x')}"
         if not self.rate_limiter.should_alert(attack.get('attack_type'), dedup_key):
             return False
@@ -249,26 +240,39 @@ class DiscordClient:
         if not embed:
             return False
         
-        try:
-            import discord
-            intents = discord.Intents.default()
-            bot = discord.Bot(intents=intents)
-            channel = await bot.fetch_channel(self.channel_id)
-            await channel.send(embed=discord.Embed(**embed.to_dict()))
+        payload = {
+            'embeds': [embed.to_dict()],
+            'username': 'OPNsense Alert Bot',
+        }
+        result = self._post(f'channels/{self.channel_id}/messages', payload)
+        if result:
             logger.info("Discord alert sent for %s", attack.get('attack_type'))
-            return True
-        except Exception as e:
-            logger.error("Failed to send Discord alert: %s", e)
-            return False
+        return result
     
-    def send_alert_sync(self, attack: Dict[str, Any]) -> bool:
+    def send_message(self, message: str) -> bool:
+        """Send a plain text message."""
+        payload = {'content': message}
+        return self._post(f'channels/{self.channel_id}/messages', payload)
+    
+    def test_connection(self) -> bool:
+        """Test the bot token is valid by fetching current user."""
+        import requests
+        url = f"{DISCORD_API}/users/@me"
+        headers = {
+            'Authorization': f'Bot {self.token}',
+            'Content-Type': 'application/json',
+        }
         try:
-            loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(self.send_alert(attack))
-            loop.close()
-            return result
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                user = resp.json()
+                logger.info("Discord bot verified as %s (#%s)", user.get('username'), user.get('discriminator'))
+                return True
+            else:
+                logger.error("Discord auth failed: %s %s", resp.status_code, resp.text[:200])
+                return False
         except Exception as e:
-            logger.error("Discord send_alert_sync error: %s", e)
+            logger.error("Discord test connection failed: %s", e)
             return False
 
 
@@ -394,25 +398,6 @@ class CommandHandler:
 
 
 # ============================================================
-# Command dispatcher for discord.py
-# ============================================================
-
-_global_command_handler = None
-
-
-def init_command_handler(handler):
-    global _global_command_handler
-    _global_command_handler = handler
-
-
-def handle_command(command: str, args: str, bot=None) -> Dict[str, Any]:
-    if _global_command_handler:
-        result = _global_command_handler.handle_command(command, args)
-        return result.to_dict()
-    return {'content': f"Unknown command: `/ {command}`"}
-
-
-# ============================================================
 # Agent.py compatibility wrapper
 # ============================================================
 
@@ -425,7 +410,6 @@ class DiscordBot:
         self._client = None
         self._running = False
         self._command_handler = CommandHandler()
-        init_command_handler(self._command_handler)
     
     def _get_client(self):
         if not self._client and self.config.discord_token and self.config.discord_channel_id:
@@ -441,7 +425,7 @@ class DiscordBot:
             logger.warning("Discord not configured; alerts disabled")
             return False
         try:
-            return client.send_alert_sync(attack)
+            return client.send_alert(attack)
         except Exception as e:
             logger.warning("Discord send_alert error: %s", e)
             return False
@@ -450,16 +434,14 @@ class DiscordBot:
         client = self._get_client()
         if client:
             self._running = True
-            thread = threading.Thread(target=client.start, daemon=True)
-            thread.start()
-            logger.info("Discord bot started")
+            # Verify bot token works
+            client.test_connection()
+            logger.info("Discord bot enabled (bot API mode)")
         else:
             logger.warning("Discord token or channel not configured; alerts disabled")
     
     def stop(self):
         self._running = False
-        if self._client:
-            self._client.stop()
     
     def handle_command(self, command: str, args: str = '') -> CommandResult:
         return self._command_handler.handle_command(command, args)
