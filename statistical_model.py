@@ -90,10 +90,10 @@ class WindowedCounter:
         self._timestamps[compound_key].append(ts)
         
         # Cleanup old buckets
-        cutoff = ts - timedelta(minutes=self.window_minutes)
+        cutoff_str = ts.strftime('%Y-%m-%d %H:%M')
         for k in list(self._buckets.keys()):
             bk = k[1]
-            if bk and bk < cutoff:
+            if bk and bk < cutoff_str:
                 del self._buckets[k]
                 self._timestamps.pop(k, None)
     

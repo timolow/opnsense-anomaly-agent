@@ -40,6 +40,23 @@ class PortScanDetector:
         # Track: src_ip -> list of (timestamp, dst_ip, dst_port)
         self._events: Dict[str, List[Tuple[datetime, str, Optional[int]]]] = defaultdict(list)
     
+    @staticmethod
+    def _parse_ts(ts_raw) -> datetime:
+        """Parse a timestamp from an event (string or datetime)."""
+        if isinstance(ts_raw, datetime):
+            return ts_raw
+        if isinstance(ts_raw, str):
+            # Try ISO format first (events from JSONL)
+            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+                try:
+                    dt = datetime.strptime(ts_raw, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
+                except ValueError:
+                    continue
+        return datetime.now(timezone.utc)
+    
     def _cleanup(self, src_ip: str, now: datetime):
         """Remove events older than window."""
         cutoff = now - timedelta(seconds=self.window_seconds)
@@ -52,7 +69,7 @@ class PortScanDetector:
         src_ip = event.get('src_ip')
         dst_ip = event.get('dst_ip')
         dst_port = event.get('dport')
-        ts = event.get('timestamp') or datetime.now(timezone.utc)
+        ts = self._parse_ts(event.get('timestamp'))
         action = event.get('action', '')
         
         # Only check BLOCKED events to reduce noise
@@ -124,6 +141,21 @@ class SYNFloodDetector:
         # Track: src_ip -> list of timestamps
         self._src_events: List[Tuple[datetime, str]] = []
     
+    @staticmethod
+    def _parse_ts(ts_raw) -> datetime:
+        if isinstance(ts_raw, datetime):
+            return ts_raw
+        if isinstance(ts_raw, str):
+            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+                try:
+                    dt = datetime.strptime(ts_raw, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
+                except ValueError:
+                    continue
+        return datetime.now(timezone.utc)
+    
     def _cleanup(self, now: datetime):
         cutoff = now - timedelta(seconds=self.window_seconds)
         for k in self._dst_events:
@@ -141,7 +173,7 @@ class SYNFloodDetector:
         src_ip = event.get('src_ip')
         dst_ip = event.get('dst_ip')
         dst_port = event.get('dport')
-        ts = event.get('timestamp') or datetime.now(timezone.utc)
+        ts = self._parse_ts(event.get('timestamp'))
         action = event.get('action', '')
         
         if not src_ip or not dst_ip:
@@ -196,6 +228,21 @@ class BruteForceDetector:
         # Track: (src_ip, dst_ip, dport) -> list of timestamps
         self._sessions: Dict[Tuple[str, str, int], List[datetime]] = defaultdict(list)
     
+    @staticmethod
+    def _parse_ts(ts_raw) -> datetime:
+        if isinstance(ts_raw, datetime):
+            return ts_raw
+        if isinstance(ts_raw, str):
+            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+                try:
+                    dt = datetime.strptime(ts_raw, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
+                except ValueError:
+                    continue
+        return datetime.now(timezone.utc)
+    
     def _cleanup(self, key: Tuple[str, str, int], now: datetime):
         cutoff = now - timedelta(seconds=self.window_seconds)
         self._sessions[key] = [t for t in self._sessions[key] if t >= cutoff]
@@ -205,7 +252,7 @@ class BruteForceDetector:
         src_ip = event.get('src_ip')
         dst_ip = event.get('dst_ip')
         dst_port = event.get('dport')
-        ts = event.get('timestamp') or datetime.now(timezone.utc)
+        ts = self._parse_ts(event.get('timestamp'))
         
         if not src_ip or not dst_ip or dst_port is None:
             return None
@@ -261,6 +308,21 @@ class ProbeDetector:
         # Track: src_ip -> list of (timestamp, flags_or_proto)
         self._scan_events: Dict[str, List[Tuple[datetime, str]]] = defaultdict(list)
     
+    @staticmethod
+    def _parse_ts(ts_raw) -> datetime:
+        if isinstance(ts_raw, datetime):
+            return ts_raw
+        if isinstance(ts_raw, str):
+            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+                try:
+                    dt = datetime.strptime(ts_raw, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
+                except ValueError:
+                    continue
+        return datetime.now(timezone.utc)
+    
     def _cleanup(self, src_ip: str, now: datetime):
         cutoff = now - timedelta(seconds=self.window_seconds)
         self._scan_events[src_ip] = [
@@ -273,7 +335,7 @@ class ProbeDetector:
         tcp_flags = event.get('tcp_flags', '')
         proto = event.get('proto', '')
         action = event.get('action', '')
-        ts = event.get('timestamp') or datetime.now(timezone.utc)
+        ts = self._parse_ts(event.get('timestamp'))
         
         if not src_ip:
             return None
