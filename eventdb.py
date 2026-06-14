@@ -513,14 +513,14 @@ class EventDatabase:
                 for metric_name, stats in baselines_data.items():
                     cur.execute(
                         """INSERT INTO baselines 
-                           (metric_name, mean, stddev, count, last_updated)
-                           VALUES (%s, %s, %s, %s, NOW())
-                           ON CONFLICT (metric_name) 
+                           (metric, time_window, mean_value, stddev, sample_count, updated_at)
+                           VALUES (%s, NOW(), %s, %s, %s, NOW())
+                           ON CONFLICT (metric, time_window)
                            DO UPDATE SET 
-                               mean = EXCLUDED.mean,
+                               mean_value = EXCLUDED.mean_value,
                                stddev = EXCLUDED.stddev,
-                               count = EXCLUDED.count,
-                               last_updated = EXCLUDED.last_updated""",
+                               sample_count = EXCLUDED.sample_count,
+                               updated_at = EXCLUDED.updated_at""",
                         (
                             metric_name,
                             stats.get('mean', 0),
