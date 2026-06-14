@@ -218,9 +218,14 @@ class EventReader:
                         continue
                     try:
                         event = json.loads(line)
-                        # Accept all parsed events - the adaptive parser already filters
-                        # useless noise. System messages, ICMP, IPv6, etc. all get through.
-                        if event.get("raw"):
+                        # Only accept events with valid ISO-format timestamps.
+                        # The adaptive parser converts firewall logs (filterlog,
+                        # ICMPV6, GRE, etc.) to ISO timestamps. System messages
+                        # (ntpd, rtsold, syslog-ng errors) have raw syslog
+                        # timestamps like "Jun 14 13:57:12" which PostgreSQL
+                        # can't parse — skip those entirely.
+                        ts = event.get("timestamp", "")
+                        if ts and "T" in ts and event.get("raw"):
                             event["_line_number"] = line_num
                             events.append(event)
                             count += 1
