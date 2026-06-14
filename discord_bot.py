@@ -458,3 +458,62 @@ class CommandHandler:
         self._recent_attacks.append(attack)
         if len(self._recent_attacks) > self._max_attacks:
             self._recent_attacks = self._recent_attacks[-self._max_attacks:]
+
+
+# ============================================================
+# Agent.py compatibility wrapper
+# ============================================================
+
+
+class DiscordBot:
+    """Wrapper around DiscordClient providing the DiscordBot interface."""
+    
+    def __init__(self, config):
+        self.config = config
+        self._client = None
+        self._running = False
+    
+    def _get_webhook_url(self):
+        """Construct webhook URL from token and channel_id."""
+        if self.config.discord_token and self.config.discord_channel_id:
+            return f"https://discord.com/api/webhooks/placeholder/{self.config.discord_token}"
+        return ""
+    
+    def send_alert(self, attack, llm_analysis=None):
+        """Send an attack alert to Discord."""
+        try:
+            if not self._client:
+                self._client = DiscordClient(
+                    webhook_url=self._get_webhook_url(),
+                    channel_id=self.config.discord_channel_id
+                )
+            # send_alert is async - run synchronously if needed
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                result = loop.run_until_complete(self._client.send_alert(attack))
+                loop.close()
+                return result
+            except Exception as e:
+                logger.warning("Discord send_alert error: %s", e)
+                return False
+        except Exception as e:
+            logger.warning("DiscordBot send_alert failed: %s", e)
+            return False
+    
+    def start_bot(self):
+        """Start the Discord bot (webhook-based, no persistent connection)."""
+        if self.config.discord_token:
+            self._running = True
+            logger.info("Discord bot enabled (webhook mode)")
+        else:
+            logger.warning("Discord token not configured; alerts disabled")
+    
+    def stop(self):
+        """Stop the Discord bot."""
+        self._running = False
+
+
+# ============================================================
+# Chat command handler (continued)
+# ============================================================

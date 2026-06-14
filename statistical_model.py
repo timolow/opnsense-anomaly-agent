@@ -160,7 +160,7 @@ class Baseline:
         return min(z / self.anomaly_threshold, 1.0)
 
 
-class BaselineManager:
+class StatisticalModel:
     """Manages multiple statistical baselines for traffic analysis."""
     
     # Pre-defined metrics

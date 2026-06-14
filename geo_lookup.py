@@ -373,3 +373,27 @@ class GeoAnomalyDetector:
     def is_available(self) -> bool:
         """Check if any geo lookup is available."""
         return self._maxmind.is_available() or self._simple.is_available()
+
+
+# ============================================================
+# Agent.py compatibility wrapper
+# ============================================================
+
+
+class GeoLookup:
+    """Thin wrapper around GeoAnomalyDetector providing the GeoLookup interface."""
+    
+    def __init__(self, db_path=None):
+        self._detector = GeoAnomalyDetector()
+        self.country_events = self._detector._country_events
+    
+    def check_event(self, event):
+        """Check event for geo anomalies. Returns detection dict or None."""
+        try:
+            return self._detector.process_event(event)
+        except Exception as e:
+            logger.warning("Geo lookup error: %s", e)
+            return None
+    
+    def is_available(self):
+        return self._detector.is_available()

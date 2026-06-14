@@ -234,3 +234,71 @@ def run_syslog_listener():
 if __name__ == '__main__':
     logger.info("Starting OPNsense Syslog Listener")
     run_syslog_listener()
+
+
+# ============================================================
+# Agent.py compatibility wrapper
+# ============================================================
+
+
+class SyslogListener:
+    """Wrapper around run_syslog_listener providing the SyslogListener interface."""
+    
+    def __init__(self, config):
+        self.config = config
+        self._thread = None
+        self._running = False
+    
+    def start(self):
+        """Start the syslog UDP listener in a background thread. Returns True on success."""
+        try:
+            # Override defaults from config
+            self.UDP_PORT = self.config.syslog_port
+            self.OUTPUT_FILE = str(self.config.jsonl_path)
+            
+            self._running = True
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+            logger.info("Syslog listener started on UDP port %s", self.UDP_PORT)
+            return True
+        except Exception as e:
+            logger.warning("Failed to start syslog listener: %s", e)
+            self._running = False
+            return False
+    
+    def _run(self):
+        """Run the syslog listener loop."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('0.0.0.0', self.UDP_PORT))
+            
+            while self._running:
+                try:
+                    sock.settimeout(1.0)
+                    data, addr = sock.recvfrom(65535)
+                    line = data.decode('utf-8', errors='replace').strip()
+                    
+                    if not line:
+                        continue
+                    
+                    event = parse_syslog_line(line)
+                    if event:
+                        write_event(event)
+                        count = get_event_count() + 1
+                        set_event_count(count)
+                        logger.debug("Event #%d: %s -> %s", count,
+                                     event.get('src_ip'), event.get('dst_ip'))
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    logger.warning("Syslog listener error: %s", e)
+            sock.close()
+        except Exception as e:
+            logger.error("Syslog listener thread failed: %s", e)
+    
+    def stop(self):
+        """Stop the syslog listener."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=5)
