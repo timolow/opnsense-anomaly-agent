@@ -56,11 +56,28 @@ from adaptive_parser import AdaptiveParser
 
 _parser = AdaptiveParser()
 
+def _convert_timestamp(raw_ts):
+    """Convert raw syslog timestamp to ISO format for PostgreSQL.
+    
+    Syslog format: 'Jun 14 14:06:24'
+    PostgreSQL format: '2026-06-14T14:06:24'
+    """
+    if not raw_ts or 'T' in raw_ts:
+        return raw_ts
+    try:
+        dt = datetime.strptime(raw_ts, "%b %d %H:%M:%S")
+        return dt.replace(year=datetime.now().year).isoformat()
+    except Exception:
+        return raw_ts
+
+
 def parse_syslog_line(line):
     """Parse any log line using the adaptive parser."""
     try:
         event = _parser.parse_line(line.strip())
         if event:
+            # Convert raw syslog timestamp to ISO format for PostgreSQL
+            event['timestamp'] = _convert_timestamp(event.get('timestamp', ''))
             event['_received_at'] = datetime.now().isoformat()
         return event
     except Exception as e:
