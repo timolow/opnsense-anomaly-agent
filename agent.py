@@ -348,29 +348,9 @@ class OPNsenseAgent:
             cache_ttl=self.config.reverse_dns_cache_ttl,
         )
 
-        # Network classifier (WAN/LAN detection) — reads env vars directly
+        # Network classification (WAN/LAN/VPN detection) — per-IP auto-discovery
+        # Config: OWN_WAN_IPS (your WAN addresses), LAN_IPS, VPN_IPS, CUSTOM_INTERFACES
         self.network_classifier = NetworkClassifier()
-        self._network_discovered = False
-
-    def _ensure_network_discovered(self):
-        """Discover interfaces from traffic data if not already done.
-        
-        Called lazily during event processing so we have data to analyze.
-        """
-        if self._network_discovered:
-            return
-        if self.config.network_auto_discover:
-            self.network_classifier.auto_discover_interfaces()
-            net_stats = self.network_classifier.get_stats()
-            logger.info(
-                "Network classifier discovered: %d WAN interfaces, %d LAN interfaces, "
-                "%d WAN IPs, %d LAN IPs",
-                len(net_stats["wan_interfaces"]),
-                len(net_stats["lan_interfaces"]),
-                net_stats["wan_ips_count"],
-                net_stats["lan_ips_count"],
-            )
-        self._network_discovered = True
 
         # Counters
         self.event_count = 0
@@ -395,16 +375,9 @@ class OPNsenseAgent:
         """Single-event pipeline: classify → reverse DNS → store → stat model → attack detectors → geo → alert."""
         event["processed_at"] = datetime.now(timezone.utc).isoformat()
         
-        # Lazy interface discovery (needs traffic data)
-        self._ensure_network_discovered()
-        
-        # Record interface for auto-discovery
+        # Network classification: track IPs and classify event (per-IP auto-discovery)
         if self.network_classifier is not None:
-            self.network_classifier.record_interface_event(event)
-
-        # Classify traffic as WAN/LAN/VPN/internal (uses interface + env vars)
-        if self.network_classifier is not None:
-            self.network_classifier.classify_event(event, interface=event.get("interface"))
+            event = self.network_classifier.record_event(event)
         
         # Reverse DNS lookup (before storing/enriching)
         if self.reverse_dns.enabled:
@@ -471,8 +444,8 @@ class OPNsenseAgent:
         if self.network_classifier is not None:
             net_s = self.network_classifier.get_stats()
             net_parts.append(
-                f"wan_ifaces={len(net_s.get('wan_interfaces', []))}, "
-                f"lan_ifaces={len(net_s.get('lan_interfaces', []))}"
+                f"own_wan={net_s.get('own_wan_ips_count', 0)}, "
+                f"ext_wan={net_s.get('wan_ips_count', 0)}"
             )
         extra = " | ".join(net_parts) + (
             f" | reverse_dns: resolves={dns_stats['resolve_count']} misses={dns_stats['miss_count']}"

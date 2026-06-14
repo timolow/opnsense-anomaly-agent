@@ -1,14 +1,21 @@
 """
-NetworkClassifier — Classifies IPs as WAN, LAN, VPN, or UNKNOWN.
+NetworkClassifier — Auto-discovers and classifies WAN/LAN/VPN IPs from firewall logs.
 
-Uses two methods:
-1. Config-driven: env vars WAN_IPS/LAN_IPS/CUSTOM_INTERFACES
-2. Log-driven: auto-discovers from firewall interface data in events
+Uses per-IP tracking (not per-interface) so it can distinguish:
+  - Your own WAN IPs (via OWN_WAN_IPS env var)
+  - All other external IPs (classified as WAN/attacker)
+  - Internal/LAN IPs (RFC1918)
+  - VPN connections (from config or heuristics)
 
-This replaces the OPNsense API dependency for WAN/LAN classification.
-The API key permissions are too restrictive (endpoint-scoped in OPNsense);
-instead we extract interface information directly from the filterlog data
-that flows through the agent.
+The classifier auto-discovers every external IP it sees on any interface,
+no matter how many there are. This means even unknown attacker IPs get
+detected and tracked automatically.
+
+Config:
+  - OWN_WAN_IPS    : comma-separated list of your own WAN IPs
+  - LAN_IPS        : comma-separated list of known LAN IPs  
+  - VPN_IPS        : comma-separated list of VPN networks (CIDR)
+  - CUSTOM_INTERFACES: iface=class mapping (fallback for unknown interfaces)
 """
 
 import ipaddress
@@ -18,355 +25,363 @@ import os
 
 
 class NetworkClassifier:
-    """Classifies traffic as WAN, LAN, VPN, internal, or unknown."""
+    """Classifies traffic by per-IP WAN/LAN/VPN detection."""
 
-    def __init__(self, config: Optional[Dict] = None):
-        config = config or {}
-
-        # Method 1: Config-driven IPs (from env)
-        wan_ips = os.getenv("WAN_IPS", "")
-        self._wan_ips: Set[str] = set()
-        if wan_ips:
-            for ip_or_cidr in wan_ips.split(","):
-                ip_or_cidr = ip_or_cidr.strip()
-                if ip_or_cidr:
-                    try:
-                        if "/" in ip_or_cidr:
-                            network = ipaddress.ip_network(ip_or_cidr, strict=False)
-                            self._wan_ips.add(ip_or_cidr)
-                        else:
-                            self._wan_ips.add(ip_or_cidr)
-                    except ValueError:
-                        pass
-
-        # Local IP ranges (RFC 1918 + common)
-        self._lan_networks = [
-            ipaddress.ip_network("192.168.0.0/16"),
-            ipaddress.ip_network("10.0.0.0/8"),
-            ipaddress.ip_network("172.16.0.0/12"),
-        ]
-
+    def __init__(self):
+        # ── Config-driven: our own WAN IPs (NOT attacks) ─────────────────
+        # Comma-separated list of IPs that belong to us
+        own_wan_str = os.getenv("OWN_WAN_IPS", "")
+        self.own_wan_ips: Set[str] = set(
+            ip.strip() for ip in own_wan_str.split(",") if ip.strip()
+        )
+        
         # Config-driven LAN IPs
-        lan_ips_str = os.getenv("LAN_IPS", "")
-        self._lan_ips: Set[str] = set()
-        if lan_ips_str:
-            for ip_or_cidr in lan_ips_str.split(","):
-                ip_or_cidr = ip_or_cidr.strip()
-                if ip_or_cidr:
-                    self._lan_ips.add(ip_or_cidr)
-
+        lan_str = os.getenv("LAN_IPS", "")
+        self.lan_ips: Set[str] = set(
+            ip.strip() for ip in lan_str.split(",") if ip.strip()
+        )
+        
         # Config-driven VPN networks
-        vpn_ips_str = os.getenv("VPN_IPS", "")
-        self._vpn_networks = []
-        if vpn_ips_str:
-            for net_str in vpn_ips_str.split(","):
-                net_str = net_str.strip()
-                if net_str:
-                    try:
-                        self._vpn_networks.append(ipaddress.ip_network(net_str, strict=False))
-                    except ValueError:
-                        pass
-
-        # Custom interface-to-class mapping
-        # Format: "interface=class" comma-separated
+        vpn_str = os.getenv("VPN_IPS", "")
+        self._vpn_networks: List[ipaddress.IPv4Network] = []
+        for net_str in vpn_str.split(","):
+            net_str = net_str.strip()
+            if net_str:
+                try:
+                    self._vpn_networks.append(ipaddress.ip_network(net_str, strict=False))
+                except ValueError:
+                    pass
+        
+        # Custom interface→class mapping
         iface_str = os.getenv("CUSTOM_INTERFACES", "")
         self._interface_map: Dict[str, str] = {}
-        if iface_str:
-            for mapping in iface_str.split(","):
-                mapping = mapping.strip()
-                if "=" in mapping:
-                    iface, cls = mapping.split("=", 1)
-                    self._interface_map[iface.strip()] = cls.strip().lower()
+        for mapping in iface_str.split(","):
+            mapping = mapping.strip()
+            if "=" in mapping:
+                iface, cls = mapping.split("=", 1)
+                self._interface_map[iface.strip()] = cls.strip().lower()
 
-        # Method 2: Auto-discovered interfaces from log data
-        # Track: interface -> set of src_ips, dst_ips, action counts
-        self._interface_stats: Dict[str, Dict] = defaultdict(lambda: {
-            "src_ips": defaultdict(int),
-            "dst_ips": defaultdict(int),
-            "action_pass": 0,
-            "action_block": 0,
+        # ── Auto-discovered per-IP tracking ───────────────────────────────
+        # WAN IPs: external (non-RFC1918) IPs we've seen, indexed by IP
+        self.wan_ips: Dict[str, Dict] = {}
+        
+        # LAN IPs: private IPs we've seen
+        self.lan_ips_auto: Dict[str, Dict] = {}
+        
+        # VPN IPs: VPN tunnel IPs we've seen
+        self.vpn_ips_auto: Dict[str, Dict] = {}
+        
+        # Per-interface stats for fallback classification
+        self._interface_events: Dict[str, Dict] = defaultdict(lambda: {
             "total": 0,
+            "blocked": 0,
+            "passed": 0,
         })
 
-        self._auto_discovered = False
-        self._wan_interfaces: Set[str] = set()
-        self._lan_interfaces: Set[str] = set()
-        self._vpn_interfaces: Set[str] = set()
+        # ── Thresholds ────────────────────────────────────────────────────
+        self.min_events_for_tracking = int(os.getenv("WAN_IP_MIN_EVENTS", "10"))
+        self.max_wan_ips = int(os.getenv("MAX_WAN_IPS", "10000"))
 
-        # Thresholds for auto-discovery
-        self._external_ratio_threshold = 0.5  # 50% external IPs = WAN
-        self._min_events_for_discovery = 100
+    # ── Per-IP classification ─────────────────────────────────────────────
 
-    # ── Config-driven classification ────────────────────────────────────
+    def classify_ip(self, ip_str: str) -> str:
+        """Classify an IP as OWN, WAN, LAN, VPN, INTERNAL, or UNKNOWN.
 
-    def classify_ip(self, ip_str: str, interface: Optional[str] = None) -> str:
-        """Classify a single IP address as WAN, LAN, VPN, INTERNAL, or UNKNOWN.
-
-        Uses a prioritized approach:
-        1. Config-driven (WAN_IPS, LAN_IPS env vars)
-        2. Interface-based classification (WAN interface = external, LAN = internal)
-        3. RFC 1918 heuristic (private = LAN, else = WAN)
+        Priority:
+        1. Own WAN IPs (from OWN_WAN_IPS env) → OWN
+        2. LAN IPs (from LAN_IPS env) → LAN
+        3. VPN networks (from VPN_IPS env) → VPN
+        4. Auto-discovered WAN IPs → WAN
+        5. Auto-discovered LAN IPs → LAN  
+        6. Auto-discovered VPN IPs → VPN
+        7. Heuristic: RFC1918 private → LAN, link-local → INTERNAL, else → WAN
         
-        Returns one of: 'WAN', 'LAN', 'VPN', 'INTERNAL', 'UNKNOWN'
+        Returns: 'OWN', 'WAN', 'LAN', 'VPN', 'INTERNAL', 'UNKNOWN'
         """
         if not ip_str:
             return "UNKNOWN"
-
+        
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
             return "UNKNOWN"
 
-        # Check if this is our own WAN IP (config-driven)
-        if ip_str in self._wan_ips:
-            return "WAN"
+        # 1. Our own WAN IPs (explicitly configured)
+        if ip_str in self.own_wan_ips:
+            return "OWN"
 
-        # Check if this is a known LAN IP (config-driven)
-        if ip_str in self._lan_ips:
+        # 2. Configured LAN IPs
+        if ip_str in self.lan_ips:
             return "LAN"
 
-        # Check if it's in a VPN network (config-driven)
+        # 3. Configured VPN networks
         for vpn_net in self._vpn_networks:
             if ip in vpn_net:
                 return "VPN"
 
-        # Interface-based classification (from log data)
-        if interface and interface in self._interface_map:
-            iface_class = self._interface_map[interface]
-            if iface_class == "WAN":
-                # Traffic came from a WAN interface, so source is external
-                # But verify it's not our own WAN IP going outbound
-                if ip_str in self._wan_ips:
-                    return "LAN"  # Our own WAN IP acting as source
-                return "WAN"
-            elif iface_class in ("LAN", "INTERNAL"):
-                # Traffic came from a LAN interface, source is internal
-                return "LAN"
-            elif iface_class == "VPN":
-                return "VPN"
+        # 4. Auto-discovered WAN IPs
+        if ip_str in self.wan_ips:
+            return "WAN"
 
-        # RFC 1918 heuristic (final fallback)
+        # 5. Auto-discovered LAN IPs
+        if ip_str in self.lan_ips_auto:
+            return "LAN"
+
+        # 6. Auto-discovered VPN IPs
+        if ip_str in self.vpn_ips_auto:
+            return "VPN"
+
+        # 7. Heuristic fallback
         if ip.is_link_local:
             return "INTERNAL"
         if ip.is_private:
             return "LAN"
 
-        # Anything else is external/WAN
+        # Everything else is external/WAN
         return "WAN"
 
-    def classify_event(self, event: Dict, interface: Optional[str] = None) -> Dict:
-        """Add direction classification to an event.
-
-        Returns the event dict with added:
-        - src_direction: 'inbound', 'outbound', 'internal', 'localhost'
-        - dst_direction: 'inbound', 'outbound', 'internal', 'localhost'
-        - src_class: 'WAN', 'LAN', 'VPN', 'INTERNAL', 'UNKNOWN'
-        - dst_class: 'WAN', 'LAN', 'VPN', 'INTERNAL', 'UNKNOWN'
-        - is_trusted: bool (both directions are internal/lan)
-        - is_external: bool (either direction is external/wan)
-        """
-        src_ip = event.get("src_ip")
-        dst_ip = event.get("dst_ip")
-
-        src_class = self.classify_ip(src_ip, interface=interface) if src_ip else "UNKNOWN"
-        dst_class = self.classify_ip(dst_ip, interface=interface) if dst_ip else "UNKNOWN"
-
-        # Direction logic
-        src_direction = self._ip_to_direction(src_class)
-        dst_direction = self._ip_to_direction(dst_class)
-
-        # Trusted = both sides are internal/LAN
-        is_trusted = src_class in ("LAN", "INTERNAL") and dst_class in ("LAN", "INTERNAL")
-        is_external = src_class in ("WAN", "VPN") or dst_class in ("WAN", "VPN")
-
-        # Localhost check
-        if src_ip == "127.0.0.1" or dst_ip == "127.0.0.1":
-            src_direction = "localhost"
-            dst_direction = "localhost"
-
-        event["src_direction"] = src_direction
-        event["dst_direction"] = dst_direction
-        event["src_class"] = src_class
-        event["dst_class"] = dst_class
-        event["is_trusted"] = is_trusted
-        event["is_external"] = is_external
-
-        return event
-
-    # ── Log-driven auto-discovery ────────────────────────────────────────
+    # ── Event processing ──────────────────────────────────────────────────
 
     def record_interface_event(self, event: Dict):
-        """Record an event's interface data for auto-discovery."""
+        """Record an event for interface-level stats (fallback classification)."""
         interface = event.get("interface")
         if not interface or interface == "":
             return
 
-        stats = self._interface_stats[interface]
+        stats = self._interface_events[interface]
         stats["total"] += 1
-
-        src_ip = event.get("src_ip")
-        dst_ip = event.get("dst_ip")
         action = event.get("action", "").upper()
+        if action == "BLOCK":
+            stats["blocked"] += 1
+        elif action == "PASS":
+            stats["passed"] += 1
 
-        if src_ip:
-            stats["src_ips"][src_ip] += 1
-        if dst_ip:
-            stats["dst_ips"][dst_ip] += 1
-        if action == "PASS":
-            stats["action_pass"] += 1
-        elif action == "BLOCK":
-            stats["action_block"] += 1
+    def record_ip(self, ip_str: str, event: Dict):
+        """Track a single IP across all interfaces."""
+        if not ip_str:
+            return
 
-    def auto_discover_interfaces(self) -> Dict[str, Set[str]]:
-        """Auto-discover which interfaces are WAN vs LAN based on traffic patterns.
-
-        Returns dict mapping:
-        - 'wan': set of interface names
-        - 'lan': set of interface names
-        - 'vpn': set of interface names
-        """
-        if self._auto_discovered:
-            return {
-                "wan": self._wan_interfaces,
-                "lan": self._lan_interfaces,
-                "vpn": self._vpn_interfaces,
-            }
-
-        for iface, stats in self._interface_stats.items():
-            if stats["total"] < self._min_events_for_discovery:
-                continue
-
-            # Check for OpenVPN/WireGuard interfaces
-            if any(tag in iface.lower() for tag in ("ovpn", "wg", "vpn")):
-                self._vpn_interfaces.add(iface)
-                continue
-
-            # Calculate ratio of external vs internal IPs
-            external_count = 0
-            internal_count = 0
-
-            for ip, count in stats["src_ips"].items():
-                if self._is_external_ip(ip):
-                    external_count += count
-                else:
-                    internal_count += count
-
-            for ip, count in stats["dst_ips"].items():
-                if self._is_external_ip(ip):
-                    external_count += count
-                else:
-                    internal_count += count
-
-            # High block rate + external traffic = WAN
-            total_blocked = stats["action_block"]
-            total_events = stats["total"]
-
-            if total_blocked > 1000 and total_events > 5000:
-                # Likely WAN interface
-                self._wan_interfaces.add(iface)
-            elif external_count > 0 and (external_count / max(total_events, 1)) > self._external_ratio_threshold:
-                # Mostly external traffic
-                self._wan_interfaces.add(iface)
-            else:
-                # Mostly internal traffic
-                self._lan_interfaces.add(iface)
-
-        # Also check interface name heuristics
-        for iface in list(self._lan_interfaces):
-            if any(tag in iface.lower() for tag in ("wan", "ppp", "pptp")):
-                self._lan_interfaces.discard(iface)
-                self._wan_interfaces.add(iface)
-
-        for iface in list(self._wan_interfaces):
-            if any(tag in iface.lower() for tag in ("lan", "vlan", "internal")):
-                self._wan_interfaces.discard(iface)
-                self._lan_interfaces.add(iface)
-
-        self._auto_discovered = True
-
-        return {
-            "wan": self._wan_interfaces,
-            "lan": self._lan_interfaces,
-            "vpn": self._vpn_interfaces,
+        classification = self.classify_ip(ip_str)
+        
+        record = {
+            "count": 0,
+            "interfaces": set(),
+            "dst_ports": set(),
+            "src_ips": set(),
+            "dst_ips": set(),
+            "protocols": set(),
+            "actions": defaultdict(int),
         }
 
-    def classify_by_interface(self, interface: str) -> str:
-        """Classify an interface as WAN, LAN, or VPN based on config or auto-discovery.
+        # Merge into existing or create new
+        if classification == "WAN":
+            if ip_str not in self.wan_ips:
+                self.wan_ips[ip_str] = record
+            else:
+                record = self.wan_ips[ip_str]
+            
+            # Check if we've exceeded max WAN IPs (drop least active)
+            if len(self.wan_ips) > self.max_wan_ips and record["count"] < self.min_events_for_tracking:
+                return  # Skip tracking very low-count IPs when at cap
+        elif classification == "LAN":
+            if ip_str not in self.lan_ips_auto:
+                self.lan_ips_auto[ip_str] = record
+            else:
+                record = self.lan_ips_auto[ip_str]
+        elif classification == "VPN":
+            if ip_str not in self.vpn_ips_auto:
+                self.vpn_ips_auto[ip_str] = record
+            else:
+                record = self.vpn_ips_auto[ip_str]
+        elif classification == "OWN":
+            # Track own IPs with full stats
+            if ip_str not in self.lan_ips_auto:
+                self.lan_ips_auto[ip_str] = record
+            else:
+                record = self.lan_ips_auto[ip_str]
 
-        Priority:
-        1. Config-driven (CUSTOM_INTERFACES)
-        2. Auto-discovered
-        3. Interface name heuristics
-        4. UNKNOWN
+        # Update record
+        record["count"] += 1
+        record["interfaces"].add(event.get("interface", ""))
+        
+        if event.get("dst_port"):
+            record["dst_ports"].add(int(event["dst_port"]))
+        if event.get("src_ip") and event["src_ip"] != ip_str:
+            record["src_ips"].add(event["src_ip"])
+        if event.get("dst_ip") and event["dst_ip"] != ip_str:
+            record["dst_ips"].add(event["dst_ip"])
+        if event.get("protocol"):
+            record["protocols"].add(event["protocol"].upper())
+        
+        action = event.get("action", "").upper()
+        if action:
+            record["actions"][action] += 1
+
+    def classify_event(self, event: Dict) -> Dict:
+        """Add classification to an event.
+
+        Enriches the event with:
+        - src_class: 'OWN', 'WAN', 'LAN', 'VPN', 'INTERNAL', 'UNKNOWN'
+        - dst_class: same
+        - src_direction: 'inbound', 'outbound', 'internal', 'localhost', 'unknown'
+        - dst_direction: same
+        - is_trusted: True if both src and dst are OWN/LAN
+        - is_external: True if either is WAN/OWN
         """
-        # Check config first
-        if interface in self._interface_map:
-            return self._interface_map[interface]
+        src_ip = event.get("src_ip")
+        dst_ip = event.get("dst_ip")
 
-        # Check auto-discovered
-        if interface in self._wan_interfaces:
-            return "WAN"
-        if interface in self._lan_interfaces:
-            return "LAN"
-        if interface in self._vpn_interfaces:
-            return "VPN"
+        # Classify each IP
+        src_class = self.classify_ip(src_ip) if src_ip else "UNKNOWN"
+        dst_class = self.classify_ip(dst_ip) if dst_ip else "UNKNOWN"
 
-        # Heuristic fallback
-        iface_lower = interface.lower()
-        if any(tag in iface_lower for tag in ("wan", "ppp", "pptp", "pppoe", "igb0", "igb1")):
-            return "WAN"
-        if any(tag in iface_lower for tag in ("lan", "vlan", "br0")):
-            return "LAN"
-        if any(tag in iface_lower for tag in ("ovpn", "wg", "vpn")):
-            return "VPN"
-
-        return "UNKNOWN"
-
-    # ── Helpers ──────────────────────────────────────────────────────────
-
-    def _is_external_ip(self, ip_str: str) -> bool:
-        """Check if an IP is external (not RFC 1918, not link-local)."""
-        if not ip_str:
-            return False
-        try:
-            ip = ipaddress.ip_address(ip_str)
-            # Link-local
-            if ip.is_link_local:
-                return False
-            # Private/RFC1918
-            if ip.is_private:
-                return False
-            return True
-        except ValueError:
-            return False
-
-    def _ip_to_direction(self, ip_class: str) -> str:
-        """Map IP class to traffic direction."""
-        mapping = {
+        # Directions
+        direction_map = {
+            "OWN": "outbound",
             "WAN": "inbound",
             "LAN": "internal",
             "VPN": "internal",
             "INTERNAL": "internal",
             "UNKNOWN": "unknown",
         }
-        return mapping.get(ip_class, "unknown")
+
+        src_direction = direction_map.get(src_class, "unknown")
+        dst_direction = direction_map.get(dst_class, "unknown")
+
+        # Special case: localhost
+        if src_ip == "127.0.0.1" or dst_ip == "127.0.0.1":
+            src_direction = "localhost"
+            dst_direction = "localhost"
+
+        # Trusted = both sides are internal or our own
+        is_trusted = src_class in ("OWN", "LAN", "INTERNAL") and dst_class in ("OWN", "LAN", "INTERNAL")
+        
+        # External = either side is WAN (external attacker) or OWN (our infrastructure)
+        is_external = src_class in ("WAN", "OWN") or dst_class in ("WAN", "OWN")
+
+        event["src_class"] = src_class
+        event["dst_class"] = dst_class
+        event["src_direction"] = src_direction
+        event["dst_direction"] = dst_direction
+        event["is_trusted"] = is_trusted
+        event["is_external"] = is_external
+
+        return event
+
+    def record_event(self, event: Dict):
+        """Full event processing: classify IPs and enrich the event."""
+        # Classify source and destination IPs
+        src_ip = event.get("src_ip")
+        dst_ip = event.get("dst_ip")
+
+        # Record both IPs
+        if src_ip:
+            self.record_ip(src_ip, event)
+        if dst_ip and dst_ip != src_ip:
+            self.record_ip(dst_ip, event)
+
+        # Classify the event for the pipeline
+        return self.classify_event(event)
+
+    # ── Discovery & visibility ────────────────────────────────────────────
+
+    def get_all_wan_ips(self, min_events: Optional[int] = None, 
+                        exclude_own: bool = True) -> List[Dict]:
+        """Return all discovered WAN IPs sorted by event count.
+
+        Args:
+            min_events: Minimum events to include (defaults to WAN_IP_MIN_EVENTS)
+            exclude_own: If True, exclude IPs in OWN_WAN_IPS from results
+        
+        Returns: List of dicts with ip, count, interfaces, ports, protocols, actions
+        """
+        if min_events is None:
+            min_events = self.min_events_for_tracking
+
+        results = []
+        for ip, data in self.wan_ips.items():
+            if exclude_own and ip in self.own_wan_ips:
+                continue
+            if data["count"] < min_events:
+                continue
+            results.append({
+                "ip": ip,
+                "count": data["count"],
+                "interfaces": list(data["interfaces"]),
+                "ports": len(data["dst_ports"]),
+                "protocols": list(data["protocols"]),
+                "actions": dict(data["actions"]),
+            })
+
+        # Sort by event count descending
+        results.sort(key=lambda x: x["count"], reverse=True)
+        return results
+
+    def get_own_wan_ips(self) -> List[Dict]:
+        """Return stats for our own WAN IPs."""
+        results = []
+        for ip, data in self.wan_ips.items():
+            if ip in self.own_wan_ips:
+                results.append({
+                    "ip": ip,
+                    "count": data["count"],
+                    "interfaces": list(data["interfaces"]),
+                    "ports": len(data["dst_ports"]),
+                    "protocols": list(data["protocols"]),
+                    "actions": dict(data["actions"]),
+                })
+        return sorted(results, key=lambda x: x["count"], reverse=True)
+
+    def is_own_wan_ip(self, ip_str: str) -> bool:
+        """Check if an IP is one of our own WAN addresses."""
+        return ip_str in self.own_wan_ips
+
+    def is_external_wan(self, ip_str: str) -> bool:
+        """Check if an IP is an external WAN IP (attacker/scanner)."""
+        return ip_str in self.wan_ips and ip_str not in self.own_wan_ips
 
     def get_stats(self) -> Dict:
-        """Return classification stats."""
+        """Return classification stats for status logging."""
+        wan_list = self.get_all_wan_ips(min_events=1)
+        own_list = self.get_own_wan_ips(min_events=1)
+        
         return {
-            "wan_ips_count": len(self._wan_ips),
-            "lan_ips_count": len(self._lan_ips),
-            "wan_interfaces": list(self._wan_interfaces),
-            "lan_interfaces": list(self._lan_interfaces),
-            "interface_stats": {
-                k: {
-                    "total": v["total"],
-                    "unique_src_ips": len(v["src_ips"]),
-                    "unique_dst_ips": len(v["dst_ips"]),
-                    "blocked": v["action_block"],
-                    "passed": v["action_pass"],
-                }
-                for k, v in self._interface_stats.items()
-                if v["total"] > 0
-            },
+            "wan_ips_count": len(wan_list),
+            "own_wan_ips_count": len(own_list),
+            "wan_ips_top5": [w["ip"] for w in wan_list[:5]],
+            "own_wan_ips": [w["ip"] for w in own_list],
+            "lan_ips_count": len(self.lan_ips_auto),
+            "vpn_ips_count": len(self.vpn_ips_auto),
+            "interface_events": dict(
+                (k, v["total"]) for k, v in self._interface_events.items()
+            ),
+            "wan_ips": {w["ip"]: w["count"] for w in wan_list},
         }
+
+    def print_wan_summary(self):
+        """Print a human-readable summary of discovered WAN IPs."""
+        wan_list = self.get_all_wan_ips(min_events=1)
+        own_list = self.get_own_wan_ips(min_events=1)
+
+        print("\n" + "=" * 70)
+        print("NETWORK CLASSIFICATION SUMMARY")
+        print("=" * 70)
+
+        print(f"\nOur WAN IPs ({len(own_list)}):")
+        for ip in own_list:
+            print(f"  {ip:<20s} {ip['count']:>8,d} events | "
+                  f"ports={ip['ports']} | actions={ip['actions']}")
+
+        print(f"\nExternal WAN IPs ({len(wan_list)} total):")
+        top = wan_list[:20]
+        for ip in top:
+            actions_str = ", ".join(f"{k}={v}" for k, v in ip['actions'].items())
+            print(f"  {ip['ip']:<20s} {ip['count']:>8,d} events | "
+                  f"ports={ip['ports']} | {actions_str}")
+        
+        if len(wan_list) > 20:
+            print(f"  ... and {len(wan_list) - 20} more WAN IPs")
+
+        print(f"\nLAN IPs: {len(self.lan_ips_auto)}")
+        print(f"VPN IPs: {len(self.vpn_ips_auto)}")
+        print("=" * 70)
