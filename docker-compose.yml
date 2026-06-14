@@ -7,6 +7,7 @@
 #
 # Services:
 #   agent   - Anomaly detection agent (read JSONL or built-in UDP syslog)
+#   postgres- Persistent event storage (events, anomalies, baselines)
 #   vllm    - Optional vLLM inference server (GPU required)
 #
 # Modes:
@@ -42,8 +43,28 @@ services:
       # vLLM inference server (optional, for future LLM-based analysis)
       - VLLM_BASE_URL=${VLLM_BASE_URL:-}
       - VLLM_MODEL=${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
+      # PostgreSQL database
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-opnsense}
+      - DB_USER=${DB_USER:-opnsense}
+      - DB_PASSWORD=${DB_PASSWORD:-opnsense}
+      # Detection tuning
+      - PORTSCAN_WINDOW=${PORTSCAN_WINDOW:-60}
+      - PORTSCAN_THRESHOLD=${PORTSCAN_THRESHOLD:-5}
+      - SYN_WINDOW=${SYN_WINDOW:-60}
+      - SYN_THRESHOLD=${SYN_THRESHOLD:-100}
+      - AUTH_WINDOW=${AUTH_WINDOW:-60}
+      - AUTH_THRESHOLD=${AUTH_THRESHOLD:-15}
+      - STAT_WINDOW=${STAT_WINDOW:-60}
+      - STAT_ZSCORE=${STAT_ZSCORE:-3.0}
+      - STAT_DEVIATION=${STAT_DEVIATION:-0.8}
+      - DEDUP_SECONDS=${DEDUP_SECONDS:-300}
+      - POLL_INTERVAL=${POLL_INTERVAL:-2}
+      - BATCH_SIZE=${BATCH_SIZE:-50}
+      - LEARN_INTERVAL=${LEARN_INTERVAL:-300}
     volumes:
-      # Persist learned patterns and event files across restarts
+      # Persist learned patterns, GeoLite2 DB, and event files across restarts
       - ./agent_data:/app/agent_data
     ports:
       # Chat command HTTP endpoint
@@ -52,31 +73,45 @@ services:
     # This gives the agent direct access to bind on port 1514
     network_mode: host
 
-  # vllm:
-  #   # Optional: vLLM inference server for LLM-based anomaly analysis
-  #   # Uncomment and configure if you want to run vLLM locally
-  #   # Requires GPU with at least 40GB VRAM for 35B models
-  #   image: vllm/vllm-openai:latest
-  #   container_name: anomaly-vllm
-  #   restart: unless-stopped
-  #   environment:
-  #     - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
-  #   volumes:
-  #     - vllm-cache:/root/.cache/huggingface
-  #   ports:
-  #     - "8000:8000"
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   command: >
-  #     --model ${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
-  #     --max-model-len 4096
-  #     --tensor-parallel-size 1
-  #     --max-num-seqs 8
+  postgres:
+    image: postgres:16-alpine
+    container_name: anomaly-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${DB_NAME:-opnsense}
+      - POSTGRES_USER=${DB_USER:-opnsense}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-opnsense}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432/tcp"
 
-# volumes:
+# vllm:
+#   # Optional: vLLM inference server for LLM-based anomaly analysis
+#   # Uncomment and configure if you want to run vLLM locally
+#   # Requires GPU with at least 40GB VRAM for 35B models
+#   image: vllm/vllm-openai:latest
+#   container_name: anomaly-vllm
+#   restart: unless-stopped
+#   environment:
+#     - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+#   volumes:
+#     - vllm-cache:/root/.cache/huggingface
+#   ports:
+#     - "8000:8000"
+#   deploy:
+#     resources:
+#       reservations:
+#         devices:
+#           - driver: nvidia
+#             count: 1
+#             capabilities: [gpu]
+#   command: >
+#     --model ${VLLM_MODEL:-QuantTrio/Qwen3.6-35B-A3B-AWQ}
+#     --max-model-len 4096
+#     --tensor-parallel-size 1
+#     --max-num-seqs 8
+
+volumes:
+  pgdata:
 #   vllm-cache:
