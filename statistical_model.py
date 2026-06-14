@@ -174,9 +174,10 @@ class StatisticalModel:
     METRIC_UNIQUE_PORTS_PER_MIN = "unique_dst_ports_per_minute"
     METRIC_PACKETS_PER_MIN = "packets_per_minute"
     
-    def __init__(self, default_threshold: float = 3.0, min_samples: int = 30):
+    def __init__(self, default_threshold: float = 3.0, min_samples: int = 30, window_minutes: int = 60):
         self.default_threshold = default_threshold
         self.min_samples = min_samples
+        self.window_minutes = window_minutes
         
         # Baselines by metric name
         self._baselines: Dict[str, Baseline] = {}
