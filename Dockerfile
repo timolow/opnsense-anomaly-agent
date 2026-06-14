@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all source files
 COPY agent.py .
 COPY syslog_listener.py .
-COPY parser.py .
+COPY adaptive_parser.py .
 COPY eventdb.py .
 COPY attack_detectors.py .
 COPY statistical_model.py .
