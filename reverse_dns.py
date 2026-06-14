@@ -2,13 +2,14 @@
 Reverse DNS lookup for OPNsense anomaly detection agent.
 
 Provides IP-to-hostname resolution with caching and configurable DNS server.
-Used during event processing to enrich events with hostname information.
+Uses dnspython for direct queries to the specified DNS server.
 """
 
-import socket
 import time
 import logging
 from typing import Optional, Dict
+
+import dns.resolver
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class ReverseDNSResolver:
     ):
         """
         Args:
-            dns_server: DNS server IP address (e.g., "192.168.1.1")
+            dns_server: DNS server IP address (e.g. "192.168.1.1")
             enabled: Whether reverse DNS resolution is active
             cache_ttl: Cache TTL in seconds (default 1 hour)
         """
@@ -34,17 +35,34 @@ class ReverseDNSResolver:
         self._cache: Dict[str, tuple[str, float]] = {}
         self._resolve_count = 0
         self._miss_count = 0
+        self._error_count = 0
+
+        # Build a nameserver list that dnspython can use
+        # We create a Resolver instance with our custom nameserver
+        self._resolver = dns.resolver.Resolver()
+        self._resolver.nameservers = [dns_server]
+        self._resolver.timeout = 2  # 2 second timeout per query
+        self._resolver.lifetime = 4  # 4 second total lifetime
 
         if self.enabled:
-            logger.info("Reverse DNS resolver enabled (server=%s, ttl=%ds)", dns_server, cache_ttl)
+            logger.info(
+                "Reverse DNS resolver enabled (server=%s, ttl=%ds)",
+                dns_server, cache_ttl,
+            )
         else:
-            logger.info("Reverse DNS resolver disabled (set REVERSE_DNS_ENABLED=true to enable)")
+            logger.info(
+                "Reverse DNS resolver disabled "
+                "(set REVERSE_DNS_ENABLED=true to enable)"
+            )
 
     def lookup(self, ip: str) -> Optional[str]:
         """Resolve an IP address to hostname.
 
-        Returns the hostname string if found, None if not available or resolution fails.
-        Uses cache to avoid repeated lookups.
+        Returns the hostname string if found, None if not available or
+        resolution fails. Uses cache to avoid repeated lookups.
+
+        Uses dnspython to send PTR queries directly to the configured
+        DNS server instead of relying on the system resolver.
         """
         if not self.enabled or not ip:
             return None
@@ -57,24 +75,61 @@ class ReverseDNSResolver:
             else:
                 del self._cache[ip]
 
-        # Attempt resolution
+        # Attempt resolution via dnspython
         try:
-            # Override DNS resolver by using socket with the specified server
-            hostname, _, _ = socket.gethostbyaddr(ip)
-            self._cache[ip] = (hostname, time.time())
-            self._resolve_count += 1
-            logger.debug("Resolved %s -> %s", ip, hostname)
-            return hostname
-        except socket.herror:
+            # Build the reverse DNS query name for the IP
+            # e.g. 1.168.192.in-addr.arpa for 192.168.1.1
+            import ipaddress
+
+            addr = ipaddress.ip_address(ip)
+            # in-addr.arpa for IPv4
+            reverse_name = addr.reverse_pointer
+
+            # Query for PTR records
+            answers = self._resolver.query(reverse_name, "PTR")
+
+            if answers:
+                # Return the first answer, strip trailing dot
+                hostname = str(answers[0].target).rstrip(".")
+                self._cache[ip] = (hostname, time.time())
+                self._resolve_count += 1
+                logger.debug("Resolved %s -> %s via %s", ip, hostname, self.dns_server)
+                return hostname
+            else:
+                self._miss_count += 1
+                logger.debug("No PTR record for %s (%s)", ip, self.dns_server)
+                return None
+
+        except dns.resolver.NoAnswer:
             self._miss_count += 1
-            logger.debug("No PTR record for %s", ip)
+            logger.debug("No PTR record for %s (%s)", ip, self.dns_server)
             return None
-        except socket.gaierror as e:
+
+        except dns.resolver.NXDOMAIN:
             self._miss_count += 1
-            logger.debug("DNS lookup failed for %s: %s", ip, e)
+            logger.debug("NXDOMAIN for %s (%s)", ip, self.dns_server)
             return None
+
+        except dns.exception.Timeout:
+            self._error_count += 1
+            logger.debug("DNS timeout resolving %s via %s", ip, self.dns_server)
+            return None
+
+        except dns.resolver.NoNameservers:
+            self._error_count += 1
+            logger.warning(
+                "No nameservers available for %s (%s)", ip, self.dns_server
+            )
+            return None
+
+        except dns.exception.DNSException as e:
+            self._error_count += 1
+            logger.debug("DNS error resolving %s via %s: %s", ip, self.dns_server, e)
+            return None
+
         except Exception as e:
-            logger.warning("Unexpected error resolving %s: %s", ip, e)
+            self._error_count += 1
+            logger.warning("Unexpected error resolving %s via %s: %s", ip, self.dns_server, e)
             return None
 
     def get_stats(self) -> dict:
@@ -85,6 +140,7 @@ class ReverseDNSResolver:
             "cache_size": len(self._cache),
             "resolve_count": self._resolve_count,
             "miss_count": self._miss_count,
+            "error_count": self._error_count,
         }
 
     def is_available(self) -> bool:
