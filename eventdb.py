@@ -140,6 +140,17 @@ class EventDatabase:
         self._initialized = True
         logger.info("Database tables ensured")
     
+    def ensure_indexes(self):
+        """Ensure database indexes exist.
+        
+        Indexes are created alongside tables in CREATE_TABLES_SQL
+        via CREATE INDEX IF NOT EXISTS. This method is called
+        separately by agent.py for compatibility.
+        """
+        # Tables + indexes are already ensured by ensure_tables
+        # This method exists for agent.py compatibility
+        pass
+    
     def close(self):
         """Close the database connection."""
         if self._connection and self._connection.closed == 0:
