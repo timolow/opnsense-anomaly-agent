@@ -13,9 +13,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source files
+# Copy all source files
 COPY agent.py .
 COPY syslog_listener.py .
+COPY parser.py .
+COPY eventdb.py .
+COPY attack_detectors.py .
+COPY statistical_model.py .
+COPY geo_lookup.py .
+COPY discord_bot.py .
 
 # Create data directory
 RUN mkdir -p /app/agent_data
