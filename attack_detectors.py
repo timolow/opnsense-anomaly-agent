@@ -46,8 +46,16 @@ class PortScanDetector:
         if isinstance(ts_raw, datetime):
             return ts_raw
         if isinstance(ts_raw, str):
-            # Try ISO format first (events from JSONL)
-            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+            # Handle ISO format with optional microseconds
+            for fmt in (
+                '%Y-%m-%dT%H:%M:%S.%f%z',  # with microseconds + tz
+                '%Y-%m-%dT%H:%M:%S%z',     # no microseconds + tz
+                '%Y-%m-%dT%H:%M:%S.%f',    # with microseconds, no tz
+                '%Y-%m-%dT%H:%M:%SZ',      # UTC suffix
+                '%Y-%m-%dT%H:%M:%S',       # no tz
+                '%Y-%m-%d %H:%M:%S.%f',    # space-separated + us
+                '%Y-%m-%d %H:%M:%S',       # space-separated
+            ):
                 try:
                     dt = datetime.strptime(ts_raw, fmt)
                     if dt.tzinfo is None:
@@ -63,7 +71,7 @@ class PortScanDetector:
         self._events[src_ip] = [
             (t, d, p) for t, d, p in self._events[src_ip] if t >= cutoff
         ]
-    
+
     def check(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Check if this event is part of a port scan."""
         src_ip = event.get('src_ip')
@@ -146,7 +154,12 @@ class SYNFloodDetector:
         if isinstance(ts_raw, datetime):
             return ts_raw
         if isinstance(ts_raw, str):
-            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+            for fmt in (
+                '%Y-%m-%dT%H:%M:%S.%f%z',
+                '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
+            ):
                 try:
                     dt = datetime.strptime(ts_raw, fmt)
                     if dt.tzinfo is None:
@@ -233,7 +246,12 @@ class BruteForceDetector:
         if isinstance(ts_raw, datetime):
             return ts_raw
         if isinstance(ts_raw, str):
-            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+            for fmt in (
+                '%Y-%m-%dT%H:%M:%S.%f%z',
+                '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
+            ):
                 try:
                     dt = datetime.strptime(ts_raw, fmt)
                     if dt.tzinfo is None:
@@ -313,7 +331,12 @@ class ProbeDetector:
         if isinstance(ts_raw, datetime):
             return ts_raw
         if isinstance(ts_raw, str):
-            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+            for fmt in (
+                '%Y-%m-%dT%H:%M:%S.%f%z',
+                '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S.%f',
+                '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S',
+                '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
+            ):
                 try:
                     dt = datetime.strptime(ts_raw, fmt)
                     if dt.tzinfo is None:

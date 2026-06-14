@@ -140,14 +140,14 @@ class TestSYNFloodDetector:
         assert result["dst_port"] == 443
 
     def test_window_expiration(self):
-        detector = SYNFloodDetector(syn_threshold=3, window_seconds=1)
+        detector = SYNFloodDetector(syn_threshold=3, window_seconds=5)
         now = datetime.now(timezone.utc)
         for i in range(3):
-            ev = make_event(tcp_flags="SYN", timestamp=now - timedelta(seconds=2))
+            ev = make_event(tcp_flags="SYN", timestamp=now - timedelta(seconds=30))
             detector.check(ev)
-        # Old events should be expired
+        # Old events (30s) well beyond window (5s) should be expired
         result = detector.check(make_event(tcp_flags="SYN", timestamp=now))
-        assert result is None
+        assert result is None, "Old events should be expired, only 1 current event remains"
 
 
 # ── Brute Force Tests ────────────────────────────────────────────────────
