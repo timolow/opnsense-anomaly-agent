@@ -53,6 +53,7 @@ from geo_lookup import GeoLookup
 from discord_bot import DiscordBot
 from syslog_listener import SyslogListener
 from reverse_dns import ReverseDNSResolver
+from network_classifier import NetworkClassifier
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -115,6 +116,17 @@ class Config:
         self.poll_interval = int(os.getenv("POLL_INTERVAL", "2"))
         self.batch_size = int(os.getenv("BATCH_SIZE", "50"))
         self.learn_interval = int(os.getenv("LEARN_INTERVAL", "300"))
+        # Network classification (WAN/LAN detection)
+        # Comma-separated list of known WAN IPs (your external IPs)
+        self.wan_ips_str = os.getenv("WAN_IPS", "")
+        # Comma-separated list of known LAN IP ranges (CIDR or individual)
+        self.lan_ips_str = os.getenv("LAN_IPS", "")
+        # Comma-separated list of VPN networks (CIDR)
+        self.vpn_ips_str = os.getenv("VPN_IPS", "")
+        # Custom interface-to-class mapping: "iface=class,iface2=class2"
+        self.custom_interfaces_str = os.getenv("CUSTOM_INTERFACES", "")
+        # Auto-discover interfaces from log data
+        self.network_auto_discover = os.getenv("NETWORK_AUTO_DISCOVER", "true").lower() == "true"
 
 
 # ── vLLM client (optional) ─────────────────────────────────────────────
@@ -336,6 +348,30 @@ class OPNsenseAgent:
             cache_ttl=self.config.reverse_dns_cache_ttl,
         )
 
+        # Network classifier (WAN/LAN detection) — reads env vars directly
+        self.network_classifier = NetworkClassifier()
+        self._network_discovered = False
+
+    def _ensure_network_discovered(self):
+        """Discover interfaces from traffic data if not already done.
+        
+        Called lazily during event processing so we have data to analyze.
+        """
+        if self._network_discovered:
+            return
+        if self.config.network_auto_discover:
+            self.network_classifier.auto_discover_interfaces()
+            net_stats = self.network_classifier.get_stats()
+            logger.info(
+                "Network classifier discovered: %d WAN interfaces, %d LAN interfaces, "
+                "%d WAN IPs, %d LAN IPs",
+                len(net_stats["wan_interfaces"]),
+                len(net_stats["lan_interfaces"]),
+                net_stats["wan_ips_count"],
+                net_stats["lan_ips_count"],
+            )
+        self._network_discovered = True
+
         # Counters
         self.event_count = 0
         self.anomaly_count = 0
@@ -356,8 +392,19 @@ class OPNsenseAgent:
 
     # ── helpers ──────────────────────────────────────────────────────
     def _process_event(self, event: dict):
-        """Single-event pipeline: store → stat model → attack detectors → geo → alert."""
+        """Single-event pipeline: classify → reverse DNS → store → stat model → attack detectors → geo → alert."""
         event["processed_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Lazy interface discovery (needs traffic data)
+        self._ensure_network_discovered()
+        
+        # Record interface for auto-discovery
+        if self.network_classifier is not None:
+            self.network_classifier.record_interface_event(event)
+
+        # Classify traffic as WAN/LAN/VPN/internal (uses interface + env vars)
+        if self.network_classifier is not None:
+            self.network_classifier.classify_event(event, interface=event.get("interface"))
         
         # Reverse DNS lookup (before storing/enriching)
         if self.reverse_dns.enabled:
@@ -420,10 +467,20 @@ class OPNsenseAgent:
         mode = "syslog" if self.config.syslog_enabled else "direct"
         stats = self.stat_model.get_stats()
         dns_stats = self.reverse_dns.get_stats() if self.reverse_dns.enabled else None
+        net_parts = []
+        if self.network_classifier is not None:
+            net_s = self.network_classifier.get_stats()
+            net_parts.append(
+                f"wan_ifaces={len(net_s.get('wan_interfaces', []))}, "
+                f"lan_ifaces={len(net_s.get('lan_interfaces', []))}"
+            )
+        extra = " | ".join(net_parts) + (
+            f" | reverse_dns: resolves={dns_stats['resolve_count']} misses={dns_stats['miss_count']}"
+            if dns_stats else ""
+        )
         logger.info(
             "Status: %s events, %s anomalies, uptime: %ds | mode: %s | "
-            "unique_ips: %s | ports_tracked: %s | country_events: %s"
-            + (f" | reverse_dns: resolves={dns_stats['resolve_count']} misses={dns_stats['miss_count']}" if dns_stats else ""),
+            "unique_ips: %s | ports_tracked: %s | country_events: %s%s",
             self.event_count,
             self.anomaly_count,
             uptime,
@@ -431,6 +488,7 @@ class OPNsenseAgent:
             stats.get("unique_ips", 0),
             stats.get("unique_ports", 0),
             stats.get("country_events", 0),
+            f" | {extra}" if extra else "",
         )
 
     def _periodic_adapt(self):
