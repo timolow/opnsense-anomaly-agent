@@ -72,15 +72,13 @@ services:
       # GeoLite2 / MaxMind (optional)
       - MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID:-}
       - MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY:-}
+      # GeoLite2 database path (inside container)
+      - GEO_DB_PATH=${GEO_DB_PATH:-/app/data/GeoLite2-Country.mmdb}
     volumes:
       # Persist learned patterns, GeoLite2 DB, and event files across restarts
       - ./agent_data:/app/agent_data
-      # GeoLite2 database (mount only if you have it)
-      - ./data/GeoLite2-Country.mmdb:/app/data/GeoLite2-Country.mmdb:ro
+      # GeoLite2 database (mounted when available)
       - ./data:/app/data
-    environment:
-      # GeoLite2 database path
-      - GEO_DB_PATH=/app/data/GeoLite2-Country.mmdb
     ports:
       # Syslog UDP listener (built-in UDP when SYSLOG_ENABLED=true)
       - "${SYSLOG_UDP_PORT:-1514}:1514/udp"
