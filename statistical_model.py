@@ -317,3 +317,18 @@ class StatisticalModel:
                     'threshold': baseline.anomaly_threshold,
                 }
         return summary
+
+    # ── Agent.py compatibility methods ─────────────────────────────
+
+    def add_event(self, event: Dict[str, Any]):
+        """Alias for record_event, used by agent.py."""
+        self.record_event(event)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Return aggregate stats for status logging."""
+        return {
+            'unique_ips': len(self._src_ips_per_min.get(self._bucket_key(datetime.now(timezone.utc)), set()))
+                         + len(self._dst_ips_per_min.get(self._bucket_key(datetime.now(timezone.utc)), set())),
+            'unique_ports': len(self._ports_per_min.get(self._bucket_key(datetime.now(timezone.utc)), set())),
+            'country_events': 0,  # placeholder until geo lookup is active
+        }
