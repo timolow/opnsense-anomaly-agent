@@ -277,7 +277,6 @@ class DiscordClient:
             data = {
                 'embeds': [embed.to_dict()],
                 'username': 'OPNsense Alert Bot',
-                'avatar_url': '',
             }
             
             async with aiohttp.ClientSession() as session:
