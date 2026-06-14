@@ -25,6 +25,9 @@ services:
       dockerfile: Dockerfile
     container_name: anomaly-agent
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       # OPNsense API (used for status lookups, not event polling)
       - OPN_HOST=${OPN_HOST:-192.168.1.1}
@@ -67,11 +70,10 @@ services:
       # Persist learned patterns, GeoLite2 DB, and event files across restarts
       - ./agent_data:/app/agent_data
     ports:
+      # Syslog UDP listener (built-in UDP when SYSLOG_ENABLED=true)
+      - "${SYSLOG_UDP_PORT:-1514}:1514/udp"
       # Chat command HTTP endpoint
       - "${CHAT_PORT:-8765}:8765/tcp"
-    # Use host networking for syslog UDP receive when SYSLOG_ENABLED=true
-    # This gives the agent direct access to bind on port 1514
-    network_mode: host
 
   postgres:
     image: postgres:16-alpine
@@ -85,6 +87,12 @@ services:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "${DB_PORT:-5432}:5432/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 # vllm:
 #   # Optional: vLLM inference server for LLM-based anomaly analysis

@@ -341,13 +341,29 @@ class OPNsenseAgent:
 
         # Sub-modules
         self.event_reader = EventReader(self.config)
-        self.db = EventDatabase(
-            host=self.config.db_host,
-            port=self.config.db_port,
-            database=self.config.db_name,
-            user=self.config.db_user,
-            password=self.config.db_password,
-        )
+
+        # DB connection with retry (postgres may take 5-10s to initialize)
+        self.db = None
+        for attempt in range(1, 11):
+            try:
+                self.db = EventDatabase(
+                    host=self.config.db_host,
+                    port=self.config.db_port,
+                    database=self.config.db_name,
+                    user=self.config.db_user,
+                    password=self.config.db_password,
+                )
+                self.db.ensure_tables()
+                self.db.ensure_indexes()
+                logger.info("Connected to PostgreSQL %s:%s (%s)", self.config.db_host, self.config.db_port, self.config.db_name)
+                break
+            except Exception as e:
+                logger.warning("PostgreSQL attempt %d/10 failed: %s", attempt, e)
+                if attempt == 10:
+                    logger.error("PostgreSQL connection failed after 10 attempts — agent cannot run without DB")
+                    raise
+                time.sleep(3)
+        assert self.db is not None  # type: ignore[unreachable]
         self.stat_model = StatisticalModel(window_minutes=self.config.stat_window)
         self.geo_lookup = GeoLookup(db_path=self.config.geo_db_path)
         self.attack_detector = AggregatedAttackDetector(
