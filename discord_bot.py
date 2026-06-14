@@ -285,7 +285,8 @@ class DiscordClient:
                         logger.info(f"Discord alert sent for {attack.get('attack_type')}")
                         return True
                     else:
-                        logger.error(f"Discord API error: {resp.status}")
+                        error_body = await resp.text()
+                        logger.error(f"Discord API error: {resp.status} body: {error_body}")
                         return False
         except Exception as e:
             logger.error(f"Failed to send Discord alert: {e}")
