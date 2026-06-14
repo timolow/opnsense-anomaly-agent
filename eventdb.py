@@ -101,7 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_anomalies_timestamp ON anomalies(timestamp);
 """
 
 
-class EventDB:
+class EventDatabase:
     """Manages PostgreSQL connection and all database operations."""
     
     def __init__(self, host=None, port=None, database=None, user=None, password=None):
