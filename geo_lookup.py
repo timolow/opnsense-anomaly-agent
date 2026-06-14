@@ -339,11 +339,23 @@ class GeoAnomalyDetector:
         
         return detections[0] if detections else None
     
-    def _should_check_geo(self, ts: datetime) -> bool:
+    def _should_check_geo(self, ts) -> bool:
         """Check if we should perform geo lookup for this event."""
         # Rate limit geo lookups: check every 5th blocked event
         # This avoids overwhelming the API with lookups
-        self._recent_countries.add(ts.strftime('%M'))
+        minute_str = ts
+        if isinstance(ts, datetime):
+            minute_str = ts.strftime('%M')
+        elif isinstance(ts, str):
+            # Try to extract minute from various timestamp formats
+            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+                try:
+                    dt = datetime.strptime(ts, fmt)
+                    minute_str = dt.strftime('%M')
+                    break
+                except ValueError:
+                    continue
+        self._recent_countries.add(minute_str)
         if len(self._recent_countries) < 5:
             return False
         self._recent_countries.clear()
