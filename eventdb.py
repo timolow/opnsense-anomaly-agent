@@ -491,3 +491,47 @@ class EventDatabase:
                 'connected': False,
                 'error': str(e),
             }
+
+    def _save_baselines(self, baselines_data: Optional[Dict[str, Any]] = None):
+        """Persist statistical baselines to the database.
+        
+        Called periodically by the agent to save learned patterns
+        so they survive container restarts.
+        
+        Args:
+            baselines_data: Optional dict of {metric_name: {mean, stddev, count}}.
+                          If None, logs a warning.
+        """
+        try:
+            if not baselines_data:
+                logger.warning("No baselines data provided to _save_baselines")
+                return
+            
+            conn = self.connect()
+            cur = conn.cursor()
+            try:
+                for metric_name, stats in baselines_data.items():
+                    cur.execute(
+                        """INSERT INTO baselines 
+                           (metric_name, mean, stddev, count, last_updated)
+                           VALUES (%s, %s, %s, %s, NOW())
+                           ON CONFLICT (metric_name) 
+                           DO UPDATE SET 
+                               mean = EXCLUDED.mean,
+                               stddev = EXCLUDED.stddev,
+                               count = EXCLUDED.count,
+                               last_updated = EXCLUDED.last_updated""",
+                        (
+                            metric_name,
+                            stats.get('mean', 0),
+                            stats.get('stddev', 0),
+                            stats.get('count', 0),
+                        )
+                    )
+                conn.commit()
+                logger.info("Baselines saved to database: %s metrics", len(baselines_data))
+            finally:
+                cur.close()
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to save baselines: %s", e)

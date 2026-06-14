@@ -521,7 +521,9 @@ class OPNsenseAgent:
                     # Save state periodically
                     if now - self.last_save >= self.config.learn_interval:
                         self.last_save = now
-                        self.db._save_baselines()
+                        # Get baseline summary to persist
+                        baseline_summary = self.stat_model.get_baseline_summary()
+                        self.db._save_baselines(baseline_summary)
 
                     # Periodic status
                     if self.event_count % 100 == 0 and self.event_count > 0:
