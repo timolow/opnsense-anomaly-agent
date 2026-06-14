@@ -343,7 +343,7 @@ class NetworkClassifier:
     def get_stats(self) -> Dict:
         """Return classification stats for status logging."""
         wan_list = self.get_all_wan_ips(min_events=1)
-        own_list = self.get_own_wan_ips(min_events=1)
+        own_list = self.get_own_wan_ips()
         
         return {
             "wan_ips_count": len(wan_list),
@@ -361,7 +361,7 @@ class NetworkClassifier:
     def print_wan_summary(self):
         """Print a human-readable summary of discovered WAN IPs."""
         wan_list = self.get_all_wan_ips(min_events=1)
-        own_list = self.get_own_wan_ips(min_events=1)
+        own_list = self.get_own_wan_ips()
 
         print("\n" + "=" * 70)
         print("NETWORK CLASSIFICATION SUMMARY")
