@@ -47,7 +47,7 @@ DATA_DIR = BASE_DIR / "agent_data"
 DATA_DIR.mkdir(exist_ok=True)
 
 # Import submodules
-from parser import parse_filterlog_line
+from adaptive_parser import AdaptiveParser
 from eventdb import EventDatabase
 from attack_detectors import AttackDetector
 from statistical_model import StatisticalModel
@@ -218,7 +218,9 @@ class EventReader:
                         continue
                     try:
                         event = json.loads(line)
-                        if event.get("src_ip") and event.get("proto"):
+                        # Accept all parsed events - the adaptive parser already filters
+                        # useless noise. System messages, ICMP, IPv6, etc. all get through.
+                        if event.get("raw"):
                             event["_line_number"] = line_num
                             events.append(event)
                             count += 1
@@ -388,12 +390,16 @@ class OPNsenseAgent:
         # Chat command server
         self.chat_thread = _start_chat_server(self, self.config.chat_port)
 
+        # Adaptive parser instance
+        self.adaptive_parser = AdaptiveParser()
+
         # Counters
         self.event_count = 0
         self.anomaly_count = 0
         self.start_time = time.time()
         self.last_save = time.time()
         self.last_learn = time.time()
+        self._adapt_cycle = 0
 
         # Shutdown
         self._shutdown = Event()
@@ -466,6 +472,30 @@ class OPNsenseAgent:
             stats.get("country_events", 0),
         )
 
+    def _periodic_adapt(self):
+        """Every N events, sample raw logs and let the adaptive parser discover new patterns."""
+        logger.info("Running periodic adaptation check...")
+        path = self.config.jsonl_path
+        if not path.exists():
+            return
+        # Sample last 100 raw lines
+        try:
+            with open(path) as f:
+                lines = f.readlines()[-100:]
+            raw_samples = []
+            for line in lines:
+                try:
+                    evt = json.loads(line.strip())
+                    if evt.get("raw"):
+                        raw_samples.append(evt["raw"])
+                except json.JSONDecodeError:
+                    continue
+            if raw_samples:
+                report = self.adaptive_parser.adapt(raw_samples)
+                logger.info("Adaptation report: %s", report)
+        except Exception as e:
+            logger.warning("Adaptation check failed: %s", e)
+
     # ── main loop ────────────────────────────────────────────────────
     def run(self):
         """Start the agent."""
@@ -514,6 +544,12 @@ class OPNsenseAgent:
                         self.stat_model.learn(events)
                         self.last_learn = now
                         logger.info("Learned from %s events (total: %s)", len(events), self.event_count)
+
+                        # Periodic adaptation: every 3 learn cycles, re-analyze raw patterns
+                        self._adapt_cycle += 1
+                        if self._adapt_cycle >= 3:
+                            self._periodic_adapt()
+                            self._adapt_cycle = 0
 
                     # Detect anomalies on all events
                     self._process_batch(events)
