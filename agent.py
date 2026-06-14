@@ -49,14 +49,7 @@ DATA_DIR.mkdir(exist_ok=True)
 # Import submodules
 from parser import parse_filterlog_line
 from eventdb import EventDatabase
-from attack_detectors import (
-    PortScanDetector,
-    SYNFloodDetector,
-    BruteForceDetector,
-    ProbeDetector,
-    AggregatedAttackDetector,
-    AlertDeduplicator,
-)
+from attack_detectors import AttackDetector
 from statistical_model import StatisticalModel
 from geo_lookup import GeoLookup
 from discord_bot import DiscordBot
@@ -366,15 +359,19 @@ class OPNsenseAgent:
         assert self.db is not None  # type: ignore[unreachable]
         self.stat_model = StatisticalModel(window_minutes=self.config.stat_window)
         self.geo_lookup = GeoLookup(db_path=self.config.geo_db_path)
-        self.attack_detector = AggregatedAttackDetector(
-            portscan_window=self.config.portscan_window,
-            portscan_threshold=self.config.portscan_threshold,
-            syn_window=self.config.syn_window,
-            syn_threshold=self.config.syn_threshold,
-            auth_window=self.config.auth_window,
-            auth_threshold=self.config.auth_threshold,
+        
+        # Attack detector with built-in dedup
+        self.attack_detector = AttackDetector(
+            dedup_seconds=self.config.dedup_seconds,
+            config={
+                'port_scan_window': self.config.portscan_window,
+                'port_scan_threshold': self.config.portscan_threshold,
+                'syn_flood_window': self.config.syn_window,
+                'syn_flood_threshold': self.config.syn_threshold,
+                'brute_force_window': self.config.auth_window,
+                'brute_force_threshold': self.config.auth_threshold,
+            },
         )
-        self.deduplicator = AlertDeduplicator(dedup_seconds=self.config.dedup_seconds)
 
         # vLLM (optional)
         self.vllm_client = VLLMClient(self.config)
@@ -412,23 +409,22 @@ class OPNsenseAgent:
         # Statistical model
         self.stat_model.add_event(event)
 
-        # Attack detectors
-        attacks = self.attack_detector.check(event)
+        # Attack detectors (dedup is built-in)
+        attacks = self.attack_detector.check_event(event)
         if attacks:
             for attack in attacks:
                 attack.setdefault("timestamp", event.get("timestamp", ""))
                 self.anomaly_count += 1
-                if self.deduplicator.should_alert(attack):
-                    llm_analysis = None
-                    if self.vllm_client.enabled:
-                        llm_analysis = self.vllm_client.analyze_anomaly(
-                            event, attack["type"], attack.get("details", "")
-                        )
-                    self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
+                llm_analysis = None
+                if self.vllm_client.enabled:
+                    llm_analysis = self.vllm_client.analyze_anomaly(
+                        event, attack.get("attack_type", ""), attack.get("description", "")
+                    )
+                self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
 
         # Geo lookup
         geo_result = self.geo_lookup.check_event(event)
-        if geo_result and self.deduplicator.should_alert(geo_result):
+        if geo_result:
             self.anomaly_count += 1
             self.discord_bot.send_alert(geo_result)
 
