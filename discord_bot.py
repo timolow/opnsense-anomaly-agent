@@ -2,17 +2,16 @@
 Discord bot for OPNsense anomaly detection agent.
 
 Provides rate-limited alerting to Discord with rich embeds per
-attack type. Supports chat commands via @mentions.
+attack type. Uses discord.py library for proper bot API integration.
 """
 
 import os
-import re
 import time
-import json
 import asyncio
+import threading
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List, Set
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -33,49 +32,24 @@ class RateLimiter:
         self._dedup_keys: Dict[str, float] = {}
     
     def should_alert(self, signal: str, dedup_key: Optional[str] = None) -> bool:
-        """Check if we should send an alert for this signal.
-        
-        Args:
-            signal: Attack type (e.g. 'PORT_SCAN')
-            dedup_key: Unique key per specific alert instance
-            
-        Returns:
-            True if alert should be sent
-        """
         now = time.time()
-        
-        # Check interval
         last = self._last_alert.get(signal, 0)
         if now - last < self.interval:
             return False
-        
-        # Check dedup
         if dedup_key and dedup_key in self._dedup_keys:
             if time.time() - self._dedup_keys[dedup_key] < self.dedup_window:
                 return False
-            # Expired — allow again
-        
-        # Record
         self._last_alert[signal] = now
         if dedup_key:
             self._dedup_keys[dedup_key] = now
-            # Cleanup old dedup keys
             cutoff = now - self.dedup_window
-            self._dedup_keys = {
-                k: v for k, v in self._dedup_keys.items()
-                if v >= cutoff
-            }
-        
+            self._dedup_keys = {k: v for k, v in self._dedup_keys.items() if v >= cutoff}
         return True
     
     def cleanup_dedup(self):
-        """Remove expired dedup keys."""
         now = time.time()
         cutoff = now - self.dedup_window
-        self._dedup_keys = {
-            k: v for k, v in self._dedup_keys.items()
-            if v >= cutoff
-        }
+        self._dedup_keys = {k: v for k, v in self._dedup_keys.items() if v >= cutoff}
 
 
 # ============================================================
@@ -93,39 +67,27 @@ class AlertEmbed:
     timestamp: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to Discord API embed format."""
-        result = {
+        return {
             'title': self.title,
             'description': self.description,
             'color': self.color,
             'timestamp': self.timestamp or datetime.now(timezone.utc).isoformat(),
             'fields': self.fields,
         }
-        return result
 
 
 def severity_color(severity: str) -> int:
-    """Convert severity level to Discord embed color."""
     colors = {
-        'CRITICAL': 0xFF0000,  # Red
-        'HIGH': 0xFF6600,       # Orange
-        'MEDIUM': 0xFFAA00,     # Yellow-orange
-        'LOW': 0x00AACC,        # Blue
-        'INFO': 0x6699CC,       # Light blue
+        'CRITICAL': 0xFF0000,
+        'HIGH': 0xFF6600,
+        'MEDIUM': 0xFFAA00,
+        'LOW': 0x00AACC,
+        'INFO': 0x6699CC,
     }
     return colors.get(severity.upper(), 0x6699CC)
 
 
 def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
-    """Generate a rich Discord embed for an attack detection.
-    
-    Different attack types get different layouts:
-    - PORT_SCAN: Shows scanned ports and target
-    - SYN_FLOOD: Shows SYN rate and top sources
-    - BRUTE_FORCE: Shows target service and attempts
-    - PROBE: Shows probe type and signature
-    - SCAN: Shows scan type and results
-    """
     attack_type = attack.get('attack_type', 'UNKNOWN')
     severity = attack.get('severity', 'LOW')
     detail = attack.get('detail', {})
@@ -141,7 +103,7 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
     title = ''
     
     if attack_type == 'PORT_SCAN':
-        title = f"🔍 Port Scan Detected"
+        title = f"Port Scan Detected"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -151,9 +113,8 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Scanned Ports', 'value': ', '.join(str(p) for p in detail.get('ports', [])[:10]) or 'N/A', 'inline': False},
             {'name': 'Protocol', 'value': attack.get('proto', 'N/A'), 'inline': True},
         ]
-    
     elif attack_type == 'SYN_FLOOD':
-        title = f"⚡ SYN Flood Detected"
+        title = f"SYN Flood Detected"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -163,9 +124,8 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Window', 'value': f"{detail.get('window_seconds', 0)}s", 'inline': True},
             {'name': 'Top Sources', 'value': '\n'.join(f"• {ip}" for ip in detail.get('top_sources', [])[:5]) or 'N/A', 'inline': False},
         ]
-    
     elif attack_type == 'BRUTE_FORCE':
-        title = f"🔑 Brute Force Attempt"
+        title = f"Brute Force Attempt"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -174,9 +134,8 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Attempts', 'value': str(detail.get('attempts', 0)), 'inline': True},
             {'name': 'Window', 'value': f"{detail.get('window_seconds', 0)}s", 'inline': True},
         ]
-    
     elif attack_type == 'PROBE':
-        title = f"🔎 Network Probe"
+        title = f"Network Probe"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -185,9 +144,8 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Signature', 'value': detail.get('signature', 'N/A')[:50] or 'N/A', 'inline': False},
             {'name': 'Protocol', 'value': attack.get('proto', 'N/A'), 'inline': True},
         ]
-    
     elif attack_type == 'SCAN':
-        title = f"📡 Network Scan"
+        title = f"Network Scan"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Target', 'value': attack.get('dst_ip', 'N/A'), 'inline': True},
@@ -196,9 +154,8 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Hosts', 'value': str(detail.get('hosts_scanned', 0)), 'inline': True},
             {'name': 'Ports', 'value': str(detail.get('ports_scanned', 0)), 'inline': True},
         ]
-    
     elif attack_type == 'STATISTICAL_ANOMALY':
-        title = f"📊 Statistical Anomaly"
+        title = f"Statistical Anomaly"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Metric', 'value': detail.get('metric', 'N/A'), 'inline': True},
@@ -208,9 +165,8 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
             {'name': 'Z-Score', 'value': str(detail.get('z_score', 'N/A')), 'inline': True},
             {'name': 'Samples', 'value': str(detail.get('sample_count', 'N/A')), 'inline': True},
         ]
-    
     else:
-        title = f"⚠️ {attack_type}"
+        title = f"{attack_type}"
         fields = [
             {'name': 'Severity', 'value': severity, 'inline': True},
             {'name': 'Details', 'value': description[:500], 'inline': False},
@@ -230,41 +186,62 @@ def generate_attack_embed(attack: Dict[str, Any]) -> AlertEmbed:
 
 
 def anomaly_to_embed(anomaly: Dict[str, Any]) -> Optional[AlertEmbed]:
-    """Convert an anomaly dict to a Discord embed."""
     if not anomaly:
         return None
-    
     return generate_attack_embed(anomaly)
 
 
 # ============================================================
-# Discord client wrapper
+# Discord bot client using discord.py
 # ============================================================
 
 
 class DiscordClient:
-    """Simplified Discord API client using webhooks."""
+    """Discord bot client using discord.py library."""
     
-    def __init__(self, webhook_url: str, channel_id: str = None):
-        self.webhook_url = webhook_url
-        self.channel_id = channel_id
+    def __init__(self, token: str, channel_id: str):
+        self.token = token
+        self.channel_id = int(channel_id) if channel_id else 0
         self.rate_limiter = RateLimiter(interval=60, dedup_window=300)
-        self._session = None
+        self._bot = None
     
-    def _get_session(self):
-        """Get or create an aiohttp session."""
-        if self._session is None:
+    def start(self):
+        """Start the discord.py bot in a thread."""
+        try:
+            import discord
+            intents = discord.Intents.default()
+            self._bot = discord.Bot(intents=intents)
+            
+            @self._bot.event
+            async def on_ready():
+                logger.info("Discord bot logged in as %s", self._bot.user)
+            
+            @self._bot.event
+            async def on_interaction(interaction):
+                if not interaction.data:
+                    return
+                command = interaction.data.get('name', '')
+                args = ' '.join(
+                    opt.get('value', '') 
+                    for opt in interaction.data.get('options', [])
+                )
+                result = handle_command(command, args)
+                await interaction.respond(content=result.get('content', ''), embeds=result.get('embeds', []))
+            
+            logger.info("Discord bot starting...")
+            self._bot.run(self.token)
+        except Exception as e:
+            logger.error("Discord bot error: %s", e)
+    
+    def stop(self):
+        if self._bot:
             try:
-                import aiohttp
-                self._session = aiohttp.ClientSession()
-            except ImportError:
-                logger.warning("aiohttp not installed; Discord will use synchronous requests")
-        return self._session
+                self._bot.stop()
+            except Exception:
+                pass
     
     async def send_alert(self, attack: Dict[str, Any]) -> bool:
-        """Send an attack alert to Discord."""
         dedup_key = f"{attack.get('attack_type')}:{attack.get('src_ip', 'x')}:{attack.get('dst_ip', 'x')}"
-        
         if not self.rate_limiter.should_alert(attack.get('attack_type'), dedup_key):
             return False
         
@@ -273,41 +250,25 @@ class DiscordClient:
             return False
         
         try:
-            import aiohttp
-            data = {
-                'embeds': [embed.to_dict()],
-                'username': 'OPNsense Alert Bot',
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.webhook_url, json=data) as resp:
-                    if resp.status == 204:
-                        logger.info(f"Discord alert sent for {attack.get('attack_type')}")
-                        return True
-                    else:
-                        error_body = await resp.text()
-                        logger.error(f"Discord API error: {resp.status} body: {error_body}")
-                        return False
+            import discord
+            intents = discord.Intents.default()
+            bot = discord.Bot(intents=intents)
+            channel = await bot.fetch_channel(self.channel_id)
+            await channel.send(embed=discord.Embed(**embed.to_dict()))
+            logger.info("Discord alert sent for %s", attack.get('attack_type'))
+            return True
         except Exception as e:
-            logger.error(f"Failed to send Discord alert: {e}")
+            logger.error("Failed to send Discord alert: %s", e)
             return False
     
-    def send_message(self, message: str) -> bool:
-        """Send a plain text message to Discord."""
+    def send_alert_sync(self, attack: Dict[str, Any]) -> bool:
         try:
-            import aiohttp
-            data = {'content': message}
-            
-            session = self._get_session()
-            if not session:
-                # Fallback to requests
-                import requests
-                resp = requests.post(self.webhook_url, json=data, timeout=10)
-                return resp.status_code == 204
-            
-            return True  # Session-based send would be async
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(self.send_alert(attack))
+            loop.close()
+            return result
         except Exception as e:
-            logger.error(f"Failed to send Discord message: {e}")
+            logger.error("Discord send_alert_sync error: %s", e)
             return False
 
 
@@ -318,12 +279,10 @@ class DiscordClient:
 
 @dataclass
 class CommandResult:
-    """Result of a chat command."""
     content: str
     embed: Optional[AlertEmbed] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to Discord API message format."""
         result = {'content': self.content}
         if self.embed:
             result['embeds'] = [self.embed.to_dict()]
@@ -331,9 +290,6 @@ class CommandResult:
 
 
 class CommandHandler:
-    """Handles Discord chat commands."""
-    
-    # Command: description
     COMMANDS = {
         'stats': 'Show current anomaly detection statistics',
         'status': 'Show agent status and configuration',
@@ -348,54 +304,34 @@ class CommandHandler:
         self._max_attacks = 50
     
     def handle_command(self, command: str, args: str = '') -> CommandResult:
-        """Handle a chat command.
-        
-        Args:
-            command: Command name (e.g. 'stats')
-            args: Command arguments
-            
-        Returns:
-            CommandResult with content and optional embed
-        """
         cmd = command.lower().strip()
-        
         if cmd == 'help':
             lines = ['**Available commands:**']
             for name, desc in self.COMMANDS.items():
                 lines.append(f'`/{name}` — {desc}')
             return CommandResult(content='\n'.join(lines))
-        
         elif cmd == 'stats':
             return self._cmd_stats()
-        
         elif cmd == 'status':
             return self._cmd_status()
-        
         elif cmd == 'attacks':
             return self._cmd_attacks()
-        
         elif cmd == 'geo':
             return self._cmd_geo()
-        
         else:
             return CommandResult(content=f"Unknown command: `{cmd}`. Type `/help` for available commands.")
     
     def _cmd_stats(self) -> CommandResult:
-        """Handle /stats command."""
         if not self.agent:
             return CommandResult(content="Agent not available.")
-        
-        # Try to get stats from agent
         stats = {}
         try:
             if hasattr(self.agent, 'get_stats'):
                 stats = self.agent.get_stats()
         except Exception:
             pass
-        
         if not stats:
             return CommandResult(content="No statistics available yet.")
-        
         lines = ['**Anomaly Detection Statistics:**']
         for key, value in stats.items():
             if isinstance(value, dict):
@@ -404,63 +340,76 @@ class CommandHandler:
                     lines.append(f'  {k}: {v}')
             else:
                 lines.append(f'**{key}:** {value}')
-        
         return CommandResult(content='\n'.join(lines))
     
     def _cmd_status(self) -> CommandResult:
-        """Handle /status command."""
         if not self.agent:
             return CommandResult(content="Agent not available.")
-        
         lines = ['**Agent Status:**']
         lines.append(f'Events processed: {getattr(self.agent, "event_count", "N/A")}')
         lines.append(f'Alerts sent: {getattr(self.agent, "alert_count", "N/A")}')
         lines.append(f'Attack types detected: {len(self._recent_attacks)}')
-        
         return CommandResult(content='\n'.join(lines))
     
     def _cmd_attacks(self) -> CommandResult:
-        """Handle /attacks command."""
         if not self._recent_attacks:
             return CommandResult(content="No attacks detected yet.")
-        
         lines = ['**Recent Attacks:**']
         for attack in self._recent_attacks[-10:]:
             ts = attack.get('timestamp', 'N/A')
             if hasattr(ts, 'isoformat'):
                 ts = ts.isoformat()
-            lines.append(f"- [{attack.get('severity', 'N/A')}] {attack.get('attack_type', 'N/A')}: {attack.get('description', 'N/A')[:60]}... ({ts})")
-        
+            lines.append(
+                f"- [{attack.get('severity', 'N/A')}] "
+                f"{attack.get('attack_type', 'N/A')}: "
+                f"{attack.get('description', 'N/A')[:60]}... ({ts})"
+            )
         return CommandResult(content='\n'.join(lines))
     
     def _cmd_geo(self) -> CommandResult:
-        """Handle /geo command."""
         if not self.agent or not hasattr(self.agent, 'geo_detector'):
             return CommandResult(content="Geo lookup not available.")
-        
         try:
             geo_stats = self.agent.geo_detector.get_country_stats()
         except Exception:
             return CommandResult(content="Failed to get geo statistics.")
-        
         lines = ['**Geographic Statistics:**']
         lines.append(f"Total countries: {geo_stats.get('total_countries', 0)}")
         lines.append(f"Normal countries: {len(geo_stats.get('normal_countries', []))}")
-        lines.append(f"High-risk countries seen: {', '.join(geo_stats.get('high_risk_seen', [])) or 'None'}")
-        
+        lines.append(
+            f"High-risk countries seen: "
+            f"{', '.join(geo_stats.get('high_risk_seen', [])) or 'None'}"
+        )
         top = geo_stats.get('top_countries', [])
         if top:
             lines.append('\n**Top source countries:**')
             for cc, count in top[:5]:
                 lines.append(f"- {cc}: {count} events")
-        
         return CommandResult(content='\n'.join(lines))
     
     def record_attack(self, attack: Dict[str, Any]):
-        """Record a detected attack for command display."""
         self._recent_attacks.append(attack)
         if len(self._recent_attacks) > self._max_attacks:
             self._recent_attacks = self._recent_attacks[-self._max_attacks:]
+
+
+# ============================================================
+# Command dispatcher for discord.py
+# ============================================================
+
+_global_command_handler = None
+
+
+def init_command_handler(handler):
+    global _global_command_handler
+    _global_command_handler = handler
+
+
+def handle_command(command: str, args: str, bot=None) -> Dict[str, Any]:
+    if _global_command_handler:
+        result = _global_command_handler.handle_command(command, args)
+        return result.to_dict()
+    return {'content': f"Unknown command: `/ {command}`"}
 
 
 # ============================================================
@@ -475,48 +424,45 @@ class DiscordBot:
         self.config = config
         self._client = None
         self._running = False
+        self._command_handler = CommandHandler()
+        init_command_handler(self._command_handler)
     
-    def _get_webhook_url(self):
-        """Construct webhook URL from token and channel_id."""
-        if self.config.discord_token and self.config.discord_channel_id:
-            return f"https://discord.com/api/webhooks/{self.config.discord_channel_id}/{self.config.discord_token}"
-        return ""
+    def _get_client(self):
+        if not self._client and self.config.discord_token and self.config.discord_channel_id:
+            self._client = DiscordClient(
+                token=self.config.discord_token,
+                channel_id=self.config.discord_channel_id,
+            )
+        return self._client
     
     def send_alert(self, attack, llm_analysis=None):
-        """Send an attack alert to Discord."""
+        client = self._get_client()
+        if not client:
+            logger.warning("Discord not configured; alerts disabled")
+            return False
         try:
-            if not self._client:
-                self._client = DiscordClient(
-                    webhook_url=self._get_webhook_url(),
-                    channel_id=self.config.discord_channel_id
-                )
-            # send_alert is async - run synchronously if needed
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                result = loop.run_until_complete(self._client.send_alert(attack))
-                loop.close()
-                return result
-            except Exception as e:
-                logger.warning("Discord send_alert error: %s", e)
-                return False
+            return client.send_alert_sync(attack)
         except Exception as e:
-            logger.warning("DiscordBot send_alert failed: %s", e)
+            logger.warning("Discord send_alert error: %s", e)
             return False
     
     def start_bot(self):
-        """Start the Discord bot (webhook-based, no persistent connection)."""
-        if self.config.discord_token:
+        client = self._get_client()
+        if client:
             self._running = True
-            logger.info("Discord bot enabled (webhook mode)")
+            thread = threading.Thread(target=client.start, daemon=True)
+            thread.start()
+            logger.info("Discord bot started")
         else:
-            logger.warning("Discord token not configured; alerts disabled")
+            logger.warning("Discord token or channel not configured; alerts disabled")
     
     def stop(self):
-        """Stop the Discord bot."""
         self._running = False
-
-
-# ============================================================
-# Chat command handler (continued)
-# ============================================================
+        if self._client:
+            self._client.stop()
+    
+    def handle_command(self, command: str, args: str = '') -> CommandResult:
+        return self._command_handler.handle_command(command, args)
+    
+    def record_attack(self, attack: Dict[str, Any]):
+        self._command_handler.record_attack(attack)
