@@ -1,0 +1,36 @@
+name: CI - Tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run unit tests (attack_detectors)
+        run: |
+          python -m pytest tests/test_attack_detectors.py -v --tb=short
+
+      - name: Run integration tests (full pipeline + embeds)
+        run: |
+          python -m pytest tests/test_integration.py -v --tb=short
+
+      - name: Summary
+        run: echo "✅ All tests passed"
