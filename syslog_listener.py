@@ -145,10 +145,18 @@ if __name__ == '__main__':
 
 
 class SyslogListener:
-    """Wrapper around run_syslog_listener providing the SyslogListener interface."""
+    """UDP syslog listener that passes parsed events directly to a callback."""
     
-    def __init__(self, config):
+    def __init__(self, config, event_callback=None):
+        """
+        Args:
+            config: Config object with syslog_port
+            event_callback: callable(event_dict) -> None
+                           Called directly for each parsed event.
+                           If None, falls back to writing JSONL (legacy).
+        """
         self.config = config
+        self.event_callback = event_callback
         self._thread = None
         self._running = False
     
@@ -157,7 +165,6 @@ class SyslogListener:
         try:
             # Override defaults from config
             self.UDP_PORT = self.config.syslog_port
-            self.OUTPUT_FILE = str(self.config.jsonl_path)
             
             self._running = True
             self._thread = threading.Thread(target=self._run, daemon=True)
@@ -176,6 +183,7 @@ class SyslogListener:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(('0.0.0.0', self.UDP_PORT))
             
+            count = 0
             while self._running:
                 try:
                     sock.settimeout(1.0)
@@ -187,11 +195,17 @@ class SyslogListener:
                     
                     event = parse_syslog_line(line)
                     if event:
-                        write_event(event)
-                        count = get_event_count() + 1
-                        set_event_count(count)
-                        logger.debug("Event #%d: %s -> %s", count,
-                                     event.get('src_ip'), event.get('dst_ip'))
+                        count += 1
+                        if self.event_callback:
+                            # Direct callback — no JSONL file
+                            self.event_callback(event)
+                            logger.debug("Event #%d: %s -> %s", count,
+                                         event.get('src_ip'), event.get('dst_ip'))
+                        else:
+                            # Legacy fallback: write JSONL
+                            write_event(event)
+                            event_count = get_event_count() + 1
+                            set_event_count(event_count)
                 except socket.timeout:
                     continue
                 except Exception as e:

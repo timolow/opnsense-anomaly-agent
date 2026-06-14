@@ -4,7 +4,7 @@ from __future__ import annotations
 OPNsense Anomaly Detection Agent — Orchestrator
 
 Wires together all detection modules:
-  parser           → structured events from CSV syslog
+  parser           → structured events from syslog
   eventdb          → PostgreSQL persistent storage
   attack_detectors → port scan, SYN flood, brute force, probe detection
   statistical_model → z-scores, seasonal baselines, deviation scoring
@@ -12,9 +12,7 @@ Wires together all detection modules:
   discord_bot      → rich Discord alerts + chat commands
   syslog_listener  → optional built-in UDP syslog receiver
 
-Two modes:
-  JSONL  — reads from agent_data/syslog_events.jsonl
-  Syslog — receives UDP syslog, parses, writes JSONL, feeds pipeline
+Mode: Syslog — receives UDP syslog, parses, feeds pipeline directly
 """
 
 import os
@@ -29,7 +27,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
-from threading import Thread, Event
+from threading import Thread, Event, Condition, Lock
 
 import requests
 
@@ -70,8 +68,6 @@ class Config:
         }
         self.syslog_enabled = os.getenv("SYSLOG_ENABLED", "false").lower() == "true"
         self.syslog_port = int(os.getenv("SYSLOG_UDP_PORT", "1514"))
-        self.jsonl_path = DATA_DIR / "syslog_events.jsonl"
-        self.jsonl_marker_path = DATA_DIR / "jsonl_read_marker.json"
         self.vllm_base_url = os.getenv("VLLM_BASE_URL", "")
         self.vllm_model = os.getenv("VLLM_MODEL", "QuantTrio/Qwen3.6-35B-A3B-AWQ")
         self.discord_token = os.getenv("DISCORD_TOKEN", "")
@@ -168,78 +164,6 @@ class VLLMClient:
         return None
 
 
-# ── Event reader ───────────────────────────────────────────────────────
-class EventReader:
-    """Reads new events from JSONL file since last position."""
-
-    def __init__(self, config: Config):
-        self.config = config
-        self.marker_path = config.jsonl_marker_path
-        self.last_line = 0
-        self._load_marker()
-
-    def _load_marker(self):
-        if self.marker_path.exists():
-            try:
-                with open(self.marker_path) as f:
-                    self.last_line = json.load(f).get("last_line", 0)
-                logger.info("Loaded read marker: line %s", self.last_line)
-            except Exception:
-                self.last_line = 0
-
-    def _save_marker(self):
-        self.marker_path.write_text(
-            json.dumps({"last_line": self.last_line, "timestamp": datetime.now().isoformat()})
-        )
-
-    def read_events(self, max_events: int = 50) -> list[dict]:
-        """Read new events from JSONL file since last position."""
-        events: list[dict] = []
-        path = self.config.jsonl_path
-        if not path.exists():
-            return events
-        try:
-            with open(path) as f:
-                actual = sum(1 for _ in f)
-            if self.last_line > actual:
-                logger.info(
-                    "JSONL file truncated/rotated: marker %s > actual %s, resetting",
-                    self.last_line, actual,
-                )
-                self.last_line = 0
-                self._save_marker()
-            with open(path) as f:
-                for _ in range(self.last_line):
-                    f.readline()
-                count = 0
-                for line_num, line in enumerate(f, start=self.last_line):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                        # Only accept events with valid ISO-format timestamps.
-                        # The adaptive parser converts firewall logs (filterlog,
-                        # ICMPV6, GRE, etc.) to ISO timestamps. System messages
-                        # (ntpd, rtsold, syslog-ng errors) have raw syslog
-                        # timestamps like "Jun 14 13:57:12" which PostgreSQL
-                        # can't parse — skip those entirely.
-                        ts = event.get("timestamp", "")
-                        if ts and "T" in ts and event.get("raw"):
-                            event["_line_number"] = line_num
-                            events.append(event)
-                            count += 1
-                            if count >= max_events:
-                                break
-                    except json.JSONDecodeError:
-                        pass
-                self.last_line += count
-                self._save_marker()
-        except Exception as e:
-            logger.warning("Error reading JSONL: %s", e)
-        return events
-
-
 # ── OPNsense API client ────────────────────────────────────────────────
 class OPNsenseClient:
     """Requests-based OPNsense API client for status lookups."""
@@ -306,7 +230,7 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
         def _handle(self, cmd: str):
             a = self.agent_ref
             if cmd == "status":
-                mode = "syslog" if a.config.syslog_enabled else "jsonl"
+                mode = "syslog" if a.config.syslog_enabled else "direct"
                 return {"status": "running", "mode": mode}
             elif cmd == "stats":
                 return {
@@ -340,7 +264,9 @@ class OPNsenseAgent:
         self.config = config or Config()
 
         # Sub-modules
-        self.event_reader = EventReader(self.config)
+        # In-memory event buffer and condition for callback → main loop signal
+        self._event_cond = Condition()
+        self._event_buffer: list[dict] = []
 
         # DB connection with retry (postgres may take 5-10s to initialize)
         self.db = None
@@ -384,7 +310,7 @@ class OPNsenseAgent:
         self.vllm_client = VLLMClient(self.config)
 
         # Syslog listener (built-in UDP)
-        self.syslog_listener = SyslogListener(self.config)
+        self.syslog_listener = SyslogListener(self.config, event_callback=self._on_event)
 
         # Discord bot
         self.discord_bot = DiscordBot(self.config)
@@ -408,6 +334,13 @@ class OPNsenseAgent:
 
         # Shutdown
         self._shutdown = Event()
+
+    # ── event callback (from syslog listener thread) ─────────────────
+    def _on_event(self, event: dict):
+        """Callback from syslog listener — adds event to in-memory buffer."""
+        with self._event_cond:
+            self._event_buffer.append(event)
+            self._event_cond.notify()
 
     # ── helpers ──────────────────────────────────────────────────────
     def _process_event(self, event: dict):
@@ -463,7 +396,7 @@ class OPNsenseAgent:
     def _send_status(self):
         """Log periodic status."""
         uptime = int(time.time() - self.start_time)
-        mode = "syslog" if self.config.syslog_enabled else "jsonl"
+        mode = "syslog" if self.config.syslog_enabled else "direct"
         stats = self.stat_model.get_stats()
         logger.info(
             "Status: %s events, %s anomalies, uptime: %ds | mode: %s | "
@@ -478,28 +411,13 @@ class OPNsenseAgent:
         )
 
     def _periodic_adapt(self):
-        """Every N events, sample raw logs and let the adaptive parser discover new patterns."""
+        """Every N learn cycles, sample raw logs and let the adaptive parser discover new patterns."""
         logger.info("Running periodic adaptation check...")
-        path = self.config.jsonl_path
-        if not path.exists():
-            return
-        # Sample last 100 raw lines
-        try:
-            with open(path) as f:
-                lines = f.readlines()[-100:]
-            raw_samples = []
-            for line in lines:
-                try:
-                    evt = json.loads(line.strip())
-                    if evt.get("raw"):
-                        raw_samples.append(evt["raw"])
-                except json.JSONDecodeError:
-                    continue
-            if raw_samples:
-                report = self.adaptive_parser.adapt(raw_samples)
-                logger.info("Adaptation report: %s", report)
-        except Exception as e:
-            logger.warning("Adaptation check failed: %s", e)
+        with self._event_cond:
+            samples = [e.get("raw", "") for e in self._event_buffer if e.get("raw")]
+        if samples:
+            report = self.adaptive_parser.adapt(samples)
+            logger.info("Adaptation report: %s", report)
 
     # ── main loop ────────────────────────────────────────────────────
     def run(self):
@@ -507,12 +425,10 @@ class OPNsenseAgent:
         print("OPNsense Anomaly Detection Agent v2.0")
         print("=" * 50)
 
-        mode = "syslog (built-in UDP)" if self.config.syslog_enabled else "JSONL file"
+        mode = "syslog (built-in UDP)" if self.config.syslog_enabled else "direct"
         print(f"Mode: {mode}")
         if self.config.syslog_enabled:
             print(f"Syslog port: {self.config.syslog_port}")
-        else:
-            print(f"Events file: {self.config.jsonl_path}")
 
         # OPNsense API connection test
         logger.info("Testing OPNsense API connection...")
@@ -540,7 +456,11 @@ class OPNsenseAgent:
 
         while not self._shutdown.is_set():
             try:
-                events = self.event_reader.read_events(max_events=self.config.batch_size)
+                with self._event_cond:
+                    if not self._event_buffer:
+                        self._event_cond.wait(timeout=self.config.poll_interval)
+                    events = self._event_buffer[:self.config.batch_size]
+                    del self._event_buffer[:len(events)]
 
                 if events:
                     now = time.time()
