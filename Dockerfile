@@ -22,6 +22,7 @@ COPY attack_detectors.py .
 COPY statistical_model.py .
 COPY geo_lookup.py .
 COPY discord_bot.py .
+COPY reverse_dns.py .
 
 # Create data directory
 RUN mkdir -p /app/agent_data
