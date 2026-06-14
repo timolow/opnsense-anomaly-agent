@@ -30,7 +30,7 @@ class RateLimiter:
         self.interval = interval
         self.dedup_window = dedup_window
         self._last_alert: Dict[str, float] = {}
-        self._dedup_keys: Set[str] = set()
+        self._dedup_keys: Dict[str, float] = {}
     
     def should_alert(self, signal: str, dedup_key: Optional[str] = None) -> bool:
         """Check if we should send an alert for this signal.
@@ -51,17 +51,19 @@ class RateLimiter:
         
         # Check dedup
         if dedup_key and dedup_key in self._dedup_keys:
-            return False
+            if time.time() - self._dedup_keys[dedup_key] < self.dedup_window:
+                return False
+            # Expired — allow again
         
         # Record
         self._last_alert[signal] = now
         if dedup_key:
-            self._dedup_keys.add(dedup_key)
+            self._dedup_keys[dedup_key] = now
             # Cleanup old dedup keys
             cutoff = now - self.dedup_window
             self._dedup_keys = {
-                k for k in self._dedup_keys
-                if time.time() - self._dedup_keys.get(k, 0) < self.dedup_window
+                k: v for k, v in self._dedup_keys.items()
+                if v >= cutoff
             }
         
         return True
@@ -69,9 +71,10 @@ class RateLimiter:
     def cleanup_dedup(self):
         """Remove expired dedup keys."""
         now = time.time()
+        cutoff = now - self.dedup_window
         self._dedup_keys = {
-            k for k in self._dedup_keys
-            if now - k < self.dedup_window
+            k: v for k, v in self._dedup_keys.items()
+            if v >= cutoff
         }
 
 
