@@ -343,22 +343,10 @@ class GeoAnomalyDetector:
         """Check if we should perform geo lookup for this event."""
         # Rate limit geo lookups: check every 5th blocked event
         # This avoids overwhelming the API with lookups
-        minute_str = ts
-        if isinstance(ts, datetime):
-            minute_str = ts.strftime('%M')
-        elif isinstance(ts, str):
-            # Try to extract minute from various timestamp formats
-            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S'):
-                try:
-                    dt = datetime.strptime(ts, fmt)
-                    minute_str = dt.strftime('%M')
-                    break
-                except ValueError:
-                    continue
-        self._recent_countries.add(minute_str)
-        if len(self._recent_countries) < 5:
+        self._geo_check_counter = getattr(self, '_geo_check_counter', 0) + 1
+        if self._geo_check_counter < 5:
             return False
-        self._recent_countries.clear()
+        self._geo_check_counter = 0
         return True
     
     def learn_normal_countries(self, country_codes: Set[str]):
