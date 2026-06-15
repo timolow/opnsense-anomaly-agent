@@ -410,6 +410,15 @@ def _fallback_flow():
                                         "value": link_val, "type": "traffic"})
     return {"nodes": nodes, "links": connections}
 
+def _parse_ip_first_octet(ip):
+    """Parse the first octet of an IPv4 address. Returns None for IPv6."""
+    if not ip:
+        return None
+    try:
+        return int(ip.split(".")[0])
+    except (ValueError, IndexError):
+        return None
+
 def query_geo():
     conn = get_db()
     if not conn:
@@ -429,8 +438,10 @@ def query_geo():
         for row in rows:
             ip = row["src_ip"]
             cnt = row["cnt"]
-            first = int(ip.split(".")[0])
-            if 114 <= first <= 125: regions["China"] += cnt
+            first = _parse_ip_first_octet(ip)
+            if first is None:
+                regions["Other"] += cnt
+            elif 114 <= first <= 125: regions["China"] += cnt
             elif first in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]: regions["US"] += cnt
             elif 5 <= first < 94: regions["Europe/Russia"] += cnt
             elif 14 <= first < 62: regions["Japan/Korea"] += cnt
