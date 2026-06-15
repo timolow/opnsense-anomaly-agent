@@ -160,33 +160,37 @@ class AdaptiveParser:
         return 'system'
     
     def _parse_filterlog(self, raw: str) -> Dict[str, Any]:
-        """Parse OPNsense filterlog - CSV format with known column positions.
+        """Parse OPNsense filterlog CSV format.
         
-        OPNsense filterlog CSV format:
-        [0] version      - 4 or 6 (IP version indicator)
-        [1] action_code  - 4 (pass) or 5 (block/drop)
-        [2] rule_number  - numeric rule ID
-        [3] uid          - user ID (often empty)
-        [4] interface    - e.g., wan, lan, enc0
-        [5] direction    - in or out
-        [6] ip_version   - inet or inet6
-        [7] proto_name   - tcp, udp, icmp, icmpv6, ipv6
-        [8] icmp_type    - ICMP type or TCP flags field
-        [9] icmp_code    - ICMP code or TCP flags
-        [10] length      - packet length
-        [11] flags       - varies (often empty)
-        [12] rule_num    - numeric rule ID (again)
-        [13] src_ip      - source IP
-        [14] dst_ip      - destination IP
-        [15] sport       - source port (TCP/UDP)
-        [16] dport       - destination port (TCP/UDP)
-        [17] tcp_flags   - TCP flags (0x02, etc.)
-        [18] tcp_seq     - TCP sequence number
-        [19] tcp_ack     - TCP ack number
-        [20] tcp_window  - TCP window size
-        [21] rule_name   - firewall rule name (e.g., ALLOW_WEB)
-        [22] action_word - pass or block
-        [23] ruid        - rule unique identifier
+        Actual OPNsense filterlog CSV format (space-delimited within syslog):
+        [0] flag        - event flags (230=pass, 234=pass/v6, 235=block, 233=block/v6)
+        [1]             - empty
+        [2]             - empty
+        [3] ruid        - rule unique identifier (e.g., 'fae559338f...')
+        [4] interface   - e.g., igb1, ixl2, ixl3_vlan1003
+        [5] match       - always 'match'
+        [6] action      - 'pass' or 'block'
+        [7] direction   - 'in' or 'out'
+        [8] ip_version  - '4' or '6'
+        [9]             - 0x0
+        [10]           - empty
+        [11] length    - packet length
+        [12]           - 0
+        [13]           - 0
+        [14] flags     - DF or 'none'
+        [15] proto_num - '6'=TCP, '17'=UDP, '1'=ICMP (IPv4)
+                        For IPv6: this IS the src_ip
+        [16] proto_name - 'tcp', 'udp', 'icmp' (IPv4)
+                        For IPv6: this IS the dst_ip
+        [17]           - varies (length for non-IP, tcp window for TCP)
+        [18] src_ip    - source IP (IPv4 only)
+        [19] dst_ip    - destination IP (IPv4 only)
+        [20] sport     - source port (IPv4 TCP/UDP only)
+        [21] dport     - destination port (IPv4 TCP/UDP only)
+        [22+]         - TCP options, seq numbers, etc. (IPv4 only)
+        
+        IPv4 entries: 29 parts (TCP), 23 parts (UDP), 21 parts (ICMP)
+        IPv6 entries: 26 parts (TCP) - IPs at positions 15/16 instead of 18/19
         """
         features = {}
         
@@ -198,99 +202,130 @@ class AdaptiveParser:
         csv_data = m.group(1).strip()
         parts = [p.strip() for p in csv_data.split(',')]
         
-        if len(parts) >= 10:
+        if len(parts) >= 4:
             # Interface at index 4
             features['interface'] = parts[4] if len(parts) > 4 else None
             
-            # Action at index 1: 4=pass, 5=block
-            action_code = parts[1] if len(parts) > 1 else ''
-            if action_code == '4':
+            # Action at index 6: 'pass' or 'block'
+            action = parts[6].lower() if len(parts) > 6 else ''
+            if action in ('pass', 'permit'):
                 features['action'] = 'PASS'
-            elif action_code == '5':
+            elif action in ('block', 'drop', 'deny', 'reject'):
                 features['action'] = 'BLOCK'
             
-            # Protocol at index 7
-            proto_name = parts[7].lower() if len(parts) > 7 else ''
-            if proto_name in ('tcp',):
-                features['proto'] = 'TCP'
-            elif proto_name in ('udp',):
-                features['proto'] = 'UDP'
-            elif proto_name in ('icmp', 'ipv6-icmp'):
-                features['proto'] = 'ICMPV6' if proto_name == 'ipv6-icmp' else 'ICMP'
-            elif proto_name in ('ipv6',):
-                features['proto'] = 'IPv6'
-            elif proto_name in ('inet', 'inet6'):
-                features['proto'] = None  # Will be determined from IP addresses
+            # IP version at index 8: '4' or '6'
+            ip_version = parts[8].lower() if len(parts) > 8 else ''
             
-            # IP version at index 6 (inet or inet6)
-            ip_ver = parts[6].lower() if len(parts) > 6 else ''
-            
-            # Extract IPs and ports based on protocol
-            if proto_name in ('tcp', 'udp'):
-                features['src_ip'] = parts[13] if len(parts) > 13 else None
-                features['dst_ip'] = parts[14] if len(parts) > 14 else None
-                try:
-                    features['sport'] = int(parts[15]) if len(parts) > 15 and parts[15].isdigit() else None
-                except (ValueError, IndexError):
-                    features['sport'] = None
-                try:
-                    features['dport'] = int(parts[16]) if len(parts) > 16 and parts[16].isdigit() else None
-                except (ValueError, IndexError):
-                    features['dport'] = None
-            elif proto_name in ('icmp', 'ipv6-icmp', 'icmpv6'):
-                features['src_ip'] = parts[13] if len(parts) > 13 else None
-                features['dst_ip'] = parts[14] if len(parts) > 14 else None
-                features['sport'] = None
-                features['dport'] = None
-            else:
-                # Fallback: scan for IP addresses in the CSV
-                src_ip = None
-                dst_ip = None
-                for i, p in enumerate(parts):
+            if ip_version == '4':
+                # IPv4: proto at [15]=proto_num, [16]=proto_name
+                proto_num = parts[15] if len(parts) > 15 else ''
+                proto_name = parts[16].lower() if len(parts) > 16 else ''
+                
+                # Determine protocol from proto_num or proto_name
+                if proto_num in ('6',) or proto_name == 'tcp':
+                    features['proto'] = 'TCP'
+                elif proto_num in ('17',) or proto_name == 'udp':
+                    features['proto'] = 'UDP'
+                elif proto_num in ('1',) or proto_name == 'icmp':
+                    features['proto'] = 'ICMP'
+                
+                # IPs and ports at fixed positions for IPv4
+                if len(parts) > 21:
+                    features['src_ip'] = parts[18] if len(parts) > 18 else None
+                    features['dst_ip'] = parts[19] if len(parts) > 19 else None
                     try:
-                        ipaddress.ip_address(p)
-                        if src_ip is None:
-                            src_ip = p
-                        elif dst_ip is None:
-                            dst_ip = p
-                    except ValueError:
-                        pass
-                features['src_ip'] = src_ip
-                features['dst_ip'] = dst_ip
+                        features['sport'] = int(parts[20]) if parts[20].isdigit() else None
+                    except (ValueError, IndexError):
+                        features['sport'] = None
+                    try:
+                        features['dport'] = int(parts[21]) if parts[21].isdigit() else None
+                    except (ValueError, IndexError):
+                        features['dport'] = None
+                    # ICMP has type/code at [20]/[21], not ports — clear after setting
+                    if proto_num in ('1',) or proto_name == 'icmp':
+                        features['sport'] = None
+                        features['dport'] = None
+                elif len(parts) > 19:
+                    # UDP/ICMP with fewer parts
+                    features['src_ip'] = parts[18] if len(parts) > 18 else None
+                    features['dst_ip'] = parts[19] if len(parts) > 19 else None
+            elif ip_version == '6':
+                # IPv6: src/dst IPs at positions 15/16 (different from IPv4!)
+                if len(parts) > 16:
+                    features['src_ip'] = parts[15] if len(parts) > 15 else None
+                    features['dst_ip'] = parts[16] if len(parts) > 16 else None
+                    
+                    # For IPv6, the proto field may not be explicit in the CSV.
+                    # Detect protocol from TCP indicators:
+                    tcp_flags = ('S', 'S-A', 'SA', 'A', 'F', 'R', 'P', 'U')
+                    tcp_options = ('mss', 'nop', 'wscale', 'sackOK', 'ts')
+                    
+                    proto_detected = False
+                    # First check remaining parts for explicit proto name
+                    if len(parts) > 17:
+                        for p in parts[17:]:
+                            if p in ('tcp', 'udp', 'icmp', 'ipv6-icmp', 'ipv6'):
+                                features['proto'] = {'tcp': 'TCP', 'udp': 'UDP', 'icmp': 'ICMP',
+                                                    'ipv6-icmp': 'ICMPV6', 'ipv6': 'IPv6'}.get(p.lower(), 'UNKNOWN')
+                                proto_detected = True
+                                break
+                    
+                    # If not detected, look for TCP-specific indicators
+                    if not proto_detected and len(parts) > 17:
+                        remaining = ','.join(parts[17:])
+                        # Check for TCP flags (S, S-A, A, etc.) or TCP options
+                        for token in parts[17:]:
+                            if token in tcp_flags:
+                                features['proto'] = 'TCP'
+                                proto_detected = True
+                                break
+                            if token.lower() in tcp_options:
+                                features['proto'] = 'TCP'
+                                proto_detected = True
+                                break
+                        
+                        # If still not detected, check if port-like number exists after IPs
+                        # TCP/UDP will have port numbers; ICMP/IPv6-Hop-by-Hop etc won't
+                        if not proto_detected and len(parts) > 18:
+                            try:
+                                candidate = int(parts[17])
+                                # If the first field after IPs is a valid port (1-65535) and
+                                # we have sequence numbers/flags, it's TCP or UDP
+                                if 1 <= candidate <= 65535:
+                                    # Check for more TCP-like fields
+                                    has_tcp_field = False
+                                    for p in parts[18:]:
+                                        if p in tcp_flags or p.lower().replace(';', ' ').split()[-1] in tcp_options:
+                                            has_tcp_field = True
+                                            break
+                                    # Try to determine if TCP or UDP from flags/options
+                                    if has_tcp_field:
+                                        features['proto'] = 'TCP'
+                                    else:
+                                        features['proto'] = 'UDP'
+                                    proto_detected = True
+                            except (ValueError, IndexError):
+                                # No port-like number — likely ICMPv6
+                                if not proto_detected:
+                                    features['proto'] = 'ICMPV6'
+                    
+                    # Last resort fallback
+                    if not proto_detected:
+                        found_ips = []
+                        for i, p in enumerate(parts):
+                            try:
+                                ipaddress.ip_address(p)
+                                found_ips.append((i, p))
+                            except ValueError:
+                                pass
+                        if len(found_ips) >= 2:
+                            features['src_ip'] = found_ips[0][1]
+                            features['dst_ip'] = found_ips[1][1]
             
-            # Rule name extraction - look for rule name near the END of the CSV
-            # The rule name is typically 1-2 fields before the last field (ruid)
-            # It follows the pattern: ...rule_name, pass|block, ruid
-            # For ICMP (shorter CSVs), rule_name may be closer to the end
-            rule_name = None
-            
-            # Strategy: scan from the end of the CSV backward
-            # Skip known non-rule-name fields at the end: ruid, action_word
-            for i in range(len(parts) - 1, -1, -1):
-                p = parts[i].strip()
-                # Skip empty, numeric, hex, and known non-rule fields
-                if not p or p in ('N/A', '0', '0x00', '0x02', '0x08'):
-                    continue
-                # Skip known action words
-                if p.lower() in ('pass', 'block', 'drop', 'deny', 'reject'):
-                    continue
-                # Skip ruid-like values (rf + hex digits)
-                if re.match(r'^rf[a-fA-F0-9]{10,}$', p):
-                    continue
-                # Skip protocol names
-                if p.lower() in ('tcp', 'udp', 'icmp', 'ipv6', 'inet', 'inet6', 'ipv6-icmp', 'ipv6-icmp'):
-                    continue
-                # Skip pure numeric fields
-                if p.isdigit():
-                    continue
-                # Check if this looks like a rule name
-                # Rule names typically contain underscores (ALLOW_WEB, BLOCK_DNS, etc.)
-                if '_' in p:
-                    rule_name = p
-                    break
-            
-            if rule_name:
-                features['rule_name'] = rule_name
+            # No rule_name in standard OPNsense filterlog CSV — only RUID at [3]
+            # Use RUID as a fallback identifier
+            if len(parts) > 3 and parts[3]:
+                features['ruid'] = parts[3]
         
         # Try key=value format as fallback (for non-CSV filterlog entries)
         if not features.get('src_ip'):
