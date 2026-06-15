@@ -1,19 +1,70 @@
 #!/usr/bin/env python3
-"""Dashboard API server — reads from state file IP data and attack detector snapshots."""
+"""Dashboard API server — reads from PostgreSQL + state file."""
 
 import json
 import os
 import time
-from datetime import datetime, timezone, timedelta
+import datetime
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
-# ─── Paths ───────────────────────────────────────────────────────────────────
+try:
+    import psycopg2
+    import psycopg2.extras
+    HAS_PSYCOPG = True
+except ImportError:
+    HAS_PSYCOPG = False
+    print("WARNING: psycopg2 not installed — some endpoints will return empty data")
+
+# ─── Config ──────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "agent_data", "state.json")
 MUTES_PATH = os.path.join(BASE_DIR, "agent_data", "mutes.json")
 DATA_DIR = os.path.join(BASE_DIR, "agent_data")
+
+# PostgreSQL connection from agent config
+DB_HOST = "127.0.0.1"  # PostgreSQL in same container
+DB_PORT = 5432
+DB_NAME = "opnsense"
+DB_USER = "postgres"
+DB_PASS = ""  # Local trust auth
+
+# Fallback: read from env or config file
+try:
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg.read(os.path.join(BASE_DIR, "config.ini"))
+    DB_HOST = cfg.get("database", "host", fallback="127.0.0.1")
+    DB_PORT = cfg.getint("database", "port", fallback=5432)
+    DB_NAME = cfg.get("database", "dbname", fallback="opnsense")
+    DB_USER = cfg.get("database", "user", fallback="postgres")
+    DB_PASS = cfg.get("database", "password", fallback="")
+except Exception:
+    pass
+
+
+def get_db():
+    """Get a PostgreSQL connection."""
+    if not HAS_PSYCOPG:
+        return None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASS
+        )
+        return conn
+    except Exception as e:
+        print(f"DB connection failed: {e}")
+        return None
+
+
+def close_db(conn):
+    if conn:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def load_state():
@@ -26,17 +77,16 @@ def load_state():
         return None
 
 
-# ─── Mutes ───────────────────────────────────────────────────────────────────
 def load_mutes():
     if os.path.exists(MUTES_PATH):
         try:
             with open(MUTES_PATH) as f:
                 data = json.load(f)
-            now = datetime.now(timezone.utc)
+            now = datetime.datetime.now(datetime.timezone.utc)
             active = []
             for m in data:
                 try:
-                    exp = datetime.fromisoformat(m["expires"])
+                    exp = datetime.datetime.fromisoformat(m["expires"])
                     if exp > now:
                         active.append(m)
                 except Exception:
@@ -48,10 +98,12 @@ def load_mutes():
             return []
     return []
 
+
 def save_mutes(mutes):
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(MUTES_PATH, "w") as f:
         json.dump(mutes, f, indent=2, default=str)
+
 
 def add_mute(ip, attack_type, port=None, duration=3600, source="manual"):
     mutes = load_mutes()
@@ -61,13 +113,14 @@ def add_mute(ip, attack_type, port=None, duration=3600, source="manual"):
         "attack_type": attack_type,
         "port": port,
         "duration_seconds": duration,
-        "created": datetime.now(timezone.utc).isoformat(),
-        "expires": datetime.now(timezone.utc).isoformat(),
+        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "expires": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "source": source,
     }
     mutes.append(mute)
     save_mutes(mutes)
     return mute
+
 
 def remove_mute(mute_id):
     mutes = load_mutes()
@@ -75,260 +128,362 @@ def remove_mute(mute_id):
     save_mutes(mutes)
 
 
-# ─── Data queries ────────────────────────────────────────────────────────────
-def query_stats():
-    state = load_state()
-    if not state:
-        return {"counters": {}, "by_type": {}, "top_sources": []}
-    
-    # Counters from agent
-    counters = state.get("agent_counters", {})
-    
-    # IP data
-    nc = state.get("network_classifier", {})
-    ip_data = nc.get("ip_data", {})
-    
-    # Attack types from IP categories
-    by_type = defaultdict(int)
-    top_sources = []
-    for ip, info in ip_data.items():
-        if isinstance(info, dict):
-            cnt = _get_event_count(info)
-            cat = info.get("category", "UNKNOWN")
-            if cat == "WAN":
-                by_type["external"] += cnt
-            elif cat == "OWN":
-                by_type["internal"] += cnt
-            elif cat == "LAN":
-                by_type["lan"] += cnt
-            elif cat == "VPN":
-                by_type["vpn"] += cnt
-            if cnt > 0:
-                top_sources.append({"ip": ip, "count": cnt, "category": cat})
-    
-    top_sources.sort(key=lambda x: x["count"], reverse=True)
-    
-    # Severity
-    by_severity = {
-        "CRITICAL": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) > 500),
-        "HIGH": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and 100 <= _get_event_count(info) <= 500),
-        "MEDIUM": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) > 10),
-        "LOW": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) <= 10),
-    }
-    
-    # Categories
-    categories = defaultdict(int)
-    for ip, info in ip_data.items():
-        if isinstance(info, dict):
-            categories[info.get("category", "UNKNOWN")] += 1
-    
-    return {
-        "counters": counters,
-        "by_type": dict(by_type),
-        "by_severity": by_severity,
-        "top_sources": top_sources[:20],
-        "categories": dict(categories),
-        "active_mutes": len(load_mutes()),
-        "total_ips": len(ip_data),
-        "total_events": sum(_get_event_count(info) for info in ip_data.values() if isinstance(info, dict)),
-        "state_timestamp": state.get("timestamp", ""),
-        "agent_counters": counters,
-    }
-
-def query_heatmap():
-    """
-
-
 def _get_event_count(record):
     """Get event count from IP record, handling both old and new formats."""
     if isinstance(record, dict):
-        # New format: uses 'count' key
         if "count" in record:
             return record["count"]
-        # Old format: uses 'event_count' key
         if "event_count" in record:
             return record["event_count"]
     return 0
 
 
-Build heatmap from IP tracking data (source IP × hour)."""
-    state = load_state()
-    if not state:
-        return {"labels_x": [], "labels_y": [], "data": [], "events": []}
+# ─── PostgreSQL queries ──────────────────────────────────────────────────────
+def query_stats():
+    conn = get_db()
+    if not conn:
+        return {"counters": {}, "by_type": {}, "top_sources": []}
     
-    nc = state.get("network_classifier", {})
-    ip_data = nc.get("ip_data", {})
-    
-    # Aggregate: for each IP, track events by hour (simulated from event_count distribution)
-    hour_matrix = defaultdict(lambda: defaultdict(int))
-    all_ips = []
-    
-    for ip, info in ip_data.items():
-        if not isinstance(info, dict):
-            continue
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
-        cnt = _get_event_count(info)
-        if cnt == 0:
-            continue
+        # Get event counts by IP, source_type
+        cur.execute("""
+            SELECT 
+                src_ip,
+                src_type,
+                COUNT(*) as event_count,
+                COUNT(DISTINCT dst_ip) as unique_destinations,
+                COUNT(DISTINCT dst_port) as unique_ports
+            FROM events 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip, src_type
+            ORDER BY event_count DESC
+            LIMIT 100
+        """)
+        rows = cur.fetchall()
         
-        # Use first_seen/last_seen to approximate time range
-        first = info.get("first_seen", "")
-        last = info.get("last_seen", "")
+        by_type = defaultdict(int)
+        top_sources = []
+        total_events = 0
+        categories = defaultdict(int)
         
-        if first and last:
-            try:
-                ft = datetime.fromisoformat(first)
-                lt = datetime.fromisoformat(last)
-                hours_range = (lt - ft).total_seconds() / 3600
-                if hours_range <= 0:
-                    hours_range = 1
-                
-                # Distribute events across hours
-                hours = min(24, max(1, int(hours_range)))
-                events_per_hour = cnt // hours if hours > 0 else cnt
-                
-                # Get hour of first event
-                h = ft.hour
-                for i in range(hours):
-                    hour_matrix[ip][(h + i) % 24] += events_per_hour
-            except Exception:
-                # Fallback: distribute evenly across 24h
-                events_per_hour = cnt // 24
-                for h in range(24):
-                    hour_matrix[ip][h] += events_per_hour
-        else:
-            # No timestamps — distribute evenly
-            events_per_hour = cnt // 24
-            for h in range(24):
-                hour_matrix[ip][h] += events_per_hour
-        
-        all_ips.append(ip)
-    
-    all_ips.sort(key=lambda ip: sum(hour_matrix[ip].values()), reverse=True)
-    all_hours = list(range(24))
-    
-    matrix = []
-    for ip in all_ips[:100]:  # Limit to top 100
-        row = [hour_matrix[ip].get(h, 0) for h in all_hours]
-        matrix.append(row)
-    
-    return {
-        "labels_x": [f"{h:02d}:00" for h in all_hours],
-        "labels_y": [ip if len(ip) <= 15 else ip[:12]+"..." for ip in all_ips[:100]],
-        "data": matrix,
-        "total_events": sum(sum(row) for row in matrix),
-    }
-
-def query_ip_flow():
-    """Build IP flow data from IP tracking connections."""
-    state = load_state()
-    if not state:
-        return {"nodes": [], "links": []}
-    
-    nc = state.get("network_classifier", {})
-    ip_data = nc.get("ip_data", {})
-    
-    nodes = []
-    node_map = {}
-    links = []
-    connections = []
-    colors = {
-        "WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7",
-        "UNKNOWN": "#6b7280", "SOURCE": "#3b82f6", "TARGET": "#f59e0b",
-    }
-    
-    # Build connections from src_events and dst_events
-    for src_ip, src_info in ip_data.items():
-        if not isinstance(src_info, dict):
-            continue
-        
-        src_events = src_info.get("src_events", 0)
-        dst_events = src_info.get("dst_events", 0)
-        
-        if src_events == 0 and dst_events == 0:
-            continue
-        
-        # Get category
-        category = src_info.get("category", "UNKNOWN")
-        if category not in colors:
-            category = "SOURCE"
-        
-        # Add node
-        if src_ip not in node_map:
-            node_map[src_ip] = len(nodes)
-            nodes.append({
-                "id": src_ip,
-                "label": src_ip,
-                "category": category,
-                "color": colors.get(category, "#3b82f6"),
-                "size": min(6 + src_events, 24),
+        for row in rows:
+            ip = row["src_ip"]
+            src_type = row["src_type"] or "UNKNOWN"
+            cnt = row["event_count"]
+            total_events += cnt
+            
+            # Categorize by source type
+            if src_type == "WAN":
+                categories["WAN"] += 1
+                by_type["external"] += cnt
+            elif src_type == "LAN":
+                categories["LAN"] += 1
+                by_type["internal"] += cnt
+            elif src_type == "VPN":
+                categories["VPN"] += 1
+                by_type["vpn"] += cnt
+            else:
+                categories["UNKNOWN"] += 1
+            
+            top_sources.append({
+                "ip": ip,
+                "count": cnt,
+                "category": src_type,
+                "unique_destinations": row["unique_destinations"],
+                "unique_ports": row["unique_ports"],
             })
         
-        # Find destination IPs from dst_events
-        # In the IP data structure, dst_events is stored as a set or list
-        # Since we only have counts, we'll create synthetic connections
-        # to known high-traffic destinations
+        # Severity
+        by_severity = {
+            "CRITICAL": sum(1 for s in top_sources if s["count"] > 500),
+            "HIGH": sum(1 for s in top_sources if 100 <= s["count"] <= 500),
+            "MEDIUM": sum(1 for s in top_sources if 10 < s["count"] < 100),
+            "LOW": sum(1 for s in top_sources if s["count"] <= 10),
+        }
         
-        # Check if this IP has any connections in the network
-        for dst_ip, dst_info in ip_data.items():
-            if dst_ip == src_ip:
-                continue
-            if not isinstance(dst_info, dict):
-                continue
+        # Get total from agent_counters if available
+        state = load_state()
+        agent_counters = {}
+        if state:
+            agent_counters = state.get("agent_counters", {})
+        
+        cur.close()
+        
+        return {
+            "counters": agent_counters,
+            "by_type": dict(by_type),
+            "by_severity": by_severity,
+            "top_sources": top_sources[:20],
+            "categories": dict(categories),
+            "active_mutes": len(load_mutes()),
+            "total_ips": len(set(r["src_ip"] for r in rows)),
+            "total_events": total_events,
+            "time_range": "24h",
+            "agent_counters": agent_counters,
+        }
+    except Exception as e:
+        print(f"Stats query failed: {e}")
+        return {"counters": {}, "by_type": {}, "top_sources": []}
+    finally:
+        close_db(conn)
+
+
+def query_heatmap():
+    """Build heatmap: time (hours) × IP activity from PostgreSQL."""
+    conn = get_db()
+    if not conn:
+        return {"labels_x": [], "labels_y": [], "data": [], "events": []}
+    
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        # Get events by IP and hour for the last 24 hours
+        cur.execute("""
+            SELECT 
+                src_ip,
+                EXTRACT(HOUR FROM created_at) as hour,
+                COUNT(*) as event_count
+            FROM events 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip, EXTRACT(HOUR FROM created_at)
+            ORDER BY src_ip, hour
+        """)
+        rows = cur.fetchall()
+        
+        # Build matrix: ip -> hour -> count
+        ip_hour_data = defaultdict(lambda: defaultdict(int))
+        all_ips = set()
+        all_hours = set()
+        
+        for row in rows:
+            ip = row["src_ip"]
+            hour = int(row["hour"])
+            cnt = row["event_count"]
+            ip_hour_data[ip][hour] += cnt
+            all_ips.add(ip)
+            all_hours.add(hour)
+        
+        # Sort IPs by total events
+        ip_totals = {}
+        for ip, hours in ip_hour_data.items():
+            ip_totals[ip] = sum(hours.values())
+        sorted_ips = sorted(ip_totals.keys(), key=lambda x: ip_totals[x], reverse=True)
+        
+        # Limit to top 50 IPs for performance
+        top_ips = sorted_ips[:50]
+        
+        # Build matrix
+        matrix = []
+        for ip in top_ips:
+            row_data = [ip_hour_data[ip].get(h, 0) for h in range(24)]
+            matrix.append(row_data)
+        
+        return {
+            "labels_x": [f"{h:02d}:00" for h in range(24)],
+            "labels_y": top_ips,
+            "data": matrix,
+            "total_events": sum(sum(row) for row in matrix),
+        }
+    except Exception as e:
+        print(f"Heatmap query failed: {e}")
+        return {"labels_x": [], "labels_y": [], "data": [], "events": []}
+    finally:
+        close_db(conn)
+
+
+def query_ip_flow():
+    """Build IP flow: connections between source IPs and their destinations."""
+    conn = get_db()
+    if not conn:
+        return {"nodes": [], "links": []}
+    
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        # Get all unique source IPs and their connection counts
+        cur.execute("""
+            SELECT 
+                src_ip,
+                dst_ip,
+                COUNT(*) as connection_count,
+                ARRAY_AGG(DISTINCT dst_port) as ports,
+                ARRAY_AGG(DISTINCT src_type) as types
+            FROM events 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip, dst_ip
+            HAVING COUNT(*) > 1
+            ORDER BY connection_count DESC
+            LIMIT 500
+        """)
+        links = cur.fetchall()
+        
+        # Get source IP types for categorization
+        cur.execute("""
+            SELECT src_ip, src_type, COUNT(*) as total
+            FROM events 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip, src_type
+            ORDER BY total DESC
+        """)
+        type_rows = cur.fetchall()
+        
+        # Build node map
+        nodes = []
+        node_map = {}
+        colors = {
+            "WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7",
+            "SOURCE": "#3b82f6", "TARGET": "#f59e0b", "UNKNOWN": "#6b7280",
+        }
+        
+        # Build connections list
+        connections = []
+        
+        for row in links:
+            src_ip = row["src_ip"]
+            dst_ip = row["dst_ip"]
+            count = row["connection_count"]
             
-            dst_count = dst_info.get("event_count", 0)
-            if dst_count > 0 and (src_events > 0 or dst_events > 0):
-                # This is a potential connection
-                link_value = min(src_events, dst_count) // 10  # Scale down
-                
-                if link_value > 0:
-                    # Add destination node
-                    if dst_ip not in node_map:
-                        node_map[dst_ip] = len(nodes)
-                        dst_cat = dst_info.get("category", "UNKNOWN")
-                        if dst_cat not in colors:
-                            dst_cat = "TARGET"
-                        nodes.append({
-                            "id": dst_ip,
-                            "label": dst_ip,
-                            "category": dst_cat,
-                            "color": colors.get(dst_cat, "#f59e0b"),
-                            "size": min(4 + dst_count, 18),
-                        })
-                    
-                    links.append({
-                        "source": src_ip,
-                        "target": dst_ip,
-                        "value": link_value,
-                        "type": "traffic",
-                    })
-                    connections.append({
-                        "source": src_ip,
-                        "target": dst_ip,
-                        "type": "traffic",
-                        "value": link_value,
-                    })
-    
-    # Limit to top 80 nodes for performance
-    if len(nodes) > 80:
-        node_conn = defaultdict(int)
-        for link in links:
-            node_conn[link["source"]] += 1
-            node_conn[link["target"]] += 1
-        top_ids = sorted(node_conn.keys(), key=lambda x: node_conn[x], reverse=True)[:80]
-        nodes = [n for n in nodes if n["id"] in top_ids]
-        node_map = {n["id"]: i for i, n in enumerate(nodes)}
-        links = [l for l in links if l["source"] in top_ids or l["target"] in top_ids]
-        connections = [c for c in connections if c["source"] in top_ids or c["target"] in top_ids]
-    
-    return {
-        "nodes": nodes,
-        "links": links,
-        "connections": connections,
-    }
+            # Add source node
+            if src_ip not in node_map:
+                src_type = "UNKNOWN"
+                for tr in type_rows:
+                    if tr["src_ip"] == src_ip:
+                        src_type = tr["src_type"] or "UNKNOWN"
+                        break
+                nodes.append({
+                    "id": src_ip,
+                    "label": src_ip,
+                    "category": src_type,
+                    "color": colors.get(src_type, "#3b82f6"),
+                    "size": min(6 + count, 24),
+                })
+                node_map[src_ip] = len(nodes) - 1
+            
+            # Add destination node
+            if dst_ip not in node_map:
+                dst_type = "TARGET"
+                # Check if dst is a known type
+                for tr in type_rows:
+                    if tr["src_ip"] == dst_ip:
+                        dst_type = tr["src_type"] or "TARGET"
+                        break
+                nodes.append({
+                    "id": dst_ip,
+                    "label": dst_ip,
+                    "category": dst_type,
+                    "color": colors.get(dst_type, "#f59e0b"),
+                    "size": min(4 + count, 18),
+                })
+                node_map[dst_ip] = len(nodes) - 1
+            
+            # Add link
+            ports = [str(p) for p in (row["ports"] or [])[:5]]
+            connections.append({
+                "source": src_ip,
+                "target": dst_ip,
+                "value": count,
+                "ports": ports,
+                "type": "traffic",
+            })
+        
+        # Limit to top 60 nodes
+        if len(nodes) > 60:
+            node_conn = defaultdict(int)
+            for conn in connections:
+                node_conn[conn["source"]] += 1
+                node_conn[conn["target"]] += 1
+            top_ids = sorted(node_conn.keys(), key=lambda x: node_conn[x], reverse=True)[:60]
+            nodes = [n for n in nodes if n["id"] in top_ids]
+            node_map = {n["id"]: i for i, n in enumerate(nodes)}
+            connections = [c for c in connections if c["source"] in top_ids or c["target"] in top_ids]
+        
+        return {
+            "nodes": nodes,
+            "links": connections,
+        }
+    except Exception as e:
+        print(f"IP flow query failed: {e}")
+        return {"nodes": [], "links": []}
+    finally:
+        close_db(conn)
+
 
 def query_geo():
-    """Get geographic data from IP categories."""
+    """Get geographic data from IP tracking data."""
+    conn = get_db()
+    if not conn:
+        return query_geo_from_state()
+    
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        # Get events by source IP
+        cur.execute("""
+            SELECT src_ip, COUNT(*) as event_count
+            FROM events 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip
+            ORDER BY event_count DESC
+            LIMIT 1000
+        """)
+        rows = cur.fetchall()
+        
+        # Simple geo mapping based on IP ranges (simplified)
+        region_groups = defaultdict(int)
+        flag_map = {
+            "CN": "🇨🇳", "US": "🇺🇸", "RU": "🇷🇺", "BR": "🇧🇷",
+            "DE": "🇩🇪", "GB": "🇬🇧", "IN": "🇮🇳", "FR": "🇫🇷",
+            "JP": "🇯🇵", "KR": "🇰🇷", "AU": "🇦🇺", "NL": "🇳🇱",
+            "CA": "🇨🇦", "IT": "🇮🇹", "ES": "🇪🇸", "OTHER": "🌐",
+        }
+        color_map = {
+            "CN": "#ef4444", "US": "#3b82f6", "RU": "#f59e0b",
+            "BR": "#22c55e", "DE": "#eab308", "GB": "#8b5cf6",
+            "IN": "#06b6d4", "FR": "#ec4899", "JP": "#f43f5e",
+            "OTHER": "#6b7280",
+        }
+        
+        for row in rows:
+            ip = row["src_ip"]
+            cnt = row["event_count"]
+            first_octet = int(ip.split(".")[0]) if ip else 0
+            
+            # Simplified geo mapping by first octet
+            if first_octet in range(114, 125):  # China range
+                region_groups["China"] += cnt
+            elif first_octet in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]:  # US
+                region_groups["US"] += cnt
+            elif first_octet in range(5, 94) and first_octet not in range(114, 125):  # Europe/Russia
+                region_groups["Russia"] += cnt
+            elif first_octet in range(14, 62) and first_octet not in range(114, 125):  # Japan/Korea
+                region_groups["Japan"] += cnt
+            else:
+                region_groups["Other"] += cnt
+        
+        result = []
+        for region, count in region_groups.items():
+            flag = flag_map.get(region, "🌐")
+            color = color_map.get(region, "#6b7280")
+            result.append({
+                "country": region,
+                "count": count,
+                "color": color,
+                "flag": flag,
+            })
+        
+        result.sort(key=lambda x: x["count"], reverse=True)
+        return result
+    except Exception as e:
+        print(f"Geo query failed: {e}")
+        return query_geo_from_state()
+    finally:
+        close_db(conn)
+
+
+def query_geo_from_state():
+    """Fallback geo from state file."""
     state = load_state()
     if not state:
         return []
@@ -336,70 +491,104 @@ def query_geo():
     nc = state.get("network_classifier", {})
     ip_data = nc.get("ip_data", {})
     
-    # Categorize by IP ranges (simplified — would need real geo-IP for accuracy)
     flag_map = {
-        "CN": "🇨🇳", "US": "🇺🇸", "RU": "🇷🇺", "BR": "🇧🇷", "DE": "🇩🇪",
-        "GB": "🇬🇧", "IN": "🇮🇳", "FR": "🇫🇷", "JP": "🇯🇵", "KR": "🇰🇷",
-        "AU": "🇦🇺", "NL": "🇳🇱", "IR": "🇮🇷", "UA": "🇺🇦", "CA": "🇨🇦",
-        "IT": "🇮🇹", "ES": "🇪🇸", "SE": "🇸🇪", "PL": "🇵🇱", "TW": "🇹🇼",
-        "SG": "🇸🇬", "ID": "🇮🇩", "TH": "🇹🇭", "VN": "🇻🇳", "MX": "🇲🇽",
-        "AR": "🇦🇷", "CO": "🇨🇴", "EG": "🇪🇬", "ZA": "🇿🇦", "NG": "🇳🇬",
-        "KE": "🇰🇪", "TR": "🇹🇷", "SA": "🇸🇦", "OTHER": "🌐",
+        "CN": "🇨🇳", "US": "🇺🇸", "RU": "🇷🇺", "BR": "🇧🇷",
+        "DE": "🇩🇪", "GB": "🇬🇧", "IN": "🇮🇳", "FR": "🇫🇷",
+        "JP": "🇯🇵", "KR": "🇰🇷", "AU": "🇦🇺", "NL": "🇳🇱",
+        "CA": "🇨🇦", "IT": "🇮🇹", "ES": "🇪🇸", "OTHER": "🌐",
+    }
+    color_map = {
+        "CN": "#ef4444", "US": "#3b82f6", "RU": "#f59e0b",
+        "BR": "#22c55e", "DE": "#eab308", "GB": "#8b5cf6",
+        "IN": "#06b6d4", "FR": "#ec4899", "JP": "#f43f5e",
+        "OTHER": "#6b7280",
     }
     
-    colors = {
-        "CN": "#ef4444", "US": "#3b82f6", "RU": "#f59e0b", "BR": "#22c55e",
-        "DE": "#eab308", "GB": "#8b5cf6", "IN": "#06b6d4", "FR": "#ec4899",
-        "JP": "#f43f5e", "KR": "#10b981", "AU": "#84cc16", "NL": "#f59e0b",
-    }
-    
-    # Group IPs by first octet ranges (simplified geo mapping)
     region_groups = defaultdict(int)
-    
     for ip, info in ip_data.items():
         if not isinstance(info, dict):
             continue
-        
         cnt = _get_event_count(info)
         if cnt == 0:
             continue
         
-        first = ip.split(".")[0]
-        
-        # Map first octet to region (very simplified)
-        if first in ("114", "116", "119", "120", "121", "122", "123"):
-            region_groups["🇨🇳  China"] += cnt
-        elif first in ("45", "64", "66", "70", "72", "74", "98", "99", "104", "108"):
-            region_groups["🇺🇸  US"] += cnt
-        elif first in ("5", "31", "37", "46", "51", "62", "77", "78", "79", "82", "85", "86", "87", "89", "91", "93"):
-            region_groups["🇷🇺  Russia"] += cnt
-        elif first in ("1", "103", "108", "110", "113", "115", "117", "120", "125", "139"):
-            region_groups["🇮🇳  India"] += cnt
-        elif first in ("2", "5", "7", "31", "37", "46", "51", "62", "77", "78", "79", "82", "85", "86", "87", "89", "91", "93"):
-            region_groups["🇪🇺  Europe"] += cnt
-        elif first in ("14", "13", "16", "17", "20", "21", "27", "35", "36", "42", "43", "49", "50", "55", "58", "59", "60", "61"):
-            region_groups["🇯🇵  Japan"] += cnt
-        elif first in ("1", "14", "27", "35", "36", "42", "43", "49", "50", "55", "58", "59", "60", "61", "101", "103", "110", "113", "115", "117", "120", "125", "139"):
-            region_groups["🇰🇷  Korea"] += cnt
+        first_octet = int(ip.split(".")[0]) if ip else 0
+        if first_octet in range(114, 125):
+            region_groups["China"] += cnt
+        elif first_octet in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]:
+            region_groups["US"] += cnt
+        elif first_octet in range(5, 94) and first_octet not in range(114, 125):
+            region_groups["Russia"] += cnt
+        elif first_octet in range(14, 62) and first_octet not in range(114, 125):
+            region_groups["Japan"] += cnt
         else:
-            region_groups["🌐  Others"] += cnt
+            region_groups["Other"] += cnt
     
     result = []
     for region, count in region_groups.items():
-        flag = region.split("  ")[0]
-        region_name = "  ".join(region.split("  ")[1:])
+        flag = flag_map.get(region, "🌐")
+        color = color_map.get(region, "#6b7280")
         result.append({
-            "country": region_name,
+            "country": region,
             "count": count,
-            "color": colors.get(flag, "#6b7280"),
+            "color": color,
             "flag": flag,
         })
     
     result.sort(key=lambda x: x["count"], reverse=True)
     return result
 
+
 def query_alerts():
-    """Get high-activity IPs as alerts."""
+    """Get high-activity IPs as alerts from PostgreSQL."""
+    conn = get_db()
+    if not conn:
+        return query_alerts_from_state()
+    
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        cur.execute("""
+            SELECT 
+                src_ip,
+                src_type,
+                COUNT(*) as event_count,
+                COUNT(DISTINCT dst_ip) as unique_destinations,
+                MIN(created_at) as first_seen,
+                MAX(created_at) as last_seen
+            FROM events 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip, src_type
+            HAVING COUNT(*) > 10
+            ORDER BY event_count DESC
+            LIMIT 50
+        """)
+        rows = cur.fetchall()
+        
+        alerts = []
+        for row in rows:
+            cnt = row["event_count"]
+            severity = "CRITICAL" if cnt > 500 else "WARNING"
+            alerts.append({
+                "ip": row["src_ip"],
+                "attack_type": f"{row['src_type'] or 'UNKNOWN'} traffic",
+                "count": cnt,
+                "severity": severity,
+                "unique_destinations": row["unique_destinations"],
+                "first_seen": str(row["first_seen"]),
+                "last_seen": str(row["last_seen"]),
+            })
+        
+        return alerts
+    except Exception as e:
+        print(f"Alerts query failed: {e}")
+        return query_alerts_from_state()
+    finally:
+        close_db(conn)
+
+
+def query_alerts_from_state():
+    """Fallback alerts from state file."""
     state = load_state()
     if not state:
         return []
@@ -427,10 +616,15 @@ def query_alerts():
     alerts.sort(key=lambda a: a["count"], reverse=True)
     return alerts[:50]
 
+
 def query_health():
     """Get system health."""
-    state = load_state()
-    if not state:
+    conn = get_db()
+    if not conn:
+        state = load_state()
+        agent_counters = {}
+        if state:
+            agent_counters = state.get("agent_counters", {})
         return {
             "status": "cold-start",
             "database": {"status": "disconnected"},
@@ -438,29 +632,60 @@ def query_health():
             "discord": {"status": "unknown"},
             "opnsense": {"status": "unknown"},
             "events_processed": 0,
-            "anomalies_detected": 0,
-            "uptime_seconds": 0,
+            "anomalies_detected": agent_counters.get("anomaly_count", 0),
+            "alerts_sent": agent_counters.get("alerts_sent", 0),
+            "uptime_seconds": agent_counters.get("uptime", 0),
+            "state_version": state.get("version", 0) if state else 0,
+            "state_timestamp": state.get("timestamp", "") if state else "",
+            "ip_classifications": len(agent_counters),
         }
     
-    counters = state.get("agent_counters", {})
-    
-    return {
-        "status": "healthy" if counters.get("event_count", 0) > 0 else "cold-start",
-        "database": {"status": "connected", "message": "PostgreSQL connection OK"},
-        "syslog": {"status": "active", "message": "Syslog listener running"},
-        "discord": {"status": "active", "message": "Discord bot online"},
-        "opnsense": {"status": "active", "message": "OPNsense API connected"},
-        "events_processed": counters.get("event_count", 0),
-        "anomalies_detected": counters.get("anomaly_count", 0),
-        "alerts_sent": counters.get("alerts_sent", 0),
-        "uptime_seconds": state.get("uptime", 0),
-        "state_version": state.get("version", 0),
-        "state_timestamp": state.get("timestamp", ""),
-        "ip_classifications": sum(
-            len(state.get("network_classifier", {}).get(cat, {}))
-            for cat in ["wan_ips", "lan_ips_auto", "vpn_ips_auto", "ip_data"]
-        ),
-    }
+    try:
+        state = load_state()
+        agent_counters = {}
+        if state:
+            agent_counters = state.get("agent_counters", {})
+        
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM events")
+        row = cur.fetchone()
+        event_count = row[0] if row else 0
+        close_db(conn)
+        
+        return {
+            "status": "healthy" if event_count > 0 else "cold-start",
+            "database": {"status": "connected", "message": "PostgreSQL connection OK"},
+            "syslog": {"status": "active", "message": "Syslog listener running"},
+            "discord": {"status": "active", "message": "Discord bot online"},
+            "opnsense": {"status": "active", "message": "OPNsense API connected"},
+            "events_processed": event_count,
+            "anomalies_detected": agent_counters.get("anomaly_count", 0),
+            "alerts_sent": agent_counters.get("alerts_sent", 0),
+            "uptime_seconds": agent_counters.get("uptime", 0),
+            "state_version": state.get("version", 0) if state else 0,
+            "state_timestamp": state.get("timestamp", "") if state else "",
+            "ip_classifications": len(agent_counters),
+        }
+    except Exception as e:
+        close_db(conn)
+        state = load_state()
+        agent_counters = {}
+        if state:
+            agent_counters = state.get("agent_counters", {})
+        return {
+            "status": "cold-start",
+            "database": {"status": "error", "message": str(e)},
+            "syslog": {"status": "unknown"},
+            "discord": {"status": "unknown"},
+            "opnsense": {"status": "unknown"},
+            "events_processed": 0,
+            "anomalies_detected": agent_counters.get("anomaly_count", 0),
+            "alerts_sent": agent_counters.get("alerts_sent", 0),
+            "uptime_seconds": agent_counters.get("uptime", 0),
+            "state_version": state.get("version", 0) if state else 0,
+            "state_timestamp": state.get("timestamp", "") if state else "",
+            "ip_classifications": len(agent_counters),
+        }
 
 
 # ─── Request Handler ─────────────────────────────────────────────────────────
@@ -484,8 +709,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/ip-flow":
             self._send_json(query_ip_flow())
         elif path == "/api/events":
-            data = query_heatmap()
-            self._send_json(data.get("events", []))
+            self._send_json(query_heatmap().get("events", []))
         elif path == "/api/mutes":
             self._send_json(load_mutes())
         elif path == "/api/geo":
@@ -494,9 +718,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(query_health())
         elif path == "/api/alerts":
             self._send_json(query_alerts())
-        elif path == "/api/connections":
-            data = query_ip_flow()
-            self._send_json(data.get("connections", []))
         else:
             self.send_response(404)
             self.end_headers()
