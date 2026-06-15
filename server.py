@@ -574,33 +574,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        routes = {
-            "/": "_serve_html", "/api/stats": "query_stats",
-            "/api/heatmap": "query_heatmap", "/api/ip-flow": "query_ip_flow",
-            "/api/events": "_empty_list", "/api/mutes": "query_mutes",
-            "/api/geo": "query_geo", "/api/health": "query_health",
-            "/api/alerts": "query_alerts",
-        }
-        handler_name = routes.get(path)
-        if handler_name:
-            handler = getattr(self, handler_name, None)
-            if handler:
-                if callable(handler) and handler_name.startswith("query_") or handler_name == "_empty_list":
-                    result = handler()
-                    self._send_json(result)
-                else:
-                    handler()
-            else:
-                self.send_response(404)
-                self.end_headers()
+        if path == "/":
+            self._serve_html()
+        elif path == "/api/stats":
+            self._send_json(query_stats())
+        elif path == "/api/heatmap":
+            self._send_json(query_heatmap())
+        elif path == "/api/ip-flow":
+            self._send_json(query_ip_flow())
+        elif path == "/api/events":
+            self._send_json([])
+        elif path == "/api/mutes":
+            self._send_json(load_mutes())
+        elif path == "/api/geo":
+            self._send_json(query_geo())
+        elif path == "/api/health":
+            self._send_json(query_health())
+        elif path == "/api/alerts":
+            self._send_json(query_alerts())
         else:
             self.send_response(404)
             self.end_headers()
 
     def _empty_list(self):
         return []
-    def query_mutes(self):
-        return load_mutes()
 
     def do_POST(self):
         if self.path == "/api/mutes":
