@@ -55,6 +55,11 @@ services:
       - REVERSE_DNS_ENABLED=${REVERSE_DNS_ENABLED:-false}
       - REVERSE_DNS_SERVER=${REVERSE_DNS_SERVER:-192.168.1.1}
       - REVERSE_DNS_CACHE_TTL=${REVERSE_DNS_CACHE_TTL:-3600}
+      # Network classification (WAN/LAN/VPN detection)
+      - OWN_WAN_IPS=${OWN_WAN_IPS:-}
+      - LAN_IPS=${LAN_IPS:-}
+      - VPN_IPS=${VPN_IPS:-}
+      - CUSTOM_INTERFACES=${CUSTOM_INTERFACES:-}
       # Detection tuning
       - PORTSCAN_WINDOW=${PORTSCAN_WINDOW:-60}
       - PORTSCAN_THRESHOLD=${PORTSCAN_THRESHOLD:-5}
