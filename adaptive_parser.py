@@ -457,3 +457,7 @@ class AdaptiveParser:
             'discovered_patterns': list(discovered_patterns),
             'total_sampled': len(sample_lines),
         }
+
+
+# Module-level parser instance for syslog_listener compatibility
+_parser = AdaptiveParser()
