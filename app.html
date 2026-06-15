@@ -1796,7 +1796,7 @@ function renderOpnsenseData(data) {
       let gwType, gwColor;
       if (gw.upstream) {
         gwType = '🔴 WAN'; gwColor = 'var(--success)';
-      } else if (gw.vpn_gateway || 'VPN' in gwNameUpper || 'WG' in gwNameUpper) {
+      } else if (gw.vpn_gateway || gwNameUpper.includes('VPN') || gwNameUpper.includes('WG')) {
         gwType = '🟣 VPN'; gwColor = '#a78bfa';
       } else {
         gwType = '🔵 GW'; gwColor = '#60a5fa';
