@@ -58,6 +58,7 @@ class StatePersistence:
                 "network_classifier": self._save_network_classifier(agent),
                 "geo_detector": self._save_geo_detector(agent),
                 "reverse_dns": self._save_reverse_dns(agent),
+                "system_log_classifier": self._save_system_log_classifier(agent),
             }
             
             with open(self.state_file, "w") as f:
@@ -100,6 +101,7 @@ class StatePersistence:
             self._load_network_classifier(agent, state.get("network_classifier", {}))
             self._load_geo_detector(agent, state.get("geo_detector", {}))
             self._load_reverse_dns(agent, state.get("reverse_dns", {}))
+            self._load_system_log_classifier(agent, state.get("system_log_classifier", {}))
             
             logger.info("Agent state loaded successfully")
             
@@ -400,6 +402,89 @@ class StatePersistence:
         
         if loaded > 0:
             logger.info("Restored %d IP classifications", loaded)
+    
+    # ── SystemLogClassifier persistence ──────────────────────────────
+    
+    def _save_system_log_classifier(self, agent) -> Dict:
+        """Save system log classifier data."""
+        if not hasattr(agent, "system_log_classifier") or not agent.system_log_classifier:
+            return {}
+        
+        data = {}
+        slog = agent.system_log_classifier
+        
+        # Save service profiles
+        service_data = {}
+        for name, profile in slog.service_profiles.items():
+            service_data[name] = {
+                "service": profile.service,
+                "action_counts": dict(profile.action_counts),
+                "total_events": profile.total_events,
+                "unique_src_ips": len(profile.src_ips),
+                "unique_dst_ips": len(profile.dst_ips),
+                "hourly_counts": dict(profile.hourly_counts),
+                "first_seen": profile.first_seen.isoformat() if profile.first_seen else None,
+                "last_seen": profile.last_seen.isoformat() if profile.last_seen else None,
+            }
+        
+        if service_data:
+            data["services"] = service_data
+        
+        # Save top services and log levels
+        if slog.events_by_service:
+            data["events_by_service"] = dict(slog.events_by_service.most_common(100))
+        if slog.events_by_level:
+            data["events_by_level"] = dict(slog.events_by_level.most_common())
+        if slog._new_services_seen:
+            data["new_services"] = list(slog._new_services_seen)
+        
+        return data
+    
+    def _load_system_log_classifier(self, agent, saved_data: Dict) -> None:
+        """Load and restore system log classifier data."""
+        if not hasattr(agent, "system_log_classifier") or not agent.system_log_classifier:
+            return
+        
+        from collections import Counter
+        
+        slog = agent.system_log_classifier
+        
+        loaded = 0
+        
+        # Restore service profiles
+        if "services" in saved_data:
+            for name, data in saved_data["services"].items():
+                try:
+                    from datetime import datetime, timezone
+                    profile = type(slog).ServiceProfile(service=data["service"])
+                    profile.action_counts = Counter(data.get("action_counts", {}))
+                    profile.total_events = data.get("total_events", 0)
+                    profile.hourly_counts = Counter(data.get("hourly_counts", {}))
+                    if data.get("first_seen"):
+                        ts = datetime.fromisoformat(data["first_seen"])
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        profile.first_seen = ts
+                    if data.get("last_seen"):
+                        ts = datetime.fromisoformat(data["last_seen"])
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        profile.last_seen = ts
+                    
+                    slog.service_profiles[name] = profile
+                    loaded += 1
+                except Exception as e:
+                    logger.warning("Failed to restore service profile '%s': %s", name, e)
+        
+        if "events_by_service" in saved_data:
+            slog.events_by_service = Counter(saved_data["events_by_service"])
+        if "events_by_level" in saved_data:
+            slog.events_by_level = Counter(saved_data["events_by_level"])
+        if "new_services" in saved_data:
+            slog._new_services_seen = set(saved_data["new_services"])
+        
+        if loaded > 0:
+            logger.info("Restored %d system log service profiles", loaded)
     
     # ── GeoDetector persistence ──────────────────────────────────────
     
