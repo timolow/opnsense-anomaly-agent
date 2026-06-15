@@ -299,10 +299,30 @@ class StatePersistence:
         
         # Save IP tracking
         ip_data = {}
-        for ip, info in agent.network_classifier.ip_data.items():
+        for ip, info in agent.network_classifier.wan_ips.items():
             if isinstance(info, dict):
                 ip_data[ip] = {
-                    "classification": info.get("classification", "UNKNOWN"),
+                    "category": "WAN",
+                    "event_count": info.get("event_count", 0),
+                    "first_seen": info.get("first_seen", ""),
+                    "last_seen": info.get("last_seen", ""),
+                    "src_events": info.get("src_events", 0),
+                    "dst_events": info.get("dst_events", 0),
+                }
+        for ip, info in agent.network_classifier.lan_ips_auto.items():
+            if isinstance(info, dict):
+                ip_data[ip] = {
+                    "category": "LAN",
+                    "event_count": info.get("event_count", 0),
+                    "first_seen": info.get("first_seen", ""),
+                    "last_seen": info.get("last_seen", ""),
+                    "src_events": info.get("src_events", 0),
+                    "dst_events": info.get("dst_events", 0),
+                }
+        for ip, info in agent.network_classifier.vpn_ips_auto.items():
+            if isinstance(info, dict):
+                ip_data[ip] = {
+                    "category": "VPN",
                     "event_count": info.get("event_count", 0),
                     "first_seen": info.get("first_seen", ""),
                     "last_seen": info.get("last_seen", ""),
@@ -337,7 +357,15 @@ class StatePersistence:
         # Restore IP data
         if "ip_data" in saved_data:
             for ip, info in saved_data["ip_data"].items():
-                agent.network_classifier.ip_data[ip] = info
+                category = info.get("category", "UNKNOWN")
+                if category == "WAN":
+                    agent.network_classifier.wan_ips[ip] = info
+                elif category == "LAN":
+                    agent.network_classifier.lan_ips_auto[ip] = info
+                elif category == "VPN":
+                    agent.network_classifier.vpn_ips_auto[ip] = info
+                else:
+                    agent.network_classifier.wan_ips[ip] = info
                 loaded += 1
         
         # Restore API interface map (this persists API-loaded interfaces across restarts)
