@@ -718,6 +718,7 @@ tr:hover td {
   <button class="nav-tab" onclick="switchTab('alerts', this)">🚨 Alerts</button>
   <button class="nav-tab" onclick="switchTab('mutes', this)">🔇 Mutes</button>
   <button class="nav-tab" onclick="switchTab('geo', this)">🌍 Geo</button>
+  <button class="nav-tab" onclick="switchTab('opnsense', this)">🔌 OPNsense</button>
 </nav>
 
 <!-- ═══════════════════ Main Content ═══════════════════ -->
@@ -743,6 +744,55 @@ tr:hover td {
         </div>
         <div id="top-countries">
           <!-- Filled by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── OPNsense Tab ─── -->
+  <div id="tab-opnsense" class="tab-content">
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">System Info</span>
+          <button class="btn btn-sm" onclick="loadOpnsenseData()">⟳ Refresh</button>
+        </div>
+        <div id="opnsense-system">
+          <p style="color:var(--text-muted); text-align:center; padding:40px;">Loading...</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Interfaces</span>
+        </div>
+        <div id="opnsense-interfaces">
+          <p style="color:var(--text-muted); text-align:center; padding:40px;">Loading...</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Gateways</span>
+        </div>
+        <div id="opnsense-gateways">
+          <p style="color:var(--text-muted); text-align:center; padding:40px;">Loading...</p>
+        </div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:16px;">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Interface Status</span>
+        </div>
+        <div id="opnsense-iface-status">
+          <p style="color:var(--text-muted); text-align:center; padding:40px;">Loading...</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Services (OpenVPN / NTP / DNSMasq)</span>
+        </div>
+        <div id="opnsense-services">
+          <p style="color:var(--text-muted); text-align:center; padding:40px;">Loading...</p>
         </div>
       </div>
     </div>
@@ -1656,6 +1706,155 @@ window.addEventListener('resize', () => {
     renderIPFlow();
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+// OPNsense Tab
+// ═══════════════════════════════════════════════════════════
+function loadOpnsenseData() {
+  fetch('/api/opnsense')
+    .then(r => r.json())
+    .then(data => renderOpnsenseData(data))
+    .catch(e => {
+      console.error('OPNsense load failed:', e);
+      document.getElementById('opnsense-system').innerHTML =
+        '<p style="color:var(--text-error); text-align:center; padding:20px;">Failed to load OPNsense data</p>';
+    });
+}
+
+function renderOpnsenseData(data) {
+  // System info
+  const sysEl = document.getElementById('opnsense-system');
+  const statusColor = data.status === 'connected' ? 'var(--success)' : 'var(--text-error)';
+  const statusDot = data.status === 'connected' ? '●' : '●';
+  let sysHtml = `
+    <div style="text-align:center; padding:16px;">
+      <div style="font-size:24px; color:${statusColor}; margin-bottom:12px;">${statusDot} ${data.status.toUpperCase()}</div>
+      <table style="width:100%; font-size:13px;">
+        <tr><td style="color:var(--text-muted); padding:4px 12px 4px 0;">OPNsense Version</td><td style="font-weight:600;">${data.opnsense_version || 'unknown'}</td></tr>
+        <tr><td style="color:var(--text-muted); padding:4px 12px 4px 0;">Firewall Rules</td><td style="font-weight:600;">${data.firewall_rules || 0}</td></tr>
+        <tr><td style="color:var(--text-muted); padding:4px 12px 4px 0;">DHCP Leases</td><td style="font-weight:600;">${data.dhcp_leases || 0}</td></tr>
+      </table>
+    </div>
+  `;
+  sysEl.innerHTML = sysHtml;
+
+  // Interfaces
+  const ifaceEl = document.getElementById('opnsense-interfaces');
+  const interfaces = data.interfaces || [];
+  let ifaceHtml = '';
+  if (interfaces.length === 0) {
+    ifaceHtml = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No interfaces found</p>';
+  } else {
+    ifaceHtml = '<table style="width:100%; font-size:12px;">';
+    ifaceHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Interface</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">IPv4</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">IPv6</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">MAC</th></tr>';
+    for (const iface of interfaces) {
+      ifaceHtml += `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:6px 8px; font-weight:600;">${iface.name}</td>
+        <td style="padding:6px 8px; font-family:monospace;">${iface.ipv4 || '-'}</td>
+        <td style="padding:6px 8px; font-family:monospace; font-size:11px;">${iface.ipv6 || '-'}</td>
+        <td style="padding:6px 8px; font-family:monospace; font-size:11px; color:var(--text-muted);">${iface.mac || '-'}</td>
+      </tr>`;
+    }
+    ifaceHtml += '</table>';
+  }
+  ifaceEl.innerHTML = ifaceHtml;
+
+  // Gateways
+  const gwEl = document.getElementById('opnsense-gateways');
+  const gateways = data.gateways || [];
+  let gwHtml = '';
+  if (gateways.length === 0) {
+    gwHtml = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No gateways found</p>';
+  } else {
+    gwHtml = '<table style="width:100%; font-size:12px;">';
+    gwHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Name</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Interface</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Gateway IP</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Type</th></tr>';
+    for (const gw of gateways) {
+      const gwType = gw.vpn_gateway ? '🟣 VPN' : (gw.upstream ? '🔴 WAN' : '🔵 GW');
+      gwHtml += `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:6px 8px; font-weight:600;">${gw.name}</td>
+        <td style="padding:6px 8px; font-family:monospace;">${gw.interface || '-'}</td>
+        <td style="padding:6px 8px; font-family:monospace;">${gw.gateway_ip || '-'}</td>
+        <td style="padding:6px 8px;">${gwType}</td>
+      </tr>`;
+    }
+    gwHtml += '</table>';
+  }
+  gwEl.innerHTML = gwHtml;
+
+  // Interface status
+  const statusEl = document.getElementById('opnsense-iface-status');
+  const ifaceStatus = data.interface_status || {};
+  let statusHtml = '<div style="display:flex; flex-wrap:wrap; gap:8px; padding:12px;">';
+  for (const [name, info] of Object.entries(ifaceStatus)) {
+    const up = info.state === 'up' || info.state === 'UP';
+    const color = up ? 'var(--success)' : 'var(--text-error)';
+    const dot = up ? '🟢' : '🔴';
+    statusHtml += `<div style="background:var(--card-bg); border:1px solid ${up ? 'var(--success)' : 'var(--text-error)'}; border-radius:8px; padding:12px; min-width:120px; text-align:center;">
+      <div style="font-weight:600; margin-bottom:4px;">${dot} ${name}</div>
+      <div style="font-size:11px; color:var(--text-muted);">${info.state}${info.media ? ' · ' + info.media : ''}</div>
+    </div>`;
+  }
+  statusHtml += '</div>';
+  statusEl.innerHTML = statusHtml;
+
+  // Services
+  const svcEl = document.getElementById('opnsense-services');
+  let svcHtml = '<table style="width:100%; font-size:13px;">';
+
+  // OpenVPN
+  const tunnels = data.openvpn_tunnels || [];
+  svcHtml += '<tr style="border-bottom:1px solid var(--border);"><td colspan="2" style="padding:8px 0; font-weight:600; color:var(--text-muted);">OpenVPN Tunnels</td></tr>';
+  if (tunnels.length === 0) {
+    svcHtml += '<tr><td colspan="2" style="padding:4px 12px; color:var(--text-muted);">No OpenVPN tunnels</td></tr>';
+  } else {
+    for (const t of tunnels) {
+      const tColor = t.status === 'up' || t.status === 'UP' ? 'var(--success)' : 'var(--text-error)';
+      svcHtml += `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:6px 12px;">
+          <span style="color:${tColor}; font-weight:600;">●</span> ${t.type}
+        </td>
+        <td style="padding:6px 12px; font-size:11px; color:var(--text-muted);">
+          ${t.peer ? 'Peer: ' + t.peer : ''}
+          ${t.uptime ? ' | Uptime: ' + t.uptime : ''}
+        </td>
+      </tr>`;
+    }
+  }
+
+  // NTP
+  const ntp = data.ntp_status || {};
+  const ntpStatus = ntp.status || 'unknown';
+  const ntpColor = ntpStatus === 'synchronized' || ntpStatus === 'SYNCED' ? 'var(--success)' : 'var(--text-muted)';
+  svcHtml += '<tr style="border-bottom:1px solid var(--border);"><td colspan="2" style="padding:8px 0; font-weight:600; color:var(--text-muted);">NTP</td></tr>';
+  svcHtml += `<tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px 12px;"><span style="color:${ntpColor}; font-weight:600;">●</span> ${ntpStatus}</td>
+    <td style="padding:6px 12px; font-size:11px; color:var(--text-muted);">${ntp.last_sync || ''}</td>
+  </tr>`;
+
+  // DNSMasq
+  const dns = data.dnsmasq_status || {};
+  const dnsStatus = dns.status || 'unknown';
+  const dnsColor = dnsStatus === 'running' || dnsStatus === 'up' ? 'var(--success)' : 'var(--text-muted)';
+  svcHtml += '<tr style="border-bottom:1px solid var(--border);"><td colspan="2" style="padding:8px 0; font-weight:600; color:var(--text-muted);">DNSMasq</td></tr>';
+  svcHtml += `<tr>
+    <td style="padding:6px 12px;"><span style="color:${dnsColor}; font-weight:600;">●</span> ${dnsStatus}</td>
+    <td style="padding:6px 12px; font-size:11px; color:var(--text-muted);">${dns.leases ? dns.leases + ' leases' : ''}</td>
+  </tr>`;
+
+  svcHtml += '</table>';
+  svcEl.innerHTML = svcHtml;
+}
+
+// Load OPNsense data when tab is first opened
+let _opnsenseLoaded = false;
+const _origSwitchTab = switchTab;
+window.switchTab = function(tabId, btn) {
+  _origSwitchTab(tabId, btn);
+  if (tabId === 'opnsense' && !_opnsenseLoaded) {
+    _opnsenseLoaded = true;
+    loadOpnsenseData();
+  }
+};
 </script>
 
 </body>
