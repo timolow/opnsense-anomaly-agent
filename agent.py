@@ -52,6 +52,7 @@ from statistical_model import StatisticalModel
 from geo_lookup import GeoLookup
 from discord_bot import DiscordBot
 from syslog_listener import SyslogListener
+from server import run_server as start_dashboard
 from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
@@ -340,6 +341,11 @@ class OPNsenseAgent:
 
         # Chat command server
         self.chat_thread = _start_chat_server(self, self.config.chat_port)
+
+        # Dashboard API server (runs on port 8766, reads from PostgreSQL)
+        dashboard_thread = Thread(target=start_dashboard, kwargs={"port": 8766}, daemon=True)
+        dashboard_thread.start()
+        logger.info("Dashboard API server started on port 8766")
 
         # Adaptive parser instance
         self.adaptive_parser = AdaptiveParser()
