@@ -54,6 +54,7 @@ from discord_bot import DiscordBot
 from syslog_listener import SyslogListener
 from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
+from state_persistence import StatePersistence
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -365,6 +366,10 @@ class OPNsenseAgent:
 
         # Shutdown
         self._shutdown = Event()
+        
+        # State persistence
+        self.persistence = StatePersistence()
+        self.persistence.load(self)
 
     # ── event callback (from syslog listener thread) ─────────────────
     def _on_event(self, event: dict):
