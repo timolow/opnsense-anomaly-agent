@@ -93,7 +93,7 @@ def query_stats():
     top_sources = []
     for ip, info in ip_data.items():
         if isinstance(info, dict):
-            cnt = info.get("event_count", 0)
+            cnt = _get_event_count(info)
             cat = info.get("category", "UNKNOWN")
             if cat == "WAN":
                 by_type["external"] += cnt
@@ -110,10 +110,10 @@ def query_stats():
     
     # Severity
     by_severity = {
-        "CRITICAL": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and info.get("event_count", 0) > 500),
-        "HIGH": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and 100 <= info.get("event_count", 0) <= 500),
-        "MEDIUM": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and info.get("event_count", 0) > 10),
-        "LOW": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and info.get("event_count", 0) <= 10),
+        "CRITICAL": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) > 500),
+        "HIGH": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and 100 <= _get_event_count(info) <= 500),
+        "MEDIUM": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) > 10),
+        "LOW": sum(1 for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) <= 10),
     }
     
     # Categories
@@ -130,13 +130,28 @@ def query_stats():
         "categories": dict(categories),
         "active_mutes": len(load_mutes()),
         "total_ips": len(ip_data),
-        "total_events": sum(info.get("event_count", 0) for info in ip_data.values() if isinstance(info, dict)),
+        "total_events": sum(_get_event_count(info) for info in ip_data.values() if isinstance(info, dict)),
         "state_timestamp": state.get("timestamp", ""),
         "agent_counters": counters,
     }
 
 def query_heatmap():
-    """Build heatmap from IP tracking data (source IP × hour)."""
+    """
+
+
+def _get_event_count(record):
+    """Get event count from IP record, handling both old and new formats."""
+    if isinstance(record, dict):
+        # New format: uses 'count' key
+        if "count" in record:
+            return record["count"]
+        # Old format: uses 'event_count' key
+        if "event_count" in record:
+            return record["event_count"]
+    return 0
+
+
+Build heatmap from IP tracking data (source IP × hour)."""
     state = load_state()
     if not state:
         return {"labels_x": [], "labels_y": [], "data": [], "events": []}
@@ -152,7 +167,7 @@ def query_heatmap():
         if not isinstance(info, dict):
             continue
         
-        cnt = info.get("event_count", 0)
+        cnt = _get_event_count(info)
         if cnt == 0:
             continue
         
@@ -345,7 +360,7 @@ def query_geo():
         if not isinstance(info, dict):
             continue
         
-        cnt = info.get("event_count", 0)
+        cnt = _get_event_count(info)
         if cnt == 0:
             continue
         
@@ -397,7 +412,7 @@ def query_alerts():
         if not isinstance(info, dict):
             continue
         
-        cnt = info.get("event_count", 0)
+        cnt = _get_event_count(info)
         cat = info.get("category", "UNKNOWN")
         
         if cnt > 50:
