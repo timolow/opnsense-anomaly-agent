@@ -698,6 +698,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
+    def _serve_html(self):
+        html_path = os.path.join(BASE_DIR, "app.html")
+        if os.path.exists(html_path):
+            with open(html_path, "rb") as f:
+                html = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(html)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path == "/":
