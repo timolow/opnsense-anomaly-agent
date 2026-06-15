@@ -160,34 +160,37 @@ def _read_opn_config():
         try:
             with open(config_path) as f:
                 cfg = json.load(f)
-            return cfg.get("api_url", ""), cfg.get("api_key", ""), cfg.get("api_cert", "")
+            opn = cfg.get("opnsense", {})
+            host = opn.get("host", "192.168.1.1")
+            port = opn.get("port", 443)
+            api_key = opn.get("api_key", "")
+            api_secret = opn.get("api_secret", "")
+            verify_ssl = opn.get("verify_ssl", False)
+            url = f"https://{host}:{port}"
+            return url, api_key, api_secret, verify_ssl
         except Exception:
             pass
-    return "", "", ""
+    return "", "", "", True
 
 # ─── PostgreSQL queries ────────────────────────────────────────────
 
 def query_stats():
     conn = get_db()
     state = load_state()
-    
     agent_counters = {}
     if state:
         agent_counters = state.get("agent_counters", {})
-    
     counters = {
         "events_processed": agent_counters.get("event_count", 0),
         "anomalies_detected": agent_counters.get("anomaly_count", 0),
         "alerts_sent": agent_counters.get("alert_count", 0),
     }
-    
     db_event_count = 0
     by_type = defaultdict(int)
     by_severity = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     top_sources = []
     categories = defaultdict(int)
     total_events = 0
-    
     if conn:
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -195,7 +198,6 @@ def query_stats():
             row = cur.fetchone()
             if row:
                 db_event_count = row["cnt"]
-            
             cur.execute("""
                 SELECT src_ip, COUNT(*) as event_count,
                        COUNT(DISTINCT dst_ip) as unique_destinations,
@@ -217,14 +219,10 @@ def query_stats():
                 category = classify_interface(iface)
                 if category == "UNKNOWN" and ip and not ip.startswith(("10.", "192.168.", "172.")):
                     category = "WAN"
-                if category == "WAN":
-                    by_type["external"] += cnt
-                elif category == "LAN":
-                    by_type["internal"] += cnt
-                elif category == "VPN":
-                    by_type["vpn"] += cnt
-                else:
-                    by_type["unknown"] += cnt
+                if category == "WAN": by_type["external"] += cnt
+                elif category == "LAN": by_type["internal"] += cnt
+                elif category == "VPN": by_type["vpn"] += cnt
+                else: by_type["unknown"] += cnt
                 categories[category] += 1
                 top_sources.append({
                     "ip": ip, "count": cnt, "category": category,
@@ -240,14 +238,11 @@ def query_stats():
             cur.close()
         except Exception as e:
             print(f"Stats query failed: {e}")
-    
     nc = state.get("network_classifier", {}) if state else {}
     ip_data = nc.get("ip_data", {})
     ip_classifications = len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0])
-    
     geo_data = query_geo()
     top_countries = [g["country"] for g in geo_data]
-    
     return {
         "counters": counters, "by_type": dict(by_type),
         "by_severity": by_severity, "top_sources": top_sources[:20],
@@ -268,22 +263,19 @@ def _fallback_stats():
     by_type = defaultdict(int)
     top_sources = []
     for ip, info in ip_data.items():
-        if not isinstance(info, dict):
-            continue
+        if not isinstance(info, dict): continue
         cnt = _get_event_count(info)
         cat = info.get("category", "UNKNOWN")
         if cat == "WAN": by_type["external"] += cnt
         elif cat == "LAN": by_type["internal"] += cnt
         elif cat == "VPN": by_type["vpn"] += cnt
-        if cnt > 0:
-            top_sources.append({"ip": ip, "count": cnt, "category": cat})
+        if cnt > 0: top_sources.append({"ip": ip, "count": cnt, "category": cat})
     top_sources.sort(key=lambda x: x["count"], reverse=True)
     return {"counters": {"events_processed": 0, "anomalies_detected": 0, "alerts_sent": 0}, "by_type": dict(by_type), "top_sources": top_sources[:20], "active_mutes": len(load_mutes()), "ip_classifications": len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0]), "top_countries": []}
 
 def query_heatmap():
     conn = get_db()
-    if not conn:
-        return _fallback_heatmap()
+    if not conn: return _fallback_heatmap()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -305,13 +297,11 @@ def query_heatmap():
     except Exception as e:
         print(f"Heatmap query failed: {e}")
         return _fallback_heatmap()
-    finally:
-        close_db(conn)
+    finally: close_db(conn)
 
 def _fallback_heatmap():
     state = load_state()
-    if not state:
-        return {"labels_x": [], "labels_y": [], "data": []}
+    if not state: return {"labels_x": [], "labels_y": [], "data": []}
     nc = state.get("network_classifier", {})
     ip_data = nc.get("ip_data", {})
     ip_hour = defaultdict(lambda: defaultdict(int))
@@ -328,8 +318,7 @@ def _fallback_heatmap():
 
 def query_ip_flow():
     conn = get_db()
-    if not conn:
-        return _fallback_flow()
+    if not conn: return _fallback_flow()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -352,8 +341,7 @@ def query_ip_flow():
         """)
         iface_rows = cur.fetchall()
         iface_by_ip = defaultdict(set)
-        for row in iface_rows:
-            iface_by_ip[row["src_ip"]].add(row["interface"])
+        for row in iface_rows: iface_by_ip[row["src_ip"]].add(row["interface"])
         nodes = []
         node_map = {}
         colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7", "SOURCE": "#3b82f6", "TARGET": "#f59e0b", "UNKNOWN": "#6b7280"}
@@ -389,13 +377,11 @@ def query_ip_flow():
     except Exception as e:
         print(f"IP flow query failed: {e}")
         return _fallback_flow()
-    finally:
-        close_db(conn)
+    finally: close_db(conn)
 
 def _fallback_flow():
     state = load_state()
-    if not state:
-        return {"nodes": [], "links": []}
+    if not state: return {"nodes": [], "links": []}
     nc = state.get("network_classifier", {})
     ip_data = nc.get("ip_data", {})
     nodes = []
@@ -404,13 +390,12 @@ def _fallback_flow():
     colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7", "UNKNOWN": "#6b7280"}
     ips = [(ip, info) for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) > 0]
     ips.sort(key=lambda x: x[1].get("count", 0), reverse=True)
-    top_ips = ips[:60]
-    for src_ip, src_info in top_ips:
+    for src_ip, src_info in ips[:60]:
         src_cat = src_info.get("category", "UNKNOWN")
         if src_ip not in node_map:
             nodes.append({"id": src_ip, "label": src_ip, "category": src_cat, "color": colors.get(src_cat, "#6b7280"), "size": min(6 + _get_event_count(src_info), 24)})
             node_map[src_ip] = len(nodes) - 1
-        for dst_ip, dst_info in top_ips:
+        for dst_ip, dst_info in ips[:60]:
             if src_ip == dst_ip: continue
             cnt = _get_event_count(dst_info)
             if cnt > 0:
@@ -425,8 +410,7 @@ def _fallback_flow():
 
 def query_geo():
     conn = get_db()
-    if not conn:
-        return _fallback_geo()
+    if not conn: return _fallback_geo()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -440,11 +424,9 @@ def query_geo():
         rows = cur.fetchall()
         regions = defaultdict(int)
         for row in rows:
-            ip = row["src_ip"]
-            cnt = row["cnt"]
+            ip, cnt = row["src_ip"], row["cnt"]
             first = _parse_ip_first_octet(ip)
-            if first is None:
-                regions["Other"] += cnt
+            if first is None: regions["Other"] += cnt
             elif 114 <= first <= 125: regions["China"] += cnt
             elif first in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]: regions["US"] += cnt
             elif 5 <= first < 94: regions["Europe/Russia"] += cnt
@@ -456,8 +438,7 @@ def query_geo():
     except Exception as e:
         print(f"Geo query failed: {e}")
         return _fallback_geo()
-    finally:
-        close_db(conn)
+    finally: close_db(conn)
 
 def _fallback_geo():
     state = load_state()
@@ -478,10 +459,8 @@ def _fallback_geo():
     return [{"country": r, "count": c, "color": "#6b7280", "flag": "Other"} for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
 
 def query_events():
-    """Get recent attack events from PostgreSQL for Recent Activity section."""
     conn = get_db()
-    if not conn:
-        return _fallback_events()
+    if not conn: return _fallback_events()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -500,8 +479,7 @@ def query_events():
         rows = cur.fetchall()
         events = []
         for row in rows:
-            ip = row["src_ip"]
-            cnt = row["event_count"]
+            ip, cnt = row["src_ip"], row["event_count"]
             severity = "CRITICAL" if cnt > 10000 else "WARNING" if cnt > 1000 else "INFO"
             iface = row["interface"] or "unknown"
             category = classify_interface(iface)
@@ -515,8 +493,7 @@ def query_events():
     except Exception as e:
         print(f"Events query failed: {e}")
         return _fallback_events()
-    finally:
-        close_db(conn)
+    finally: close_db(conn)
 
 def _fallback_events():
     state = load_state()
@@ -533,39 +510,43 @@ def _fallback_events():
     return events[:20]
 
 def query_opnsense_status():
-    """Query OPNsense API for system status and scrape data."""
-    opn_url, opn_key, opn_cert = _read_opn_config()
+    opn_url, opn_key, opn_secret, verify_ssl = _read_opn_config()
     if not opn_url:
         return {"status": "disconnected", "error": "No OPNsense config found"}
-    
     try:
         import urllib.request
+        import urllib.error
         import ssl
-        
+        import base64
         ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        
+        if not verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+        auth_string = f"{opn_key}:{opn_secret}"
+        auth_b64 = base64.b64encode(auth_string.encode()).decode()
+        auth_header = f"Basic {auth_b64}"
         results = {"status": "connected"}
-        
-        # System info
         try:
-            req = urllib.request.Request(f"{opn_url}/api/core/system/info", headers={"X-API-Key": opn_key})
+            req = urllib.request.Request(f"{opn_url}/api/core/system/info", headers={"Authorization": auth_header})
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
                 sys_info = json.loads(resp.read().decode())
-            results["opnsense_version"] = sys_info.get("version", "unknown") if isinstance(sys_info, dict) else "unknown"
-            results["hostname"] = sys_info.get("hostname", "unknown") if isinstance(sys_info, dict) else "unknown"
-            results["uptime"] = sys_info.get("uptime", "unknown") if isinstance(sys_info, dict) else "unknown"
-            results["cpu_load"] = sys_info.get("cpuload", "unknown") if isinstance(sys_info, dict) else "unknown"
-            results["memory_usage"] = sys_info.get("memory_usage", "unknown") if isinstance(sys_info, dict) else "unknown"
+            if isinstance(sys_info, dict):
+                results["opnsense_version"] = sys_info.get("version", "unknown")
+                results["hostname"] = sys_info.get("hostname", "unknown")
+                results["uptime"] = sys_info.get("uptime", "unknown")
+                results["cpu_load"] = sys_info.get("cpuload", "unknown")
+                results["memory_usage"] = sys_info.get("memory_usage", "unknown")
+                results["status"] = "connected"
+            else:
+                results["status"] = "connected"
+                results["opnsense_version"] = "unknown"
+                results["hostname"] = "unknown"
         except Exception as e:
             print(f"OPNsense system info failed: {e}")
             results["opnsense_version"] = "error"
             results["hostname"] = "error"
-        
-        # Firewall rules
         try:
-            req2 = urllib.request.Request(f"{opn_url}/api/filter/rules", headers={"X-API-Key": opn_key})
+            req2 = urllib.request.Request(f"{opn_url}/api/filter/rules", headers={"Authorization": auth_header})
             with urllib.request.urlopen(req2, context=ssl_context, timeout=5) as resp2:
                 rules_data = json.loads(resp2.read().decode())
             rules_list = rules_data.get("rules", {}).get("row", []) if isinstance(rules_data, dict) else []
@@ -573,10 +554,8 @@ def query_opnsense_status():
         except Exception as e:
             print(f"OPNsense rules failed: {e}")
             results["firewall_rules"] = 0
-        
-        # DHCP leases
         try:
-            req3 = urllib.request.Request(f"{opn_url}/api/dhcpd/status", headers={"X-API-Key": opn_key})
+            req3 = urllib.request.Request(f"{opn_url}/api/dhcpd/status", headers={"Authorization": auth_header})
             with urllib.request.urlopen(req3, context=ssl_context, timeout=5) as resp3:
                 dhcp_data = json.loads(resp3.read().decode())
             leases_list = dhcp_data.get("leases", {}).get("row", []) if isinstance(dhcp_data, dict) else []
@@ -584,7 +563,6 @@ def query_opnsense_status():
         except Exception as e:
             print(f"OPNsense DHCP failed: {e}")
             results["dhcp_leases"] = 0
-        
         return results
     except Exception as e:
         return {"status": "disconnected", "error": str(e), "opnsense_version": "unknown", "hostname": "unknown", "uptime": "unknown", "cpu_load": "unknown", "memory_usage": "unknown", "firewall_rules": 0, "dhcp_leases": 0}
@@ -612,8 +590,7 @@ def query_alerts():
     except Exception as e:
         print(f"Alerts query failed: {e}")
         return _fallback_alerts()
-    finally:
-        close_db(conn)
+    finally: close_db(conn)
 
 def _fallback_alerts():
     state = load_state()
@@ -635,9 +612,7 @@ def query_health():
     agent_counters = {}
     if state:
         agent_counters = state.get("agent_counters", {})
-    
     uptime = _calc_uptime(agent_counters)
-    
     if not conn:
         return {"status": "cold-start", "database": {"status": "disconnected"}, "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0), "uptime_seconds": uptime}
     try:
