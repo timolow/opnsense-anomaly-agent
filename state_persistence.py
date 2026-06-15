@@ -446,6 +446,7 @@ class StatePersistence:
             return
         
         from collections import Counter
+        from system_log_classifier import ServiceProfile
         
         slog = agent.system_log_classifier
         
@@ -456,7 +457,7 @@ class StatePersistence:
             for name, data in saved_data["services"].items():
                 try:
                     from datetime import datetime, timezone
-                    profile = type(slog).ServiceProfile(service=data["service"])
+                    profile = ServiceProfile(service=data["service"])
                     profile.action_counts = Counter(data.get("action_counts", {}))
                     profile.total_events = data.get("total_events", 0)
                     profile.hourly_counts = Counter(data.get("hourly_counts", {}))
