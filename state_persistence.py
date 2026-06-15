@@ -16,6 +16,7 @@ each detector's window.
 import json
 import logging
 import time
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -297,37 +298,43 @@ class StatePersistence:
         
         data = {}
         
-        # Save IP tracking
+        # Save IP tracking — use actual record keys from network_classifier.py
         ip_data = {}
         for ip, info in agent.network_classifier.wan_ips.items():
             if isinstance(info, dict):
                 ip_data[ip] = {
+                    "count": info.get("count", 0),
+                    "interfaces": list(info.get("interfaces", set())),
+                    "dst_ports": list(info.get("dst_ports", set())),
+                    "src_ips": list(info.get("src_ips", set())),
+                    "dst_ips": list(info.get("dst_ips", set())),
+                    "protocols": list(info.get("protocols", set())),
+                    "actions": dict(info.get("actions", {})),
                     "category": "WAN",
-                    "event_count": info.get("event_count", 0),
-                    "first_seen": info.get("first_seen", ""),
-                    "last_seen": info.get("last_seen", ""),
-                    "src_events": info.get("src_events", 0),
-                    "dst_events": info.get("dst_events", 0),
                 }
         for ip, info in agent.network_classifier.lan_ips_auto.items():
             if isinstance(info, dict):
                 ip_data[ip] = {
+                    "count": info.get("count", 0),
+                    "interfaces": list(info.get("interfaces", set())),
+                    "dst_ports": list(info.get("dst_ports", set())),
+                    "src_ips": list(info.get("src_ips", set())),
+                    "dst_ips": list(info.get("dst_ips", set())),
+                    "protocols": list(info.get("protocols", set())),
+                    "actions": dict(info.get("actions", {})),
                     "category": "LAN",
-                    "event_count": info.get("event_count", 0),
-                    "first_seen": info.get("first_seen", ""),
-                    "last_seen": info.get("last_seen", ""),
-                    "src_events": info.get("src_events", 0),
-                    "dst_events": info.get("dst_events", 0),
                 }
         for ip, info in agent.network_classifier.vpn_ips_auto.items():
             if isinstance(info, dict):
                 ip_data[ip] = {
+                    "count": info.get("count", 0),
+                    "interfaces": list(info.get("interfaces", set())),
+                    "dst_ports": list(info.get("dst_ports", set())),
+                    "src_ips": list(info.get("src_ips", set())),
+                    "dst_ips": list(info.get("dst_ips", set())),
+                    "protocols": list(info.get("protocols", set())),
+                    "actions": dict(info.get("actions", {})),
                     "category": "VPN",
-                    "event_count": info.get("event_count", 0),
-                    "first_seen": info.get("first_seen", ""),
-                    "last_seen": info.get("last_seen", ""),
-                    "src_events": info.get("src_events", 0),
-                    "dst_events": info.get("dst_events", 0),
                 }
         
         if ip_data:
@@ -354,21 +361,7 @@ class StatePersistence:
         
         loaded = 0
         
-        # Restore IP data
-        if "ip_data" in saved_data:
-            for ip, info in saved_data["ip_data"].items():
-                category = info.get("category", "UNKNOWN")
-                if category == "WAN":
-                    agent.network_classifier.wan_ips[ip] = info
-                elif category == "LAN":
-                    agent.network_classifier.lan_ips_auto[ip] = info
-                elif category == "VPN":
-                    agent.network_classifier.vpn_ips_auto[ip] = info
-                else:
-                    agent.network_classifier.wan_ips[ip] = info
-                loaded += 1
-        
-        # Restore API interface map (this persists API-loaded interfaces across restarts)
+        # Restore API interface map first (so classification works for IP loading)
         if "api_interface_map" in saved_data:
             agent.network_classifier._api_interface_map = {
                 iface: cls for iface, cls in saved_data["api_interface_map"].items()
@@ -381,6 +374,29 @@ class StatePersistence:
                 iface: cls for iface, cls in saved_data["auto_interface_map"].items()
             }
             logger.info("Restored auto interface map from state")
+        
+        # Restore IP data — reconstruct sets and defaultdicts from saved lists
+        if "ip_data" in saved_data:
+            for ip, info in saved_data["ip_data"].items():
+                category = info.get("category", "UNKNOWN")
+                record = {
+                    "count": info.get("count", 0),
+                    "interfaces": set(info.get("interfaces", [])),
+                    "dst_ports": set(info.get("dst_ports", [])),
+                    "src_ips": set(info.get("src_ips", [])),
+                    "dst_ips": set(info.get("dst_ips", [])),
+                    "protocols": set(info.get("protocols", [])),
+                    "actions": defaultdict(int, dict(info.get("actions", {}))),
+                }
+                if category == "WAN":
+                    agent.network_classifier.wan_ips[ip] = record
+                elif category == "LAN":
+                    agent.network_classifier.lan_ips_auto[ip] = record
+                elif category == "VPN":
+                    agent.network_classifier.vpn_ips_auto[ip] = record
+                else:
+                    agent.network_classifier.wan_ips[ip] = record
+                loaded += 1
         
         if loaded > 0:
             logger.info("Restored %d IP classifications", loaded)
