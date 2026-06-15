@@ -345,10 +345,11 @@ class NetworkClassifier:
         """
         src_ip = event.get("src_ip")
         dst_ip = event.get("dst_ip")
+        interface = event.get("interface")
 
-        # Classify each IP
-        src_class = self.classify_ip(src_ip) if src_ip else "UNKNOWN"
-        dst_class = self.classify_ip(dst_ip) if dst_ip else "UNKNOWN"
+        # Classify each IP (pass interface for API-driven classification)
+        src_class = self.classify_ip(src_ip, interface=interface) if src_ip else "UNKNOWN"
+        dst_class = self.classify_ip(dst_ip, interface=interface) if dst_ip else "UNKNOWN"
 
         # Directions
         direction_map = {
