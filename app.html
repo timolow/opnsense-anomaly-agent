@@ -802,6 +802,66 @@ tr:hover td {
     </div>
   </div>
 
+  <!-- ─── Firewall Rules Tab ─── -->
+  <div id="tab-rules" class="tab-content">
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Rule Statistics</span>
+        </div>
+        <div class="card-body" id="rules-stats">
+          <div class="metric-row">
+            <span class="label">Total Rules</span>
+            <span class="value" id="total-rules">-</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Deny Rules</span>
+            <span class="value" style="color: var(--danger);" id="deny-rules">-</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Permit Rules</span>
+            <span class="value" style="color: var(--success);" id="permit-rules">-</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Mixed Rules</span>
+            <span class="value" style="color: var(--warning);" id="mixed-rules">-</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Events Without Rule</span>
+            <span class="value" style="color: var(--text-muted);" id="no-rule-events">-</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Total Events</span>
+            <span class="value" id="total-events">-</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="card" style="grid-column: span 2;">
+        <div class="card-header">
+          <span class="card-title">Rule Classifications</span>
+          <span class="card-subtitle" id="rules-count">-</span>
+        </div>
+        <div class="card-body">
+          <table class="rules-table" id="rules-table">
+            <thead>
+              <tr>
+                <th>Rule Name</th>
+                <th>Events</th>
+                <th>Type</th>
+                <th>Actions</th>
+                <th>Breakdown</th>
+              </tr>
+            </thead>
+            <tbody id="rules-tbody">
+              <tr><td colspan="5" style="text-align:center; color: var(--text-muted);">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ─── Heatmap Tab ─── -->
   <div id="tab-heatmap" class="tab-content">
     <div class="card">
