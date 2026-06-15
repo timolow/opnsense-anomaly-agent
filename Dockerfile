@@ -24,6 +24,7 @@ COPY geo_lookup.py .
 COPY discord_bot.py .
 COPY reverse_dns.py .
 COPY network_classifier.py .
+COPY state_persistence.py .
 
 # Create data directory
 RUN mkdir -p /app/agent_data
