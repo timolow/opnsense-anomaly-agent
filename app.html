@@ -723,6 +723,7 @@ tr:hover td {
   <button class="nav-tab" onclick="switchTab('geo', this)">🌍 Geo</button>
   <button class="nav-tab" onclick="switchTab('opnsense', this)">🔌 OPNsense</button>
   <button class="nav-tab" onclick="switchTab('rules', this)">🛡️ Firewall Rules</button>
+  <button class="nav-tab" onclick="switchTab('syslog', this)">📋 System Logs</button>
 </nav>
 
 <!-- ═══════════════════ Main Content ═══════════════════ -->
@@ -996,6 +997,52 @@ tr:hover td {
     </div>
   </div>
 </div>
+
+  <!-- ─── System Logs Tab ─── -->
+  <div id="tab-syslog" class="tab-content">
+    <div class="grid-3" id="syslog-cards">
+      <div class="card metric-card blue">
+        <div class="card-header">
+          <span class="card-title">Total System Events</span>
+        </div>
+        <div class="card-value" id="syslog-total-events">-</div>
+        <div class="card-subtitle">Non-firewall events tracked</div>
+      </div>
+      <div class="card metric-card purple">
+        <div class="card-header">
+          <span class="card-title">Services Tracked</span>
+        </div>
+        <div class="card-value" id="syslog-services">-</div>
+        <div class="card-subtitle">Unique daemons learned</div>
+      </div>
+      <div class="card metric-card yellow">
+        <div class="card-header">
+          <span class="card-title">Anomalies</span>
+        </div>
+        <div class="card-value" id="syslog-anomalies">-</div>
+        <div class="card-subtitle">Recent system log anomalies</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Service Breakdown</span>
+        </div>
+        <div class="table-container" id="syslog-services-table">
+          <p style="color:var(--text-muted); text-align:center; padding:20px;">Loading...</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Anomaly Log</span>
+        </div>
+        <div id="syslog-anomaly-log">
+          <p style="color:var(--text-muted); text-align:center; padding:20px;">No anomalies detected</p>
+        </div>
+      </div>
+    </div>
+  </div>
 
 <script>
 // ═══════════════════════════════════════════════════════════
@@ -1994,6 +2041,90 @@ window.switchTab = function(tabId, btn) {
     loadOpnsenseData();
   }
 };
+
+// ═══════════════════════════════════════════════════════════
+// System Logs Tab
+// ═══════════════════════════════════════════════════════════
+function loadSystemLogsData() {
+  fetch(`${API_BASE}/api/system_logs`)
+    .then(res => res.json())
+    .then(data => renderSystemLogs(data))
+    .catch(() => {
+      document.getElementById('syslog-total-events').textContent = '-';
+      document.getElementById('syslog-services').textContent = '-';
+      document.getElementById('syslog-anomalies').textContent = '-';
+      document.getElementById('syslog-services-table').innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No data available</p>';
+      document.getElementById('syslog-anomaly-log').innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No anomalies detected</p>';
+    });
+}
+
+function renderSystemLogs(data) {
+  // Cards
+  const services = data.service_details || [];
+  document.getElementById('syslog-total-events').textContent = (data.total_system_events || 0).toLocaleString();
+  document.getElementById('syslog-services').textContent = data.services_tracked || 0;
+  document.getElementById('syslog-anomalies').textContent = (data.recent_anomalies || []).length;
+
+  // Service breakdown table
+  let svcHtml = '<table><thead><tr><th>Service</th><th>Events</th><th>Log Level</th><th>Src IPs</th><th>Dst IPs</th><th>Status</th></tr></thead><tbody>';
+  for (const svc of services) {
+    const status = svc.is_new ? '<span class="tag warning">🆕 New</span>' : '<span class="tag info">📚 Learned</span>';
+    const level = svc.dominant_level ? svc.dominant_level.toUpperCase() : 'N/A';
+    svcHtml += `<tr>
+      <td><strong>${svc.service}</strong></td>
+      <td>${svc.total_events.toLocaleString()}</td>
+      <td><span class="tag muted">${level}</span></td>
+      <td>${svc.unique_src_ips}</td>
+      <td>${svc.unique_dst_ips}</td>
+      <td>${status}</td>
+    </tr>`;
+  }
+  svcHtml += '</tbody></table>';
+  document.getElementById('syslog-services-table').innerHTML = svcHtml;
+
+  // Anomaly log
+  const anomalies = data.recent_anomalies || [];
+  if (anomalies.length > 0) {
+    let anomHtml = '';
+    for (const a of anomalies) {
+      const sevClass = a.severity === 'HIGH' ? 'danger' : a.severity === 'MEDIUM' ? 'warning' : 'info';
+      const sevEmoji = a.severity === 'HIGH' ? '🔴' : a.severity === 'MEDIUM' ? '🟡' : '🔵';
+      anomHtml += `<div style="padding:10px 0; border-bottom:1px solid var(--border);">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+          <span class="tag ${sevClass}">${sevEmoji} ${a.type}</span>
+          <span class="tag muted">${a.service}</span>
+        </div>
+        <div style="font-size:13px; color:var(--text-secondary);">${a.description}</div>
+      </div>`;
+    }
+    document.getElementById('syslog-anomaly-log').innerHTML = anomHtml;
+  } else {
+    document.getElementById('syslog-anomaly-log').innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No anomalies detected — all system logs are within normal patterns</p>';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// System Logs auto-refresh on tab switch
+// ═══════════════════════════════════════════════════════════
+const _origSwitchTab = switchTab;
+window.switchTab = function(tabId, btn) {
+  _origSwitchTab(tabId, btn);
+  if (tabId === 'syslog') loadSystemLogsData();
+};
+
+// Initial load for syslog tab if it's active on page load
+window.addEventListener('DOMContentLoaded', () => {
+  initTheme();
+  loadDashboardData();
+  // Load syslog data if tab is active (unlikely on initial load, but safety net)
+  if (document.getElementById('tab-syslog') && document.getElementById('tab-syslog').classList.contains('active')) {
+    loadSystemLogsData();
+  }
+});
+
+// Keep heartbeat alive
+setInterval(() => fetch(`${API_BASE}/api/heartbeat?ts=${Date.now()}`).catch(() => {}), 10000);
+
 </script>
 
 </body>
