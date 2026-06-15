@@ -331,6 +331,8 @@ class OPNsenseAgent:
 
         # Discord bot
         self.discord_bot = DiscordBot(self.config)
+        # Wire up the agent so /status and other commands work
+        self.discord_bot.set_agent(self)
 
         # OPNsense API client
         self.opn_client = OPNsenseClient(self.config)

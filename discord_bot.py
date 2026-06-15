@@ -439,6 +439,10 @@ class DiscordBot:
             logger.warning("Discord send_alert error: %s", e)
             return False
     
+    def set_agent(self, agent):
+        """Set the agent reference on the command handler so /status and other commands work."""
+        self._command_handler.agent = agent
+
     def start_bot(self):
         client = self._get_client()
         if client:
