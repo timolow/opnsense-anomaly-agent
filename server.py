@@ -17,20 +17,17 @@ except ImportError:
     HAS_PSYCOPG = False
     print("WARNING: psycopg2 not installed - falling back to state file")
 
-# Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "agent_data", "state.json")
 MUTES_PATH = os.path.join(BASE_DIR, "agent_data", "mutes.json")
 DATA_DIR = os.path.join(BASE_DIR, "agent_data")
 
-# PostgreSQL connection (reads from env like agent.py)
 DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
 DB_NAME = os.environ.get("DB_NAME", "opnsense")
 DB_USER = os.environ.get("DB_USER", "opnsense")
 DB_PASS = os.environ.get("DB_PASSWORD", "opnsense")
 
-# Interface classification map
 WAN_INTERFACES = {"ixl2", "igb1"}
 LAN_INTERFACES = {"ixl3_vlan1003", "ixl3_vlan666"}
 VPN_INTERFACES = {"ovpnc4", "openvpn4"}
@@ -50,7 +47,6 @@ def classify_interface(iface):
             return "VPN"
     return "UNKNOWN"
 
-# Global DB connection cache with lazy init
 _db_cache = {}
 
 def _get_db_once():
@@ -145,7 +141,6 @@ def _get_event_count(record):
     return 0
 
 def _parse_ip_first_octet(ip):
-    """Parse the first octet of an IPv4 address. Returns None for IPv6."""
     if not ip:
         return None
     try:
@@ -153,13 +148,29 @@ def _parse_ip_first_octet(ip):
     except (ValueError, IndexError):
         return None
 
+def _calc_uptime(agent_counters):
+    start = agent_counters.get("start_time")
+    if start and isinstance(start, (int, float)):
+        return max(0, int(time.time() - start))
+    return agent_counters.get("uptime", 0)
+
+def _read_opn_config():
+    config_path = os.path.join(BASE_DIR, "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+            return cfg.get("api_url", ""), cfg.get("api_key", ""), cfg.get("api_cert", "")
+        except Exception:
+            pass
+    return "", "", ""
+
 # ─── PostgreSQL queries ────────────────────────────────────────────
 
 def query_stats():
     conn = get_db()
     state = load_state()
     
-    # Build counters with correct field names for dashboard JS
     agent_counters = {}
     if state:
         agent_counters = state.get("agent_counters", {})
@@ -230,12 +241,10 @@ def query_stats():
         except Exception as e:
             print(f"Stats query failed: {e}")
     
-    # IP classifications from state
     nc = state.get("network_classifier", {}) if state else {}
     ip_data = nc.get("ip_data", {})
     ip_classifications = len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0])
     
-    # Top countries from geo query
     geo_data = query_geo()
     top_countries = [g["country"] for g in geo_data]
     
@@ -253,16 +262,11 @@ def query_stats():
 def _fallback_stats():
     state = load_state()
     if not state:
-        return {
-            "counters": {"events_processed": 0, "anomalies_detected": 0, "alerts_sent": 0},
-            "by_type": {}, "top_sources": [], "active_mutes": 0,
-            "ip_classifications": 0, "top_countries": [],
-        }
+        return {"counters": {"events_processed": 0, "anomalies_detected": 0, "alerts_sent": 0}, "by_type": {}, "top_sources": [], "active_mutes": 0, "ip_classifications": 0, "top_countries": []}
     nc = state.get("network_classifier", {})
     ip_data = nc.get("ip_data", {})
     by_type = defaultdict(int)
     top_sources = []
-    categories = defaultdict(int)
     for ip, info in ip_data.items():
         if not isinstance(info, dict):
             continue
@@ -271,16 +275,10 @@ def _fallback_stats():
         if cat == "WAN": by_type["external"] += cnt
         elif cat == "LAN": by_type["internal"] += cnt
         elif cat == "VPN": by_type["vpn"] += cnt
-        categories[cat] += 1
         if cnt > 0:
             top_sources.append({"ip": ip, "count": cnt, "category": cat})
     top_sources.sort(key=lambda x: x["count"], reverse=True)
-    return {
-        "counters": {"events_processed": 0, "anomalies_detected": 0, "alerts_sent": 0},
-        "by_type": dict(by_type), "top_sources": top_sources[:20],
-        "active_mutes": len(load_mutes()), "ip_classifications": len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0]),
-        "top_countries": [],
-    }
+    return {"counters": {"events_processed": 0, "anomalies_detected": 0, "alerts_sent": 0}, "by_type": dict(by_type), "top_sources": top_sources[:20], "active_mutes": len(load_mutes()), "ip_classifications": len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0]), "top_countries": []}
 
 def query_heatmap():
     conn = get_db()
@@ -303,11 +301,7 @@ def query_heatmap():
         ip_totals = {ip: sum(hours.values()) for ip, hours in ip_hour.items()}
         sorted_ips = sorted(ip_totals.keys(), key=lambda x: ip_totals[x], reverse=True)[:50]
         matrix = [[ip_hour[ip].get(h, 0) for h in range(24)] for ip in sorted_ips]
-        return {
-            "labels_x": [f"{h:02d}:00" for h in range(24)],
-            "labels_y": sorted_ips, "data": matrix,
-            "total_events": sum(sum(row) for row in matrix),
-        }
+        return {"labels_x": [f"{h:02d}:00" for h in range(24)], "labels_y": sorted_ips, "data": matrix, "total_events": sum(sum(row) for row in matrix)}
     except Exception as e:
         print(f"Heatmap query failed: {e}")
         return _fallback_heatmap()
@@ -322,8 +316,7 @@ def _fallback_heatmap():
     ip_data = nc.get("ip_data", {})
     ip_hour = defaultdict(lambda: defaultdict(int))
     for ip, info in ip_data.items():
-        if not isinstance(info, dict):
-            continue
+        if not isinstance(info, dict): continue
         cnt = _get_event_count(info)
         if cnt == 0: continue
         per_hour = cnt // 24
@@ -331,11 +324,7 @@ def _fallback_heatmap():
     ip_totals = {ip: sum(hours.values()) for ip, hours in ip_hour.items()}
     sorted_ips = sorted(ip_totals.keys(), key=lambda x: ip_totals[x], reverse=True)[:50]
     matrix = [[ip_hour[ip].get(h, 0) for h in range(24)] for ip in sorted_ips]
-    return {
-        "labels_x": [f"{h:02d}:00" for h in range(24)],
-        "labels_y": sorted_ips, "data": matrix,
-        "total_events": sum(sum(row) for row in matrix),
-    }
+    return {"labels_x": [f"{h:02d}:00" for h in range(24)], "labels_y": sorted_ips, "data": matrix, "total_events": sum(sum(row) for row in matrix)}
 
 def query_ip_flow():
     conn = get_db()
@@ -367,8 +356,7 @@ def query_ip_flow():
             iface_by_ip[row["src_ip"]].add(row["interface"])
         nodes = []
         node_map = {}
-        colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7",
-                  "SOURCE": "#3b82f6", "TARGET": "#f59e0b", "UNKNOWN": "#6b7280"}
+        colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7", "SOURCE": "#3b82f6", "TARGET": "#f59e0b", "UNKNOWN": "#6b7280"}
         connections = []
         for row in links:
             src_ip = row["src_ip"] or "0.0.0.0"
@@ -378,21 +366,16 @@ def query_ip_flow():
                 src_iface = iface_by_ip.get(src_ip, set())
                 src_cat = classify_interface(list(src_iface)[0] if src_iface else None)
                 if src_cat == "UNKNOWN": src_cat = "SOURCE"
-                nodes.append({"id": src_ip, "label": src_ip, "category": src_cat,
-                              "color": colors.get(src_cat, "#3b82f6"),
-                              "size": min(6 + count, 24)})
+                nodes.append({"id": src_ip, "label": src_ip, "category": src_cat, "color": colors.get(src_cat, "#3b82f6"), "size": min(6 + count, 24)})
                 node_map[src_ip] = len(nodes) - 1
             if dst_ip not in node_map:
                 dst_iface = iface_by_ip.get(dst_ip, set())
                 dst_cat = classify_interface(list(dst_iface)[0] if dst_iface else None)
                 if dst_cat == "UNKNOWN": dst_cat = "TARGET"
-                nodes.append({"id": dst_ip, "label": dst_ip, "category": dst_cat,
-                              "color": colors.get(dst_cat, "#f59e0b"),
-                              "size": min(4 + count, 18)})
+                nodes.append({"id": dst_ip, "label": dst_ip, "category": dst_cat, "color": colors.get(dst_cat, "#f59e0b"), "size": min(4 + count, 18)})
                 node_map[dst_ip] = len(nodes) - 1
             ports = [str(p) for p in (row["ports"] or [])[:5]]
-            connections.append({"source": src_ip, "target": dst_ip,
-                                "value": count, "ports": ports, "type": "traffic"})
+            connections.append({"source": src_ip, "target": dst_ip, "value": count, "ports": ports, "type": "traffic"})
         if len(nodes) > 60:
             node_conn = defaultdict(int)
             for c in connections:
@@ -419,16 +402,13 @@ def _fallback_flow():
     node_map = {}
     connections = []
     colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7", "UNKNOWN": "#6b7280"}
-    ips = [(ip, info) for ip, info in ip_data.items()
-           if isinstance(info, dict) and _get_event_count(info) > 0]
+    ips = [(ip, info) for ip, info in ip_data.items() if isinstance(info, dict) and _get_event_count(info) > 0]
     ips.sort(key=lambda x: x[1].get("count", 0), reverse=True)
     top_ips = ips[:60]
     for src_ip, src_info in top_ips:
         src_cat = src_info.get("category", "UNKNOWN")
         if src_ip not in node_map:
-            nodes.append({"id": src_ip, "label": src_ip, "category": src_cat,
-                          "color": colors.get(src_cat, "#6b7280"),
-                          "size": min(6 + _get_event_count(src_info), 24)})
+            nodes.append({"id": src_ip, "label": src_ip, "category": src_cat, "color": colors.get(src_cat, "#6b7280"), "size": min(6 + _get_event_count(src_info), 24)})
             node_map[src_ip] = len(nodes) - 1
         for dst_ip, dst_info in top_ips:
             if src_ip == dst_ip: continue
@@ -438,13 +418,9 @@ def _fallback_flow():
                 if link_val > 0:
                     if dst_ip not in node_map:
                         dst_cat = dst_info.get("category", "UNKNOWN")
-                        nodes.append({"id": dst_ip, "label": dst_ip,
-                                      "category": dst_cat,
-                                      "color": colors.get(dst_cat, "#6b7280"),
-                                      "size": min(4 + cnt, 18)})
+                        nodes.append({"id": dst_ip, "label": dst_ip, "category": dst_cat, "color": colors.get(dst_cat, "#6b7280"), "size": min(4 + cnt, 18)})
                         node_map[dst_ip] = len(nodes) - 1
-                    connections.append({"source": src_ip, "target": dst_ip,
-                                        "value": link_val, "type": "traffic"})
+                    connections.append({"source": src_ip, "target": dst_ip, "value": link_val, "type": "traffic"})
     return {"nodes": nodes, "links": connections}
 
 def query_geo():
@@ -474,13 +450,9 @@ def query_geo():
             elif 5 <= first < 94: regions["Europe/Russia"] += cnt
             elif 14 <= first < 62: regions["Japan/Korea"] += cnt
             else: regions["Other"] += cnt
-        flag_map = {"China": "China", "US": "US", "Europe/Russia": "Russia",
-                    "Japan/Korea": "Japan/Korea", "Other": "Other"}
-        color_map = {"China": "#ef4444", "US": "#3b82f6", "Europe/Russia": "#f59e0b",
-                     "Japan/Korea": "#f43f5e", "Other": "#6b7280"}
-        return [{"country": r, "count": c, "color": color_map.get(r, "#6b7280"),
-                 "flag": flag_map.get(r, "Other")}
-                for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
+        flag_map = {"China": "China", "US": "US", "Europe/Russia": "Russia", "Japan/Korea": "Japan/Korea", "Other": "Other"}
+        color_map = {"China": "#ef4444", "US": "#3b82f6", "Europe/Russia": "#f59e0b", "Japan/Korea": "#f43f5e", "Other": "#6b7280"}
+        return [{"country": r, "count": c, "color": color_map.get(r, "#6b7280"), "flag": flag_map.get(r, "Other")} for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
     except Exception as e:
         print(f"Geo query failed: {e}")
         return _fallback_geo()
@@ -502,13 +474,11 @@ def _fallback_geo():
             if 114 <= first <= 125: regions["China"] += cnt
             elif first in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]: regions["US"] += cnt
             else: regions["Other"] += cnt
-        else:
-            regions["Other"] += cnt
-    return [{"country": r, "count": c, "color": "#6b7280", "flag": "Other"}
-            for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
+        else: regions["Other"] += cnt
+    return [{"country": r, "count": c, "color": "#6b7280", "flag": "Other"} for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
 
 def query_events():
-    """Get recent attack events from PostgreSQL - for the Recent Activity section."""
+    """Get recent attack events from PostgreSQL for Recent Activity section."""
     conn = get_db()
     if not conn:
         return _fallback_events()
@@ -538,11 +508,7 @@ def query_events():
             events.append({
                 "attack_type": f"{category} traffic from {ip}",
                 "details": f"{cnt:,} events, {row['unique_dst']} destinations, {row['unique_ports']} ports",
-                "severity": severity,
-                "count": cnt,
-                "ip": ip,
-                "category": category,
-                "interface": iface,
+                "severity": severity, "count": cnt, "ip": ip, "category": category, "interface": iface,
             })
         cur.close()
         return events
@@ -553,53 +519,38 @@ def query_events():
         close_db(conn)
 
 def _fallback_events():
-    """Fallback to state file for events."""
     state = load_state()
-    if not state:
-        return []
+    if not state: return []
     nc = state.get("network_classifier", {})
     ip_data = nc.get("ip_data", {})
     events = []
     for ip, info in ip_data.items():
-        if not isinstance(info, dict):
-            continue
+        if not isinstance(info, dict): continue
         cnt = _get_event_count(info)
         if cnt > 50:
-            events.append({
-                "attack_type": f"{info.get('category', 'UNKNOWN')} traffic",
-                "details": f"{cnt:,} events",
-                "severity": "CRITICAL" if cnt > 500 else "WARNING",
-                "count": cnt,
-                "ip": ip,
-            })
+            events.append({"attack_type": f"{info.get('category', 'UNKNOWN')} traffic", "details": f"{cnt:,} events", "severity": "CRITICAL" if cnt > 500 else "WARNING", "count": cnt, "ip": ip})
     events.sort(key=lambda e: e["count"], reverse=True)
     return events[:20]
 
 def query_opnsense_status():
     """Query OPNsense API for system status and scrape data."""
-    opn_url = os.environ.get("OPN_URL", "https://192.168.1.1")
-    opn_key = os.environ.get("OPN_API_KEY", "")
-    opn_cert = os.environ.get("OPN_API_CERT", "")
+    opn_url, opn_key, opn_cert = _read_opn_config()
+    if not opn_url:
+        return {"status": "disconnected", "error": "No OPNsense config found"}
     
     try:
         import urllib.request
-        import urllib.error
         import ssl
         
-        ssl_context = None
-        if opn_cert and os.path.exists(opn_cert):
-            ssl_context = ssl.create_default_context(cafile=opn_cert)
-        elif opn_cert:
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
         
-        results = {}
+        results = {"status": "connected"}
         
         # System info
         try:
-            req = urllib.request.Request(f"{opn_url}/api/core/system/info",
-                                         headers={"X-API-Key": opn_key})
+            req = urllib.request.Request(f"{opn_url}/api/core/system/info", headers={"X-API-Key": opn_key})
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
                 sys_info = json.loads(resp.read().decode())
             results["opnsense_version"] = sys_info.get("version", "unknown") if isinstance(sys_info, dict) else "unknown"
@@ -614,8 +565,7 @@ def query_opnsense_status():
         
         # Firewall rules
         try:
-            req2 = urllib.request.Request(f"{opn_url}/api/filter/rules",
-                                          headers={"X-API-Key": opn_key})
+            req2 = urllib.request.Request(f"{opn_url}/api/filter/rules", headers={"X-API-Key": opn_key})
             with urllib.request.urlopen(req2, context=ssl_context, timeout=5) as resp2:
                 rules_data = json.loads(resp2.read().decode())
             rules_list = rules_data.get("rules", {}).get("row", []) if isinstance(rules_data, dict) else []
@@ -624,10 +574,9 @@ def query_opnsense_status():
             print(f"OPNsense rules failed: {e}")
             results["firewall_rules"] = 0
         
-        # Interface status
+        # DHCP leases
         try:
-            req3 = urllib.request.Request(f"{opn_url}/api/dhcpd/status",
-                                          headers={"X-API-Key": opn_key})
+            req3 = urllib.request.Request(f"{opn_url}/api/dhcpd/status", headers={"X-API-Key": opn_key})
             with urllib.request.urlopen(req3, context=ssl_context, timeout=5) as resp3:
                 dhcp_data = json.loads(resp3.read().decode())
             leases_list = dhcp_data.get("leases", {}).get("row", []) if isinstance(dhcp_data, dict) else []
@@ -636,20 +585,9 @@ def query_opnsense_status():
             print(f"OPNsense DHCP failed: {e}")
             results["dhcp_leases"] = 0
         
-        results["status"] = "connected"
         return results
     except Exception as e:
-        return {
-            "status": "disconnected",
-            "error": str(e),
-            "opnsense_version": "unknown",
-            "hostname": "unknown",
-            "uptime": "unknown",
-            "cpu_load": "unknown",
-            "memory_usage": "unknown",
-            "firewall_rules": 0,
-            "dhcp_leases": 0,
-        }
+        return {"status": "disconnected", "error": str(e), "opnsense_version": "unknown", "hostname": "unknown", "uptime": "unknown", "cpu_load": "unknown", "memory_usage": "unknown", "firewall_rules": 0, "dhcp_leases": 0}
 
 def query_alerts():
     conn = get_db()
@@ -657,8 +595,7 @@ def query_alerts():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT src_ip, COUNT(*) as cnt,
-                   COUNT(DISTINCT dst_ip) as unique_dst, interface
+            SELECT src_ip, COUNT(*) as cnt, COUNT(DISTINCT dst_ip) as unique_dst, interface
             FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY src_ip, interface
             HAVING COUNT(*) > 1000
@@ -670,13 +607,7 @@ def query_alerts():
         for row in rows:
             cnt = row["cnt"]
             severity = "CRITICAL" if cnt > 10000 else "WARNING"
-            alerts.append({
-                "ip": row["src_ip"],
-                "attack_type": f"{classify_interface(row['interface'])} traffic",
-                "count": cnt, "severity": severity,
-                "unique_destinations": row["unique_dst"],
-                "interface": row["interface"],
-            })
+            alerts.append({"ip": row["src_ip"], "attack_type": f"{classify_interface(row['interface'])} traffic", "count": cnt, "severity": severity, "unique_destinations": row["unique_dst"], "interface": row["interface"]})
         return alerts
     except Exception as e:
         print(f"Alerts query failed: {e}")
@@ -694,9 +625,7 @@ def _fallback_alerts():
         if not isinstance(info, dict): continue
         cnt = _get_event_count(info)
         if cnt > 50:
-            alerts.append({"ip": ip,
-                           "attack_type": f"{info.get('category', 'UNKNOWN')} traffic",
-                           "count": cnt, "severity": "CRITICAL" if cnt > 500 else "WARNING"})
+            alerts.append({"ip": ip, "attack_type": f"{info.get('category', 'UNKNOWN')} traffic", "count": cnt, "severity": "CRITICAL" if cnt > 500 else "WARNING"})
     alerts.sort(key=lambda a: a["count"], reverse=True)
     return alerts[:50]
 
@@ -706,12 +635,11 @@ def query_health():
     agent_counters = {}
     if state:
         agent_counters = state.get("agent_counters", {})
+    
+    uptime = _calc_uptime(agent_counters)
+    
     if not conn:
-        return {
-            "status": "cold-start", "database": {"status": "disconnected"},
-            "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0),
-            "uptime_seconds": agent_counters.get("uptime", 0),
-        }
+        return {"status": "cold-start", "database": {"status": "disconnected"}, "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0), "uptime_seconds": uptime}
     try:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM events")
@@ -726,17 +654,12 @@ def query_health():
             "opnsense": {"status": "active", "message": "OPNsense API connected"},
             "events_processed": event_count,
             "anomalies_detected": agent_counters.get("anomaly_count", 0),
-            "uptime_seconds": agent_counters.get("uptime", 0),
+            "uptime_seconds": uptime,
             "agent_counters": agent_counters,
         }
     except Exception as e:
         close_db(conn)
-        return {
-            "status": "error",
-            "database": {"status": "error", "message": str(e)},
-            "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0),
-            "uptime_seconds": agent_counters.get("uptime", 0),
-        }
+        return {"status": "error", "database": {"status": "error", "message": str(e)}, "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0), "uptime_seconds": uptime}
 
 # Request Handler
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -791,10 +714,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             cl = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(cl)
             data = json.loads(body)
-            mute = add_mute(
-                ip=data.get("ip", ""), attack_type=data.get("attack_type", "ALL"),
-                port=data.get("port"), duration=data.get("duration_seconds", 3600),
-            )
+            mute = add_mute(ip=data.get("ip", ""), attack_type=data.get("attack_type", "ALL"), port=data.get("port"), duration=data.get("duration_seconds", 3600))
             self._send_json(mute, 201)
         else:
             self.send_response(405)
