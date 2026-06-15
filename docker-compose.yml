@@ -89,6 +89,8 @@ services:
       - "${SYSLOG_UDP_PORT:-1514}:1514/udp"
       # Chat command HTTP endpoint
       - "${CHAT_PORT:-8765}:8765/tcp"
+      # Dashboard API server
+      - "8766:8766/tcp"
 
   postgres:
     image: postgres:16-alpine
