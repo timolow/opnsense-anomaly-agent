@@ -628,7 +628,7 @@ def query_opnsense_status():
                 if not iface_name:
                     continue
                 if iface_name not in iface_data:
-                    iface_data[iface_name] = {"ipv4": "", "ipv6": ""}
+                    iface_data[iface_name] = {"ipv4": "", "ipv6": "", "upstream": False, "vpn": False}
                 if gw_ip:
                     if gw_ip.startswith("fe80:") or gw_ip.startswith("fe8") or ":" in gw_ip:
                         # IPv6 address
@@ -636,16 +636,26 @@ def query_opnsense_status():
                             iface_data[iface_name]["ipv6"] = gw_ip
                     else:
                         # IPv4 address
-                        if not gw.get("vpn_gateway"):
-                            if not iface_data[iface_name]["ipv4"]:
-                                iface_data[iface_name]["ipv4"] = gw_ip
-                        else:
-                            # VPN gateway - mark as vpn
-                            iface_data[iface_name]["vpn"] = gw_ip
+                        if not iface_data[iface_name]["ipv4"]:
+                            iface_data[iface_name]["ipv4"] = gw_ip
+                # Track upstream and vpn flags from gateway data
+                if gw.get("upstream"):
+                    iface_data[iface_name]["upstream"] = True
+                if gw.get("vpn_gateway"):
+                    iface_data[iface_name]["vpn"] = True
             for iface_name, data in iface_data.items():
+                # Classify: WAN if upstream, VPN if vpn flag, otherwise LAN
+                if data.get("upstream"):
+                    desc = "WAN"
+                elif data.get("vpn"):
+                    desc = "VPN"
+                elif not data.get("ipv4"):
+                    desc = "LAN"
+                else:
+                    desc = "WAN"
                 results["interfaces"].append({
                     "name": iface_name,
-                    "description": "WAN" if data.get("ipv4") and not data.get("vpn") else "LAN" if not data.get("ipv4") else "VPN",
+                    "description": desc,
                     "mac": "",
                     "ipv4": data.get("ipv4", ""),
                     "ipv6": data.get("ipv6", ""),
