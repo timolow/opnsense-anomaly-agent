@@ -57,6 +57,7 @@ from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
 from rule_classifier import RuleClassifier
+from system_log_classifier import SystemLogClassifier
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -369,6 +370,7 @@ class OPNsenseAgent:
         self.last_save = time.time()
         self.last_learn = time.time()
         self.last_status = time.time()
+        self.last_syslog_anomaly_check = time.time()
         self._adapt_cycle = 0
 
         # Shutdown
@@ -377,6 +379,7 @@ class OPNsenseAgent:
         # State persistence
         self.persistence = StatePersistence()
         self.rule_classifier = RuleClassifier()
+        self.system_log_classifier = SystemLogClassifier()
         self.persistence.load(self)
 
     # ── event callback (from syslog listener thread) ─────────────────
@@ -395,6 +398,10 @@ class OPNsenseAgent:
         if 'ruid' in event:
             event['rule_name'] = event.pop('ruid')
         
+        # Tag event with log_type for DB storage
+        log_type = event.get('log_type', '')
+        event['log_type'] = log_type
+        
         # Network classification: track IPs and classify event (per-IP auto-discovery)
         if self.network_classifier is not None:
             event = self.network_classifier.record_event(event)
@@ -408,10 +415,20 @@ class OPNsenseAgent:
                     if hostname:
                         event[f"{field}_hostname"] = hostname
 
-        # Store
+        # Store in DB (includes log_type column)
         self.db.insert_event(event)
+        
+        # System log classifier — learns all events, especially system/non-firewall logs
+        self.system_log_classifier.process_event(event)
+        
+        # System log anomaly detection
+        # We batch-check system log anomalies every learn_interval to avoid overhead
+        now = time.time()
+        if now - self.last_syslog_anomaly_check >= self.config.learn_interval:
+            self._check_system_log_anomalies()
+            self.last_syslog_anomaly_check = now
 
-        # Rule-based learning
+        # Rule-based learning (firewall rules only)
         self.rule_classifier.process_event(event)
 
         # Statistical model
@@ -456,6 +473,17 @@ class OPNsenseAgent:
         """Return top blocked source IPs."""
         # Read from eventdb if available, otherwise from local counts
         return {}
+
+    def _check_system_log_anomalies(self):
+        """Check system log classifier for anomalies and send alerts."""
+        anomalies = self.system_log_classifier.detect_anomalies()
+        if not anomalies:
+            return
+        
+        for anomaly in anomalies:
+            self.anomaly_count += 1
+            logger.info("System log anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            self.discord_bot.send_alert(anomaly)
 
     def _send_status(self):
         """Log periodic status."""

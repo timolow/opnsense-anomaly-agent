@@ -989,6 +989,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(data)
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
+        elif path == "/api/system_logs":
+            # Read system log classifier state from agent data
+            try:
+                slog_path = os.path.join(DATA_DIR, "system_log_classifier_state.json")
+                if os.path.exists(slog_path):
+                    with open(slog_path) as f:
+                        data = json.load(f)
+                    # Add log_type breakdown from PG for full picture
+                    conn = get_db()
+                    if conn:
+                        try:
+                            cur = conn.cursor()
+                            cur.execute("SELECT log_type, COUNT(*) FROM events GROUP BY log_type ORDER BY COUNT(*) DESC LIMIT 20")
+                            data['pg_log_type_breakdown'] = dict(cur.fetchall())
+                            cur.execute("SELECT COUNT(*) FROM events WHERE action IS NULL OR action = ''")
+                            data['system_log_events'] = cur.fetchone()[0]
+                            cur.execute("SELECT COUNT(*) FROM events WHERE action IN ('PASS','BLOCK')")
+                            data['firewall_events'] = cur.fetchone()[0]
+                            cur.close()
+                        except Exception:
+                            pass
+                    self._send_json(data)
+                else:
+                    self._send_json({"message": "No system log classifier data yet", "services_tracked": 0, "services_by_volume": {}})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
         else:
             self.send_response(404)
             self.end_headers()
