@@ -173,9 +173,9 @@ class EventDatabase:
                     proto, action, interface, direction, version,
                     ip_ttl, ip_total_length, tcp_flags, tcp_seq,
                     tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message, rule_name)
+                    udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING id""",
                 (
                     event_data.get('timestamp'),
@@ -199,6 +199,7 @@ class EventDatabase:
                     event_data.get('icmp_datalen'),
                     raw_message,
                     event_data.get('rule_name'),
+                    event_data.get('log_type', ''),
                 )
             )
             event_id = cur.fetchone()[0]
@@ -224,7 +225,7 @@ class EventDatabase:
                     proto, action, interface, direction, version,
                     ip_ttl, ip_total_length, tcp_flags, tcp_seq,
                     tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message, rule_name)
+                    udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
                    VALUES %s""",
                 events,
                 page_size=1000
