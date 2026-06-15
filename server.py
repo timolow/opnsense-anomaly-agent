@@ -155,19 +155,30 @@ def _calc_uptime(agent_counters):
     return agent_counters.get("uptime", 0)
 
 def _read_opn_config():
+    """Read OPNsense config from env vars (docker-compose) or config.json fallback."""
+    # Primary: environment variables from docker-compose
+    host = os.environ.get("OPN_HOST", "192.168.1.1")
+    port = int(os.environ.get("OPN_PORT", "443"))
+    api_key = os.environ.get("OPN_API_KEY", "")
+    api_secret = os.environ.get("OPN_API_SECRET", "")
+    verify_ssl = os.environ.get("OPN_VERIFY_SSL", "true").lower() not in ("false", "0", "no")
+    url = f"https://{host}:{port}"
+    # Only return full config if API key was set via env
+    if api_key:
+        return url, api_key, api_secret, verify_ssl
+    # Fallback: read from config.json
     config_path = os.path.join(BASE_DIR, "config.json")
     if os.path.exists(config_path):
         try:
             with open(config_path) as f:
                 cfg = json.load(f)
             opn = cfg.get("opnsense", {})
-            host = opn.get("host", "192.168.1.1")
-            port = opn.get("port", 443)
-            api_key = opn.get("api_key", "")
-            api_secret = opn.get("api_secret", "")
-            verify_ssl = opn.get("verify_ssl", False)
-            url = f"https://{host}:{port}"
-            return url, api_key, api_secret, verify_ssl
+            h = opn.get("host", host)
+            p = opn.get("port", port)
+            k = opn.get("api_key", "")
+            s = opn.get("api_secret", "")
+            v = opn.get("verify_ssl", not verify_ssl)
+            return f"https://{h}:{p}", k, s, v
         except Exception:
             pass
     return "", "", "", True
