@@ -625,6 +625,7 @@ def query_opnsense_status():
             for gw in results["gateways"]:
                 iface_name = gw.get("interface", "")
                 gw_ip = gw.get("gateway_ip", "")
+                gw_name = gw.get("name", "")
                 if not iface_name:
                     continue
                 if iface_name not in iface_data:
@@ -638,10 +639,16 @@ def query_opnsense_status():
                         # IPv4 address
                         if not iface_data[iface_name]["ipv4"]:
                             iface_data[iface_name]["ipv4"] = gw_ip
-                # Track upstream and vpn flags from gateway data
+                # Track upstream flag
                 if gw.get("upstream"):
                     iface_data[iface_name]["upstream"] = True
-                if gw.get("vpn_gateway"):
+                # Detect VPN from gateway name or interface name pattern
+                gw_name_upper = gw_name.upper()
+                if ("VPN" in gw_name_upper or
+                    "WG" in gw_name_upper or
+                    iface_name.startswith("ovpn") or
+                    iface_name.startswith("wg") or
+                    iface_name.startswith("tun")):
                     iface_data[iface_name]["vpn"] = True
             for iface_name, data in iface_data.items():
                 # Classify: WAN if upstream, VPN if vpn flag, otherwise LAN
