@@ -537,21 +537,17 @@ def query_opnsense_status():
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         auth_header = f"Basic {auth_b64}"
         results = {"status": "connected"}
+        # System info — test endpoint that works on OPNsense API
         try:
-            req = urllib.request.Request(f"{opn_url}/api/core/system/info", headers={"Authorization": auth_header})
+            req = urllib.request.Request(f"{opn_url}/api/core/firmware/status", headers={"Authorization": auth_header})
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
                 sys_info = json.loads(resp.read().decode())
             if isinstance(sys_info, dict):
-                results["opnsense_version"] = sys_info.get("version", "unknown")
-                results["hostname"] = sys_info.get("hostname", "unknown")
-                results["uptime"] = sys_info.get("uptime", "unknown")
-                results["cpu_load"] = sys_info.get("cpuload", "unknown")
-                results["memory_usage"] = sys_info.get("memory_usage", "unknown")
-                results["status"] = "connected"
+                results["opnsense_version"] = sys_info.get("os_version", "unknown")
             else:
-                results["status"] = "connected"
                 results["opnsense_version"] = "unknown"
-                results["hostname"] = "unknown"
+            results["hostname"] = "opnsense"
+            results["status"] = "connected"
         except Exception as e:
             print(f"OPNsense system info failed: {e}")
             results["opnsense_version"] = "error"
