@@ -270,6 +270,16 @@ class NetworkClassifier:
         elif action == "PASS":
             stats["passed"] += 1
 
+    def _normalize_ip_record(self, record):
+        """Ensure an IP record has all required keys (handles state migration)."""
+        required_keys = {"count": 0, "interfaces": set(), "dst_ports": set(),
+                         "src_ips": set(), "dst_ips": set(), "protocols": set(),
+                         "actions": defaultdict(int)}
+        for key, default in required_keys.items():
+            if key not in record:
+                record[key] = default
+        return record
+
     def record_ip(self, ip_str: str, event: Dict):
         """Track a single IP across all interfaces."""
         if not ip_str:
@@ -293,6 +303,7 @@ class NetworkClassifier:
             if ip_str not in self.wan_ips:
                 self.wan_ips[ip_str] = record
             else:
+                self._normalize_ip_record(self.wan_ips[ip_str])
                 record = self.wan_ips[ip_str]
             
             # Check if we've exceeded max WAN IPs (drop least active)
@@ -302,17 +313,20 @@ class NetworkClassifier:
             if ip_str not in self.lan_ips_auto:
                 self.lan_ips_auto[ip_str] = record
             else:
+                self._normalize_ip_record(self.lan_ips_auto[ip_str])
                 record = self.lan_ips_auto[ip_str]
         elif classification == "VPN":
             if ip_str not in self.vpn_ips_auto:
                 self.vpn_ips_auto[ip_str] = record
             else:
+                self._normalize_ip_record(self.vpn_ips_auto[ip_str])
                 record = self.vpn_ips_auto[ip_str]
         elif classification == "OWN":
             # Track own IPs with full stats (in wan_ips so get_own_wan_ips() finds them)
             if ip_str not in self.wan_ips:
                 self.wan_ips[ip_str] = record
             else:
+                self._normalize_ip_record(self.wan_ips[ip_str])
                 record = self.wan_ips[ip_str]
 
         # Update record
