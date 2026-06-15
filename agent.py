@@ -358,6 +358,7 @@ class OPNsenseAgent:
         self.start_time = time.time()
         self.last_save = time.time()
         self.last_learn = time.time()
+        self.last_status = time.time()
         self._adapt_cycle = 0
 
         # Shutdown
@@ -540,8 +541,10 @@ class OPNsenseAgent:
                         baseline_summary = self.stat_model.get_baseline_summary()
                         self.db._save_baselines(baseline_summary)
 
-                    # Periodic status (time-based every 60s instead of event-count-based)
-                    if now - self.start_time > 30 and (now - self.last_save) % 60 < self.config.poll_interval + 1:
+                    # Periodic status (time-based every 60s)
+                    now = time.time()
+                    if now - self.last_status >= 60:
+                        self.last_status = now
                         try:
                             self._send_status()
                         except Exception as e:
