@@ -111,17 +111,14 @@ class NetworkClassifier:
         
         import requests
         import base64
-        import logging
         
         host = os.getenv("OPN_HOST", "192.168.1.1")
         port = os.getenv("OPN_PORT", "6666")
         key = os.getenv("OPN_API_KEY", "")
         secret = os.getenv("OPN_API_SECRET", "")
         
-        logger = logging.getLogger(__name__)
-        
         if not key or not secret:
-            logger.warning("OPNsense API key not configured, skipping interface classification")
+            print(f"[network_classifier] WARNING: OPNsense API key not configured, skipping interface classification")
             return  # No API credentials configured
         
         try:
@@ -129,11 +126,11 @@ class NetworkClassifier:
             creds = base64.b64encode(f"{key}:{secret}".encode()).decode()
             headers = {"Authorization": f"Basic {creds}", "Accept": "application/json"}
             
-            logger.info("Fetching OPNsense gateway info from %s...", url)
+            print(f"[network_classifier] INFO: Fetching OPNsense gateway info from {url}...")
             
             resp = requests.get(url, headers=headers, timeout=10, verify=False)
             if resp.status_code != 200:
-                logger.warning("OPNsense API returned %d, skipping interface classification", resp.status_code)
+                print(f"[network_classifier] WARNING: OPNsense API returned {resp.status_code}, skipping interface classification")
                 return  # API not available or auth failed
             
             data = resp.json()
@@ -164,15 +161,12 @@ class NetworkClassifier:
                     **{iface: "VPN" for iface in vpn_interfaces},
                 }
                 self._api_loaded = True
-                logger.info(
-                    "OPNsense API interface classification loaded: WAN=%s, VPN=%s",
-                    wan_interfaces, vpn_interfaces,
-                )
+                print(f"[network_classifier] INFO: OPNsense API interface classification loaded: WAN={wan_interfaces}, VPN={vpn_interfaces}")
                 for iface, cls in self._api_interface_map.items():
-                    logger.info("  %s → %s", iface, cls)
+                    print(f"[network_classifier] INFO:   {iface} → {cls}")
                 
         except Exception as e:
-            logger.warning("OPNsense API classification failed: %s", e)
+            print(f"[network_classifier] WARNING: OPNsense API classification failed: {e}")
             pass  # Fail gracefully, fall back to log-driven classification
 
     # ── Per-IP classification ─────────────────────────────────────────────
