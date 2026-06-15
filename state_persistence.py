@@ -430,6 +430,9 @@ class StatePersistence:
         if service_data:
             data["services"] = service_data
         
+        # Save classifier-level counters
+        data["total_events"] = slog.total_events
+        
         # Save top services and log levels
         if slog.events_by_service:
             data["events_by_service"] = dict(slog.events_by_service.most_common(100))
@@ -483,6 +486,8 @@ class StatePersistence:
             slog.events_by_level = Counter(saved_data["events_by_level"])
         if "new_services" in saved_data:
             slog._new_services_seen = set(saved_data["new_services"])
+        if "total_events" in saved_data:
+            slog.total_events = saved_data["total_events"]
         
         if loaded > 0:
             logger.info("Restored %d system log service profiles", loaded)
