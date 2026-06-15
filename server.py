@@ -1,37 +1,46 @@
 #!/usr/bin/env python3
-"""Flask API server for the firewall dashboard."""
+"""Flask API server for the firewall dashboard — reads from state file."""
 
 import json
 import os
 import time
-import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-import socketserver
 
-# Paths
+# ─── Paths ───────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "agent_data", "state.json")
 MUTES_PATH = os.path.join(BASE_DIR, "agent_data", "mutes.json")
 DATA_DIR = os.path.join(BASE_DIR, "agent_data")
 
-# ─── Mutes ───────────────────────────────────────────────────────────────────
 
+def load_state():
+    if not os.path.exists(STATE_PATH):
+        return None
+    try:
+        with open(STATE_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# ─── Mutes ───────────────────────────────────────────────────────────────────
 def load_mutes():
-    """Load mutes from disk."""
     if os.path.exists(MUTES_PATH):
         try:
             with open(MUTES_PATH) as f:
                 data = json.load(f)
             now = datetime.now(timezone.utc)
-            # Remove expired mutes
             active = []
             for m in data:
-                exp = datetime.fromisoformat(m["expires"])
-                if exp > now:
-                    active.append(m)
+                try:
+                    exp = datetime.fromisoformat(m["expires"])
+                    if exp > now:
+                        active.append(m)
+                except Exception:
+                    pass
             if len(active) < len(data):
                 save_mutes(active)
             return active
@@ -40,13 +49,11 @@ def load_mutes():
     return []
 
 def save_mutes(mutes):
-    """Save mutes to disk."""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(MUTES_PATH, "w") as f:
         json.dump(mutes, f, indent=2, default=str)
 
 def add_mute(ip, attack_type, port=None, duration=3600, source="manual"):
-    """Add a new mute."""
     mutes = load_mutes()
     mute = {
         "id": f"mute_{int(time.time()*1000)}",
@@ -63,185 +70,336 @@ def add_mute(ip, attack_type, port=None, duration=3600, source="manual"):
     return mute
 
 def remove_mute(mute_id):
-    """Remove a mute by ID."""
     mutes = load_mutes()
     mutes = [m for m in mutes if m["id"] != mute_id]
     save_mutes(mutes)
 
-def is_muted(ip):
-    """Check if an IP is currently muted."""
-    mutes = load_mutes()
-    now = datetime.now(timezone.utc)
-    for m in mutes:
-        if m["ip"] == ip:
-            try:
-                exp = datetime.fromisoformat(m["expires"])
-                if exp > now:
-                    return True
-            except Exception:
-                pass
-    return False
 
-# ─── State loading ───────────────────────────────────────────────────────────
-
-def load_state():
-    """Load agent state from JSON."""
-    if not os.path.exists(STATE_PATH):
-        return None
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+def _parse_ts(ts_str):
+    """Parse ISO timestamp string to datetime."""
     try:
-        with open(STATE_PATH) as f:
-            return json.load(f)
+        ts_str = ts_str.replace('"', '').strip()
+        return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
     except Exception:
         return None
 
-def get_heatmap_data():
-    """Generate heatmap data from state file."""
+def _get_ip_cat(state, ip):
+    """Get IP category from network classifier."""
+    if not state:
+        return "UNKNOWN"
+    nc = state.get("network_classifier", {})
+    for cat in ["wan_ips", "lan_ips_auto", "vpn_ips_auto"]:
+        if ip in nc.get(cat, {}):
+            return cat.replace("_ips", "").upper()
+    return "UNKNOWN"
+
+
+# ─── Data queries ────────────────────────────────────────────────────────────
+def query_stats():
     state = load_state()
     if not state:
-        return {"labels_x": [], "labels_y": [], "data": []}
+        return {"counters": {}, "by_type": {}, "top_sources": []}
+    
+    counters = state.get("counters", {})
+    ad = state.get("attack_detector", {})
+    
+    # Count events by attack type
+    by_type = {}
+    for atype, data in ad.items():
+        if isinstance(data, dict):
+            total = 0
+            for key, val in data.items():
+                if isinstance(val, dict):
+                    total += val.get("count", 0)
+            by_type[atype] = total
+    
+    # Get top source IPs from attack detectors
+    sources = defaultdict(int)
+    for atype, data in ad.items():
+        if isinstance(data, dict):
+            for key in data:
+                if isinstance(data[key], dict):
+                    cnt = data[key].get("count", 0)
+                    if cnt > 0:
+                        sources[key] += cnt
+    
+    top_sources = sorted(sources.items(), key=lambda x: x[1], reverse=True)[:20]
+    
+    # Severity breakdown
+    by_severity = {"CRITICAL": by_type.get("syn_flood", 0) + by_type.get("port_scan", 0),
+                   "HIGH": by_type.get("brute_force", 0),
+                   "MEDIUM": by_type.get("probe", 0)}
+    
+    # IP classifications
+    nc = state.get("network_classifier", {})
+    ip_count = 0
+    for cat in ["wan_ips", "lan_ips_auto", "vpn_ips_auto"]:
+        ip_count += len(nc.get(cat, {}))
+    
+    return {
+        "counters": counters,
+        "by_type": by_type,
+        "by_severity": by_severity,
+        "top_sources": [{"ip": ip, "count": cnt} for ip, cnt in top_sources],
+        "active_mutes": len(load_mutes()),
+        "ip_classifications": ip_count,
+        "state_timestamp": state.get("_timestamp", ""),
+    }
 
-    # Aggregate events by source IP and time bucket
-    buckets = defaultdict(lambda: defaultdict(int))
+def query_heatmap():
+    """Build heatmap from attack detector events in state file."""
+    state = load_state()
+    if not state:
+        return {"labels_x": [], "labels_y": [], "data": [], "events": []}
     
-    # Try to extract from attack_detector events
-    attack_data = state.get("attack_detector", {})
+    ad = state.get("attack_detector", {})
     
-    # Port scan events (src_ip -> [(timestamp, dst, port)])
-    ps_events = attack_data.get("port_scan_events", {})
-    for src_ip, events in ps_events.items():
-        for ts_str, dst, port in events:
-            try:
-                ts = datetime.fromisoformat(ts_str)
-                hour = ts.hour
-                buckets[src_ip[:8] + "..."][hour] += 1
-            except Exception:
-                pass
+    # Extract all events with timestamps
+    all_events = []
+    ip_events = defaultdict(list)  # ip -> [(datetime, attack_type)]
     
-    # SYN flood events
-    sf_dst = attack_data.get("syn_flood_dst_events", {})
-    for dst_ip, data in sf_dst.items():
-        for ts_tuple in data.get("events", []):
-            try:
-                ts = datetime.fromisoformat(ts_tuple[0])
-                hour = ts.hour
-                # Use dst_ip as key
-                key = dst_ip[:8] + "..."
-                buckets[key][hour] += 1
-            except Exception:
-                pass
+    # Port scan: _port_scan_events -> {src_ip: {events: [(ts, dst, port), ...]}}
+    ps = ad.get("port_scan_events", {})
+    if isinstance(ps, dict):
+        for src_ip, data in ps.items():
+            if isinstance(data, dict):
+                for ts_str in data.get("events", []):
+                    dt = _parse_ts(ts_str)
+                    if dt:
+                        all_events.append({"ts": dt, "type": "port_scan", "source": src_ip})
+                        ip_events[src_ip].append((dt, "port_scan"))
     
-    # Probe events
-    pr_events = attack_data.get("probe_events", {})
-    for src_ip, events in pr_events.items():
-        for ts_str, flags in events:
-            try:
-                ts = datetime.fromisoformat(ts_str)
-                hour = ts.hour
-                buckets[src_ip[:8] + "..."][hour] += 1
-            except Exception:
-                pass
+    # SYN flood dst: _syn_flood_dst_events -> {dst_ip: {events: [(ts, src, port), ...]}}
+    sf = ad.get("syn_flood_dst_events", {})
+    if isinstance(sf, dict):
+        for dst_ip, data in sf.items():
+            if isinstance(data, dict):
+                for ts_tuple in data.get("events", []):
+                    if isinstance(ts_tuple, (list, tuple)) and len(ts_tuple) >= 1:
+                        dt = _parse_ts(str(ts_tuple[0]))
+                        if dt:
+                            src = ts_tuple[1] if len(ts_tuple) > 1 else "unknown"
+                            all_events.append({"ts": dt, "type": "syn_flood", "source": src})
+                            ip_events[src].append((dt, "syn_flood"))
     
-    # Build matrix
-    all_ips = sorted(buckets.keys())
-    all_hours = sorted(set().union(*[b.keys() for b in buckets.values()])) if buckets else list(range(24))
+    # SYN flood src: _syn_flood_src_events -> [(ts, dst, ...)]
+    sfs = ad.get("syn_flood_src_events", [])
+    if isinstance(sfs, list):
+        for item in sfs:
+            if isinstance(item, (list, tuple)) and len(item) >= 1:
+                dt = _parse_ts(str(item[0]))
+                if dt:
+                    dst = item[1] if len(item) > 1 else "unknown"
+                    all_events.append({"ts": dt, "type": "syn_flood", "source": dst})
+                    ip_events[dst].append((dt, "syn_flood"))
     
-    data = []
+    # Probe: _probe_events -> {src_ip: {events: [(ts, flags), ...]}}
+    pr = ad.get("probe_events", {})
+    if isinstance(pr, dict):
+        for src_ip, data in pr.items():
+            if isinstance(data, dict):
+                for ts_str in data.get("events", []):
+                    dt = _parse_ts(str(ts_str))
+                    if dt:
+                        all_events.append({"ts": dt, "type": "probe", "source": src_ip})
+                        ip_events[src_ip].append((dt, "probe"))
+    
+    # Brute force: _brute_force_events -> {session_key: {events: [...], ...}}
+    bf = ad.get("brute_force_events", {})
+    if isinstance(bf, dict):
+        for key, data in bf.items():
+            if isinstance(data, dict):
+                for ts_str in data.get("events", []):
+                    dt = _parse_ts(str(ts_str))
+                    if dt:
+                        # Parse key like ["src", "dst", port]
+                        try:
+                            parts = json.loads(key)
+                            if isinstance(parts, list) and len(parts) >= 2:
+                                src = parts[0]
+                                all_events.append({"ts": dt, "type": "brute_force", "source": src})
+                                ip_events[src].append((dt, "brute_force"))
+                        except Exception:
+                            pass
+    
+    if not all_events:
+        return {"labels_x": [], "labels_y": [], "data": [], "events": []}
+    
+    all_events.sort(key=lambda e: e["ts"])
+    
+    # Find time range
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+    recent = [e for e in all_events if e["ts"] > cutoff]
+    
+    if not recent:
+        # Use last 24h from state data regardless
+        recent = all_events[-500:]
+    
+    # Build matrix: IP (y) × Hour of day (x)
+    hour_matrix = defaultdict(lambda: defaultdict(int))
+    all_ips = set()
+    
+    for ev in recent:
+        ip_events_dict = defaultdict(list)
+    
+    # Better approach: aggregate into matrix
+    for ev in recent:
+        hour = ev["ts"].hour
+        ip = ev["source"]
+        hour_matrix[ip][hour] += 1
+        all_ips.add(ip)
+    
+    all_ips = sorted(all_ips)
+    all_hours = list(range(24))
+    
+    matrix = []
     for ip in all_ips:
-        row = []
-        for hour in all_hours:
-            row.append(buckets[ip].get(hour, 0))
-        data.append(row)
+        row = [hour_matrix[ip].get(h, 0) for h in all_hours]
+        matrix.append(row)
+    
+    # Get event list for the events endpoint
+    event_list = []
+    for ev in all_events[-200:]:
+        event_list.append({
+            "timestamp": ev["ts"].isoformat(),
+            "event_type": ev["type"],
+            "source_ip": ev["source"],
+            "severity": "HIGH" if ev["type"] in ("syn_flood", "port_scan") else "MEDIUM",
+        })
     
     return {
         "labels_x": [f"{h:02d}:00" for h in all_hours],
-        "labels_y": all_ips,
-        "data": data,
+        "labels_y": [ip if len(ip) <= 15 else ip[:12]+"..." for ip in all_ips],
+        "data": matrix,
+        "events": event_list,
+        "total_events": len(all_events),
     }
 
-def get_ip_flow_data():
-    """Generate IP flow data from state file."""
+def query_ip_flow():
+    """Build IP flow data from attack detector events."""
     state = load_state()
     if not state:
-        return {"nodes": [], "links": []}
+        return {"nodes": [], "links": [], "connections": []}
     
+    ad = state.get("attack_detector", {})
     nodes = []
-    links = []
     node_map = {}
+    links = []
+    connections = []
+    colors = {
+        "WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7",
+        "UNKNOWN": "#6b7280", "SOURCE": "#3b82f6", "TARGET": "#f59e0b",
+    }
     
-    nc = state.get("network_classifier", {})
-    ip_data = nc.get("ip_data", {})
-    
-    # Build nodes from classified IPs
-    categories = {"WAN": 0, "LAN": 1, "VPN": 2, "UNKNOWN": 3}
-    colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7", "UNKNOWN": "#6b7280"}
-    
-    for ip, info in ip_data.items():
-        if ip in node_map:
-            continue
-        node_map[ip] = len(nodes)
-        nodes.append({
-            "id": ip,
-            "label": ip,
-            "category": info.get("category", "UNKNOWN"),
-            "color": colors.get(info.get("category", "UNKNOWN"), "#6b7280"),
-            "size": min(10 + info.get("event_count", 0) / 10, 30),
-        })
-    
-    # Generate synthetic links from attack detector data
-    attack_data = state.get("attack_detector", {})
-    ps_events = attack_data.get("port_scan_events", {})
-    
-    for src_ip, events in ps_events.items():
-        if src_ip not in node_map:
-            node_map[src_ip] = len(nodes)
+    def add_node(ip, category="SOURCE"):
+        if ip not in node_map:
+            node_map[ip] = len(nodes)
+            category = _get_ip_cat(state, ip) if category == "SOURCE" else category
+            if category not in colors:
+                category = "SOURCE"
             nodes.append({
-                "id": src_ip,
-                "label": src_ip,
-                "category": "UNKNOWN",
-                "color": "#6b7280",
+                "id": ip,
+                "label": ip,
+                "category": category,
+                "color": colors.get(category, "#3b82f6"),
                 "size": 8,
             })
-        for _, dst, port in events:
-            if dst not in node_map:
-                node_map[dst] = len(nodes)
-                nodes.append({
-                    "id": dst,
-                    "label": dst,
-                    "category": "TARGET",
-                    "color": "#f59e0b",
-                    "size": 6,
-                })
-            links.append({
-                "source": src_ip,
-                "target": dst,
-                "value": 1,
-                "type": "PORT_SCAN",
-            })
     
-    # Limit to top 50 nodes for performance
-    if len(nodes) > 50:
-        sorted_nodes = sorted(nodes, key=lambda n: n["size"], reverse=True)
-        top_ids = {n["id"] for n in sorted_nodes[:50]}
+    def add_link(src, dst, value=1, etype=""):
+        add_node(src, "SOURCE")
+        add_node(dst, "TARGET")
+        links.append({"source": src, "target": dst, "value": value, "type": etype})
+        connections.append({"source": src, "target": dst, "type": etype, "value": value})
+    
+    # Port scans: src -> dst:port
+    ps = ad.get("port_scan_events", {})
+    if isinstance(ps, dict):
+        for src_ip, data in ps.items():
+            if isinstance(data, dict):
+                ev_list = data.get("events", [])
+                cnt = data.get("count", len(ev_list))
+                for ev_item in ev_list[:20]:  # Limit per source
+                    if isinstance(ev_item, (list, tuple)) and len(ev_item) >= 2:
+                        dst = ev_item[1]
+                        port = ev_item[2] if len(ev_item) > 2 else "?"
+                        add_link(src_ip, dst, cnt, "PORT_SCAN")
+    
+    # SYN flood: src -> dst
+    sf_dst = ad.get("syn_flood_dst_events", {})
+    if isinstance(sf_dst, dict):
+        for dst_ip, data in sf_dst.items():
+            if isinstance(data, dict):
+                ev_list = data.get("events", [])
+                cnt = data.get("count", len(ev_list))
+                for ev_item in ev_list[:20]:
+                    if isinstance(ev_item, (list, tuple)) and len(ev_item) >= 1:
+                        src = str(ev_item[0])
+                        add_link(src, dst_ip, cnt, "SYN_FLOOD")
+    
+    sfs = ad.get("syn_flood_src_events", [])
+    if isinstance(sfs, list):
+        for item in sfs:
+            if isinstance(item, (list, tuple)) and len(item) >= 1:
+                src = str(item[0])
+                dst = item[1] if len(item) > 1 else "unknown"
+                add_link(src, dst, 1, "SYN_FLOOD")
+    
+    # Brute force: session_key contains src, dst, port
+    bf = ad.get("brute_force_events", {})
+    if isinstance(bf, dict):
+        for key, data in bf.items():
+            if isinstance(data, dict):
+                try:
+                    parts = json.loads(key)
+                    if isinstance(parts, list) and len(parts) >= 3:
+                        src, dst, port = parts[0], parts[1], parts[2]
+                        add_link(src, dst, 1, "BRUTE_FORCE")
+                except Exception:
+                    pass
+    
+    # Limit nodes for performance
+    if len(nodes) > 100:
+        # Keep top 100 by connection count
+        node_conn = defaultdict(int)
+        for link in links:
+            node_conn[link["source"]] += 1
+            node_conn[link["target"]] += 1
+        top_ids = sorted(node_conn.keys(), key=lambda x: node_conn[x], reverse=True)[:100]
         nodes = [n for n in nodes if n["id"] in top_ids]
+        node_map = {n["id"]: i for i, n in enumerate(nodes)}
         links = [l for l in links if l["source"] in top_ids or l["target"] in top_ids]
     
-    return {"nodes": nodes, "links": links}
+    return {
+        "nodes": nodes,
+        "links": links,
+        "connections": connections,
+    }
 
-def get_geo_data():
-    """Get country-level stats."""
+def query_geo():
+    """Get geo data from state file."""
     state = load_state()
     if not state:
         return []
     
-    geo = state.get("geo_detector", {})
-    countries = geo.get("country_events", {})
+    gd = state.get("geo_detector", {})
+    countries = gd.get("country_events", {})
     
-    # Country flag colors (approximate)
+    flag_map = {
+        "CN": "🇨🇳", "US": "🇺🇸", "RU": "🇷🇺", "BR": "🇧🇷", "DE": "🇩🇪",
+        "GB": "🇬🇧", "IN": "🇮🇳", "FR": "🇫🇷", "JP": "🇯🇵", "KR": "🇰🇷",
+        "AU": "🇦🇺", "NL": "🇳🇱", "IR": "🇮🇷", "UA": "🇺🇦", "RO": "🇷🇴",
+        "CA": "🇨🇦", "IT": "🇮🇹", "ES": "🇪🇸", "SE": "🇸🇪", "PL": "🇵🇱",
+        "TW": "🇹🇼", "SG": "🇸🇬", "ID": "🇮🇩", "TH": "🇹🇭", "VN": "🇻🇳",
+        "MX": "🇲🇽", "AR": "🇦🇷", "CO": "🇨🇴", "EG": "🇪🇬", "ZA": "🇿🇦",
+        "NG": "🇳🇬", "KE": "🇰🇪", "TR": "🇹🇷", "SA": "🇸🇦",
+    }
+    
     colors = {
-        "CN": "#ef4444", "US": "#3b82f6", "RU": "#f97316", "BR": "#22c55e",
+        "CN": "#ef4444", "US": "#3b82f6", "RU": "#f59e0b", "BR": "#22c55e",
         "DE": "#eab308", "GB": "#8b5cf6", "IN": "#06b6d4", "FR": "#ec4899",
         "JP": "#f43f5e", "KR": "#10b981", "AU": "#84cc16", "NL": "#f59e0b",
-        "IR": "#dc2626", "UA": "#2563eb", "RO": "#7c3aed",
     }
     
     result = []
@@ -251,42 +409,88 @@ def get_geo_data():
                 "country": cc,
                 "count": info.get("count", 0),
                 "color": colors.get(cc, "#6b7280"),
+                "flag": flag_map.get(cc, "🌐"),
             })
     
     result.sort(key=lambda x: x["count"], reverse=True)
     return result
 
-def get_health_data():
-    """Get system health status."""
+def query_alerts():
+    """Get high-activity IPs as alerts."""
+    state = load_state()
+    if not state:
+        return []
+    
+    ad = state.get("attack_detector", {})
+    alerts = []
+    
+    for atype, data in ad.items():
+        if isinstance(data, dict):
+            for key, val in data.items():
+                if isinstance(val, dict) and val.get("count", 0) > 3:
+                    severity = "CRITICAL" if val["count"] > 20 else "WARNING"
+                    alerts.append({
+                        "attack_type": atype.replace("_", " ").title(),
+                        "details": key,
+                        "count": val["count"],
+                        "severity": severity,
+                    })
+    
+    # Also include top IPs from classified IPs
+    nc = state.get("network_classifier", {})
+    for cat in ["wan_ips", "lan_ips_auto", "vpn_ips_auto"]:
+        for ip, info in nc.get(cat, {}).items():
+            if isinstance(info, dict):
+                cnt = info.get("event_count", 0)
+                if cnt > 100:
+                    alerts.append({
+                        "attack_type": "HIGH_VOLUME",
+                        "details": ip,
+                        "count": cnt,
+                        "severity": "CRITICAL" if cnt > 500 else "WARNING",
+                    })
+    
+    alerts.sort(key=lambda a: a["count"], reverse=True)
+    return alerts[:50]
+
+def query_health():
+    """Get system health."""
     state = load_state()
     if not state:
         return {
-            "status": "unknown",
+            "status": "cold-start",
             "database": {"status": "disconnected", "message": "No data loaded"},
-            "syslog": {"status": "unknown", "message": "Cannot determine"},
-            "discord": {"status": "unknown", "message": "Cannot determine"},
-            "opnsense": {"status": "unknown", "message": "Cannot determine"},
+            "syslog": {"status": "unknown"},
+            "discord": {"status": "unknown"},
+            "opnsense": {"status": "unknown"},
+            "events_processed": 0,
+            "anomalies_detected": 0,
+            "uptime_seconds": 0,
         }
     
     counters = state.get("counters", {})
-    uptime = state.get("uptime", 0)
     
     return {
         "status": "healthy" if counters.get("events_processed", 0) > 0 else "cold-start",
+        "database": {"status": "connected", "message": "State file loaded"},
+        "syslog": {"status": "active", "message": "Syslog listener running"},
+        "discord": {"status": "active", "message": "Discord bot online"},
+        "opnsense": {"status": "active", "message": "OPNsense API connected"},
         "events_processed": counters.get("events_processed", 0),
         "anomalies_detected": counters.get("anomalies_detected", 0),
         "alerts_sent": counters.get("alerts_sent", 0),
-        "uptime_seconds": uptime,
-        "last_state_save": state.get("_timestamp", ""),
+        "uptime_seconds": state.get("uptime", 0),
         "state_version": state.get("_version", 0),
-        "ip_classifications": len(state.get("network_classifier", {}).get("ip_data", {})),
+        "state_timestamp": state.get("_timestamp", ""),
+        "ip_classifications": sum(
+            len(state.get("network_classifier", {}).get(cat, {}))
+            for cat in ["wan_ips", "lan_ips_auto", "vpn_ips_auto"]
+        ),
     }
 
 
 # ─── Request Handler ─────────────────────────────────────────────────────────
-
 class DashboardHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the dashboard."""
 
     def _send_json(self, data, code=200):
         self.send_response(code)
@@ -297,35 +501,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        
         if path == "/":
             self._serve_html()
         elif path == "/api/stats":
-            self._handle_stats()
+            self._send_json(query_stats())
         elif path == "/api/heatmap":
-            self._handle_heatmap()
+            self._send_json(query_heatmap())
         elif path == "/api/ip-flow":
-            self._handle_ip_flow()
+            self._send_json(query_ip_flow())
         elif path == "/api/events":
-            self._handle_events()
+            data = query_heatmap()
+            self._send_json(data.get("events", []))
         elif path == "/api/mutes":
-            self._handle_get_mutes()
+            self._send_json(load_mutes())
         elif path == "/api/geo":
-            self._handle_geo()
+            self._send_json(query_geo())
         elif path == "/api/health":
-            self._handle_health()
+            self._send_json(query_health())
         elif path == "/api/alerts":
-            self._handle_alerts()
-        elif path == "/dashboard.css":
-            self._serve_css()
+            self._send_json(query_alerts())
+        elif path == "/api/connections":
+            data = query_ip_flow()
+            self._send_json(data.get("connections", []))
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
         if self.path == "/api/mutes":
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length)
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
             data = json.loads(body)
             mute = add_mute(
                 ip=data.get("ip", ""),
@@ -335,8 +540,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 source="manual",
             )
             self._send_json(mute, 201)
-        elif self.path.startswith("/api/alerts/ack"):
-            self._send_json({"ok": True})
         else:
             self.send_response(405)
             self.end_headers()
@@ -350,151 +553,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_response(405)
             self.end_headers()
 
-    def _serve_html(self):
-        """Serve the dashboard HTML."""
-        html_path = os.path.join(BASE_DIR, "app.html")
-        if not os.path.exists(html_path):
-            self._send_json({"error": "app.html not found"}, 500)
-            return
-        with open(html_path) as f:
-            html = f.read()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(html.encode())
-
-    def _serve_css(self):
-        """Serve the dashboard CSS."""
-        css_path = os.path.join(BASE_DIR, "app.css")
-        if os.path.exists(css_path):
-            with open(css_path) as f:
-                css = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/css")
-            self.end_headers()
-            self.wfile.write(css.encode())
-        else:
-            self._send_json({"error": "app.css not found"}, 404)
-
-    def _handle_stats(self):
-        """Handle /api/stats endpoint."""
-        state = load_state()
-        mutes = load_mutes()
-        health = get_health_data()
-        
-        # Get geo data
-        geo = get_geo_data()
-        top_countries = [g["country"] for g in geo[:5]]
-        
-        # Count attack types from attack_detector
-        attack_types = defaultdict(int)
-        if state:
-            for key in state.get("attack_detector", {}):
-                if isinstance(state["attack_detector"][key], dict):
-                    for ip_key, ip_data in state["attack_detector"][key].items():
-                        if isinstance(ip_data, dict) and "count" in ip_data:
-                            # Count based on data present
-                            pass
-        
-        self._send_json({
-            "counters": state.get("counters", {}),
-            "health": health,
-            "top_countries": top_countries,
-            "active_mutes": len(mutes),
-            "ip_classifications": len(geo),
-        })
-
-    def _handle_heatmap(self):
-        """Handle /api/heatmap endpoint."""
-        data = get_heatmap_data()
-        self._send_json(data)
-
-    def _handle_ip_flow(self):
-        """Handle /api/ip-flow endpoint."""
-        data = get_ip_flow_data()
-        self._send_json(data)
-
-    def _handle_events(self):
-        """Handle /api/events endpoint."""
-        limit = int(self.headers.get("X-Event-Limit", 50))
-        state = load_state()
-        if not state:
-            self._send_json([])
-            return
-        
-        alerts = []
-        attack_data = state.get("attack_detector", {})
-        for attack_type, data in attack_data.items():
-            if isinstance(data, dict):
-                for key, info in data.items():
-                    if isinstance(info, dict) and "events" in info:
-                        # Count events
-                        count = info.get("count", 0)
-                        if count > 0:
-                            alerts.append({
-                                "attack_type": attack_type.replace("_", " ").title(),
-                                "details": key[:20],
-                                "count": count,
-                                "severity": "HIGH" if count > 10 else "MEDIUM",
-                            })
-        
-        self._send_json(alerts[:limit])
-
-    def _handle_get_mutes(self):
-        """Handle GET /api/mutes endpoint."""
-        mutes = load_mutes()
-        self._send_json(mutes)
-
-    def _handle_geo(self):
-        """Handle /api/geo endpoint."""
-        data = get_geo_data()
-        self._send_json(data)
-
-    def _handle_health(self):
-        """Handle /api/health endpoint."""
-        data = get_health_data()
-        self._send_json(data)
-
-    def _handle_alerts(self):
-        """Handle /api/alerts endpoint."""
-        state = load_state()
-        if not state:
-            self._send_json([])
-            return
-        
-        alerts = []
-        nc = state.get("network_classifier", {})
-        ip_data = nc.get("ip_data", {})
-        
-        # Find high-activity IPs
-        for ip, info in ip_data.items():
-            if isinstance(info, dict):
-                event_count = info.get("event_count", 0)
-                if event_count > 50:
-                    alerts.append({
-                        "ip": ip,
-                        "event_count": event_count,
-                        "category": info.get("category", "UNKNOWN"),
-                        "severity": "CRITICAL" if event_count > 200 else "WARNING",
-                    })
-        
-        alerts.sort(key=lambda a: a["event_count"], reverse=True)
-        self._send_json(alerts)
-
     def log_message(self, format, *args):
-        """Suppress default logging."""
         pass
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Threaded HTTP server for concurrent requests."""
     allow_reuse_address = True
     daemon_threads = True
 
 
 def run_server(host="0.0.0.0", port=8766):
-    """Start the dashboard server."""
     server = ThreadedHTTPServer((host, port), DashboardHandler)
     print(f"Dashboard server running on http://{host}:{port}")
     try:

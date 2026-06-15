@@ -1224,8 +1224,11 @@ function renderHeatmap() {
 // ═══════════════════════════════════════════════════════════
 // IP Flow Visualization
 // ═══════════════════════════════════════════════════════════
+let ipFlowAnimId = null;
+
 function renderIPFlow() {
   const canvas = document.getElementById('ipflow-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   
@@ -1236,43 +1239,65 @@ function renderIPFlow() {
   const W = rect.width;
   const H = rect.height;
   
+  // Clear
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const bgColor = isDark ? '#0b1120' : '#f1f5f9';
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, W, H);
+  
+  // Show loading while fetching
+  ctx.fillStyle = isDark ? '#94a3b8' : '#64748b';
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Loading flow data...', W / 2, H / 2);
+  
   api('/api/ip-flow').then(data => {
-    if (!data || !data.nodes || data.nodes.length === 0) {
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted');
+    if (!data || !data.nodes || data.nodes.length === 0 || !data.links || data.links.length === 0) {
+      ctx.fillStyle = isDark ? '#94a3b8' : '#64748b';
       ctx.font = '16px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('No IP flow data available', W / 2, H / 2);
       return;
     }
     
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    const bgColor = isDark ? '#0b1120' : '#f1f5f9';
-    
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, W, H);
-    
     const nodes = data.nodes;
     const links = data.links;
     
-    // Force-directed layout (simplified)
+    // Build adjacency for positioning
     const positions = {};
     const centerX = W / 2;
     const centerY = H / 2;
     
-    // Initialize positions in a circle
+    // Initialize positions in clusters by category
+    const categories = {};
+    nodes.forEach(node => {
+      const cat = node.category || 'UNKNOWN';
+      if (!categories[cat]) categories[cat] = [];
+      categories[cat].push(node);
+    });
+    
+    const catAngles = {};
+    const catKeys = Object.keys(categories);
+    catKeys.forEach((cat, i) => {
+      catAngles[cat] = (i / catKeys.length) * Math.PI * 2 - Math.PI / 2;
+    });
+    
     nodes.forEach((node, i) => {
-      const angle = (i / nodes.length) * Math.PI * 2;
-      const radius = Math.min(W, H) * 0.3;
+      const cat = node.category || 'UNKNOWN';
+      const angle = catAngles[cat] + (i / categories[cat].length) * 0.8 - 0.4;
+      const radius = Math.min(W, H) * 0.25;
       positions[node.id] = {
         x: centerX + Math.cos(angle) * radius,
         y: centerY + Math.sin(angle) * radius,
         vx: 0,
         vy: 0,
+        baseX: centerX + Math.cos(angle) * radius,
+        baseY: centerY + Math.sin(angle) * radius,
       };
     });
     
-    // Run simple force simulation
-    const iterations = 80;
+    // Run force simulation
+    const iterations = 100;
     for (let iter = 0; iter < iterations; iter++) {
       // Repulsion between all nodes
       for (let i = 0; i < nodes.length; i++) {
@@ -1282,7 +1307,7 @@ function renderIPFlow() {
           let dx = b.x - a.x;
           let dy = b.y - a.y;
           let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          let force = 8000 / (dist * dist);
+          let force = 15000 / (dist * dist);
           let fx = (dx / dist) * force;
           let fy = (dy / dist) * force;
           a.vx -= fx; a.vy -= fy;
@@ -1298,23 +1323,23 @@ function renderIPFlow() {
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        let force = (dist - 120) * 0.01;
+        let force = (dist - 100) * 0.008;
         let fx = (dx / dist) * force;
         let fy = (dy / dist) * force;
         a.vx += fx; a.vy += fy;
         b.vx -= fx; b.vy -= fy;
       });
       
-      // Center gravity
+      // Center gravity (keep near base position)
       Object.values(positions).forEach(p => {
-        p.vx += (centerX - p.x) * 0.001;
-        p.vy += (centerY - p.y) * 0.001;
+        p.vx += (p.baseX - p.x) * 0.02;
+        p.vy += (p.baseY - p.y) * 0.02;
       });
       
       // Apply velocities with damping
       Object.values(positions).forEach(p => {
-        p.vx *= 0.85;
-        p.vy *= 0.85;
+        p.vx *= 0.8;
+        p.vy *= 0.8;
         p.x += p.vx;
         p.y += p.vy;
         // Boundary
@@ -1323,48 +1348,128 @@ function renderIPFlow() {
       });
     }
     
-    // Draw links
+    // Draw links with labels
     links.forEach(link => {
       const a = positions[link.source];
       const b = positions[link.target];
       if (!a || !b) return;
       
-      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.2)' : 'rgba(100,116,139,0.15)';
-      ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
+      
+      // Color by flow direction
+      if (isDark) {
+        ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+        ctx.lineWidth = Math.max(1, Math.min(link.value || 1, 5));
+      } else {
+        ctx.strokeStyle = 'rgba(100,116,139,0.25)';
+        ctx.lineWidth = Math.max(1, Math.min(link.value || 1, 5));
+      }
       ctx.stroke();
+      
+      // Draw midpoint label with flow count
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      if (link.value && link.value > 1) {
+        ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(link.value.toString(), mx, my - 6);
+      }
+      
+      // Draw event type label
+      if (link.type && (link.type === 'SYN_FLOOD' || link.type === 'BRUTE_FORCE')) {
+        ctx.fillStyle = isDark ? 'rgba(248,250,252,0.5)' : 'rgba(15,23,42,0.4)';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(link.type.replace('_', ' ').toLowerCase(), mx, my + 6);
+      }
     });
     
-    // Draw nodes
+    // Draw nodes with labels and glow
     nodes.forEach(node => {
       const pos = positions[node.id];
       if (!pos) return;
       
-      // Glow
+      // Glow effect
+      const gradient = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, node.size * 2.5);
+      gradient.addColorStop(0, node.color + '44');
+      gradient.addColorStop(1, node.color + '00');
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, node.size + 6, 0, Math.PI * 2);
-      ctx.fillStyle = node.color + '33';
+      ctx.arc(pos.x, pos.y, node.size * 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
       ctx.fill();
       
-      // Node
+      // Node circle
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, node.size, 0, Math.PI * 2);
       ctx.fillStyle = node.color;
       ctx.fill();
       ctx.strokeStyle = isDark ? '#1e293b' : '#ffffff';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.5;
       ctx.stroke();
       
-      // Label
-      ctx.fillStyle = isDark ? '#f1f5f9' : '#0f172a';
-      ctx.font = '11px monospace';
+      // IP label below node
+      ctx.fillStyle = isDark ? '#e2e8f0' : '#1e293b';
+      ctx.font = `bold 12px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(node.label, pos.x, pos.y + node.size + 4);
+      
+      // Truncate long IPs
+      let label = node.label;
+      if (label.length > 14) label = label.slice(0, 11) + '...';
+      ctx.fillText(label, pos.x, pos.y + node.size + 6);
+      
+      // Event count badge
+      if (node.event_count) {
+        ctx.fillStyle = isDark ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.95)';
+        ctx.beginPath();
+        ctx.arc(pos.x + node.size + 6, pos.y - node.size - 6, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = node.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = isDark ? '#e2e8f0' : '#0f172a';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(node.event_count.toString(), pos.x + node.size + 6, pos.y - node.size - 6);
+      }
     });
+    
+    // Legend
+    ctx.fillStyle = isDark ? '#94a3b8' : '#64748b';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    let ly = 12;
+    const catLabels = {
+      'WAN': '#ef4444', 'LAN': '#22c55e', 'VPN': '#a855f7',
+      'UNKNOWN': '#6b7280', 'SOURCE': '#3b82f6', 'TARGET': '#f59e0b',
+    };
+    for (const [cat, color] of Object.entries(catLabels)) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(16, ly + 5, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = isDark ? '#1e293b' : '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = isDark ? '#cbd5e1' : '#334155';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(cat, 28, ly);
+      ly += 22;
+    }
+    
+    // Title
+    ctx.fillStyle = isDark ? '#f1f5f9' : '#0f172a';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${nodes.length} IPs · ${links.length} connections`, 16, 12);
   });
 }
 
