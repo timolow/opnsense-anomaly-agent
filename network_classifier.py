@@ -27,13 +27,21 @@ import os
 class NetworkClassifier:
     """Classifies traffic by per-IP WAN/LAN/VPN detection."""
 
-    def __init__(self):
+    def __init__(self, opnsense_api_url: Optional[str] = None):
+        self.opnsense_api_url = opnsense_api_url
+        
         # ── Config-driven: our own WAN IPs (NOT attacks) ─────────────────
         # Comma-separated list of IPs that belong to us
         own_wan_str = os.getenv("OWN_WAN_IPS", "")
         self.own_wan_ips: Set[str] = set(
             ip.strip() for ip in own_wan_str.split(",") if ip.strip()
         )
+        
+        # ── OPNsense API interface classification ────────────────────────
+        # Interface→class mapping from OPNsense gateway settings
+        self._api_interface_map: Dict[str, str] = {}
+        self._api_loaded = False
+        self._load_api_interface_classification()
         
         # Config-driven LAN IPs
         lan_str = os.getenv("LAN_IPS", "")
@@ -43,7 +51,7 @@ class NetworkClassifier:
         
         # Config-driven VPN networks
         vpn_str = os.getenv("VPN_IPS", "")
-        self._vpn_networks: List[ipaddress.IPv4Network] = []
+        self._vpn_networks: list = []
         for net_str in vpn_str.split(","):
             net_str = net_str.strip()
             if net_str:
@@ -52,7 +60,7 @@ class NetworkClassifier:
                 except ValueError:
                     pass
         
-        # Custom interface→class mapping
+        # Custom interface→class mapping (manual override)
         iface_str = os.getenv("CUSTOM_INTERFACES", "")
         self._interface_map: Dict[str, str] = {}
         for mapping in iface_str.split(","):
@@ -82,19 +90,95 @@ class NetworkClassifier:
         self.min_events_for_tracking = int(os.getenv("WAN_IP_MIN_EVENTS", "10"))
         self.max_wan_ips = int(os.getenv("MAX_WAN_IPS", "10000"))
 
+    # ── OPNsense API interface classification ────────────────────────────
+
+    def _load_api_interface_classification(self):
+        """Fetch gateway info from OPNsense API and populate interface→class mapping.
+        
+        Reads /api/routing/settings/searchGateway to determine:
+        - WAN interfaces: upstream=true, gateway_interface=false
+        - VPN interfaces: upstream=false, gateway_interface=true  
+        - LAN interfaces: everything else
+        
+        Uses OPN_HOST, OPN_PORT, OPN_API_KEY, OPN_API_SECRET from env.
+        Falls back gracefully if API unavailable (classifies via log data only).
+        """
+        if not self.opnsense_api_url:
+            # Build API URL from env vars
+            host = os.getenv("OPN_HOST", "192.168.1.1")
+            port = os.getenv("OPN_PORT", "6666")
+            self.opnsense_api_url = f"https://{host}:{port}"
+        
+        import requests
+        import base64
+        
+        host = os.getenv("OPN_HOST", "192.168.1.1")
+        port = os.getenv("OPN_PORT", "6666")
+        key = os.getenv("OPN_API_KEY", "")
+        secret = os.getenv("OPN_API_SECRET", "")
+        
+        if not key or not secret:
+            return  # No API credentials configured
+        
+        try:
+            url = f"https://{host}:{port}/api/routing/settings/searchGateway"
+            creds = base64.b64encode(f"{key}:{secret}".encode()).decode()
+            headers = {"Authorization": f"Basic {creds}", "Accept": "application/json"}
+            
+            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            if resp.status_code != 200:
+                return  # API not available or auth failed
+            
+            data = resp.json()
+            rows = data.get("rows", [])
+            
+            wan_interfaces = set()
+            vpn_interfaces = set()
+            
+            for gw in rows:
+                if gw.get("disabled"):
+                    continue
+                
+                if_interface = gw.get("if", "") or gw.get("interface", "")
+                if not if_interface:
+                    continue
+                
+                upstream = gw.get("upstream", False)
+                gateway_interface = gw.get("gateway_interface", False)
+                
+                if upstream and not gateway_interface:
+                    wan_interfaces.add(if_interface)
+                elif not upstream and gateway_interface:
+                    vpn_interfaces.add(if_interface)
+            
+            if wan_interfaces or vpn_interfaces:
+                self._api_interface_map = {
+                    **{iface: "WAN" for iface in wan_interfaces},
+                    **{iface: "VPN" for iface in vpn_interfaces},
+                }
+                self._api_loaded = True
+                
+        except Exception:
+            pass  # Fail gracefully, fall back to log-driven classification
+
     # ── Per-IP classification ─────────────────────────────────────────────
 
-    def classify_ip(self, ip_str: str) -> str:
+    def classify_ip(self, ip_str: str, interface: Optional[str] = None) -> str:
         """Classify an IP as OWN, WAN, LAN, VPN, INTERNAL, or UNKNOWN.
 
         Priority:
         1. Own WAN IPs (from OWN_WAN_IPS env) → OWN
         2. LAN IPs (from LAN_IPS env) → LAN
         3. VPN networks (from VPN_IPS env) → VPN
-        4. Auto-discovered WAN IPs → WAN
-        5. Auto-discovered LAN IPs → LAN  
-        6. Auto-discovered VPN IPs → VPN
-        7. Heuristic: RFC1918 private → LAN, link-local → INTERNAL, else → WAN
+        4. API-driven interface classification → WAN/VPN/lan
+        5. Auto-discovered WAN IPs → WAN
+        6. Auto-discovered LAN IPs → LAN  
+        7. Auto-discovered VPN IPs → VPN
+        8. Heuristic: RFC1918 private → LAN, link-local → INTERNAL, else → WAN
+        
+        Args:
+            ip_str: The IP to classify
+            interface: The firewall interface the event came on (for API-driven classification)
         
         Returns: 'OWN', 'WAN', 'LAN', 'VPN', 'INTERNAL', 'UNKNOWN'
         """
@@ -118,6 +202,20 @@ class NetworkClassifier:
         for vpn_net in self._vpn_networks:
             if ip in vpn_net:
                 return "VPN"
+
+        # 4. API-driven interface classification
+        if self._api_loaded and interface:
+            iface_class = self._api_interface_map.get(interface)
+            if iface_class:
+                # If event comes FROM a WAN interface, the source is external (WAN)
+                # If event comes FROM a VPN interface, the destination is VPN
+                if iface_class == "WAN":
+                    # Could be src (external attacker) or dst (our WAN IP)
+                    # If IP is in own_wan_ips, it's OWN; otherwise it's external WAN
+                    if ip_str not in self.own_wan_ips:
+                        return "WAN"  # External IP on WAN interface
+                elif iface_class == "VPN":
+                    return "VPN"
 
         # 4. Auto-discovered WAN IPs
         if ip_str in self.wan_ips:
