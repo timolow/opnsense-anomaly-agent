@@ -1717,7 +1717,7 @@ function loadOpnsenseData() {
     .catch(e => {
       console.error('OPNsense load failed:', e);
       document.getElementById('opnsense-system').innerHTML =
-        '<p style="color:var(--text-error); text-align:center; padding:20px;">Failed to load OPNsense data</p>';
+        '<p style="color:var(--text-error); text-align:center; padding:20px;">Failed to load OPNsense data<br><small>' + (e.message || e.toString()) + '</small></p>';
     });
 }
 
