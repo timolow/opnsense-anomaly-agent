@@ -912,7 +912,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
             try:
-                conn = _get_db_connection()
+                conn = get_db()
                 cur = conn.cursor()
                 
                 # Get rule statistics grouped by rule_name and action
@@ -927,7 +927,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 """)
                 rows = cur.fetchall()
                 cur.close()
-                conn.close()
                 
                 # Build rule summary
                 rules = {}
