@@ -529,6 +529,7 @@ def query_opnsense_status():
         import urllib.error
         import ssl
         import base64
+
         ssl_context = ssl.create_default_context()
         if not verify_ssl:
             ssl_context.check_hostname = False
@@ -536,43 +537,211 @@ def query_opnsense_status():
         auth_string = f"{opn_key}:{opn_secret}"
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         auth_header = f"Basic {auth_b64}"
+
         results = {"status": "connected"}
-        # System info — test endpoint that works on OPNsense API
+
+        # 1. Firmware/Version info
         try:
-            req = urllib.request.Request(f"{opn_url}/api/core/firmware/status", headers={"Authorization": auth_header})
+            req = urllib.request.Request(
+                f"{opn_url}/api/core/firmware/status",
+                headers={"Authorization": auth_header},
+            )
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
                 sys_info = json.loads(resp.read().decode())
             if isinstance(sys_info, dict):
                 results["opnsense_version"] = sys_info.get("os_version", "unknown")
             else:
                 results["opnsense_version"] = "unknown"
-            results["hostname"] = "opnsense"
             results["status"] = "connected"
         except Exception as e:
-            print(f"OPNsense system info failed: {e}")
+            print(f"OPNsense firmware status failed: {e}")
             results["opnsense_version"] = "error"
-            results["hostname"] = "error"
+
+        # 2. Interfaces - get IPv4/6 addresses, up/down status
+        results["interfaces"] = []
         try:
-            req2 = urllib.request.Request(f"{opn_url}/api/filter/rules", headers={"Authorization": auth_header})
-            with urllib.request.urlopen(req2, context=ssl_context, timeout=5) as resp2:
-                rules_data = json.loads(resp2.read().decode())
-            rules_list = rules_data.get("rules", {}).get("row", []) if isinstance(rules_data, dict) else []
-            results["firewall_rules"] = len(rules_list)
+            req = urllib.request.Request(
+                f"{opn_url}/api/interfaces/assignments",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                iface_data = json.loads(resp.read().decode())
+            rows = iface_data.get("interfaces", {}).get("row", [])
+            if not rows and isinstance(iface_data, dict) and "row" in iface_data:
+                rows = iface_data.get("row", [])
+            for iface in rows:
+                name = iface.get("if", iface.get("interface", "unknown"))
+                description = iface.get("descr", "")
+                mac = iface.get("mac", "")
+                ipv4 = iface.get("ipaddr", "")
+                ipv6 = iface.get("ipv6addr", "")
+                subnet4 = iface.get("subnet", "")
+                subnet6 = iface.get("ipv6mode", "")
+                # Get current status from /api/interfaces/status
+                results["interfaces"].append({
+                    "name": name,
+                    "description": description,
+                    "mac": mac,
+                    "ipv4": ipv4,
+                    "ipv6": ipv6,
+                    "subnet4": subnet4,
+                    "subnet6": subnet6,
+                })
         except Exception as e:
-            print(f"OPNsense rules failed: {e}")
-            results["firewall_rules"] = 0
+            print(f"OPNsense interfaces failed: {e}")
+
+        # 3. Gateways - get WAN gateways with IPv4/6
+        results["gateways"] = []
         try:
-            req3 = urllib.request.Request(f"{opn_url}/api/dhcpd/status", headers={"Authorization": auth_header})
-            with urllib.request.urlopen(req3, context=ssl_context, timeout=5) as resp3:
-                dhcp_data = json.loads(resp3.read().decode())
-            leases_list = dhcp_data.get("leases", {}).get("row", []) if isinstance(dhcp_data, dict) else []
+            req = urllib.request.Request(
+                f"{opn_url}/api/routing/settings/searchGateway",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                gw_data = json.loads(resp.read().decode())
+            rows = gw_data.get("rows", gw_data.get("gateways", []))
+            for gw in rows:
+                if gw.get("disabled"):
+                    continue
+                name = gw.get("name", gw.get("id", "unknown"))
+                interface = gw.get("if", gw.get("interface", ""))
+                gateway_ip = gw.get("gateway", gw.get("gatewayv6", ""))
+                source_ip = gw.get("source", "")
+                upstream = gw.get("upstream", False)
+                is_vpn = gw.get("vpn_gateway", False)
+                results["gateways"].append({
+                    "name": name,
+                    "interface": interface,
+                    "gateway_ip": gateway_ip,
+                    "source_ip": source_ip,
+                    "upstream": upstream,
+                    "vpn_gateway": is_vpn,
+                })
+        except Exception as e:
+            print(f"OPNsense gateways failed: {e}")
+
+        # 4. Interface status - up/down states
+        results["interface_status"] = {}
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/interfaces/status",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                status_data = json.loads(resp.read().decode())
+            rows = status_data.get("interfaces", {}).get("row", [])
+            for row in rows:
+                name = row.get("interface", row.get("name", ""))
+                state = row.get("state", row.get("status", "unknown"))
+                media = row.get("media", "")
+                results["interface_status"][name] = {
+                    "state": state,
+                    "media": media,
+                }
+        except Exception as e:
+            print(f"OPNsense interface status failed: {e}")
+
+        # 5. DHCP leases count
+        results["dhcp_leases"] = 0
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/dhcpd/status",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                dhcp_data = json.loads(resp.read().decode())
+            leases_list = dhcp_data.get("leases", {}).get("row", [])
+            if not leases_list and isinstance(dhcp_data, dict):
+                leases_list = dhcp_data.get("row", [])
             results["dhcp_leases"] = len(leases_list)
         except Exception as e:
             print(f"OPNsense DHCP failed: {e}")
-            results["dhcp_leases"] = 0
+
+        # 6. Firewall rules count
+        results["firewall_rules"] = 0
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/filter/rules",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                rules_data = json.loads(resp.read().decode())
+            rules_list = rules_data.get("rules", {}).get("row", [])
+            if not rules_list and isinstance(rules_data, dict):
+                rules_list = rules_data.get("row", [])
+            results["firewall_rules"] = len(rules_list)
+        except Exception as e:
+            print(f"OPNsense rules failed: {e}")
+
+        # 7. OpenVPN status
+        results["openvpn_tunnels"] = []
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/services/openvpn/status",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                vpn_data = json.loads(resp.read().decode())
+            if isinstance(vpn_data, dict):
+                for key, status in vpn_data.items():
+                    if isinstance(status, dict):
+                        results["openvpn_tunnels"].append({
+                            "type": "client" if "client" in key.lower() else "server",
+                            "status": status.get("status", status.get("state", "unknown")),
+                            "peer": status.get("peer", status.get("remote_host", "")),
+                            "local": status.get("local", status.get("local_host", "")),
+                            "bytes_in": status.get("bytes_in", 0),
+                            "bytes_out": status.get("bytes_out", 0),
+                            "uptime": status.get("uptime", ""),
+                        })
+        except Exception as e:
+            print(f"OPNsense OpenVPN failed: {e}")
+
+        # 8. NTP status
+        results["ntp_status"] = {}
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/services/ntp/status",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                ntp_data = json.loads(resp.read().decode())
+            if isinstance(ntp_data, dict):
+                results["ntp_status"] = {
+                    "status": ntp_data.get("status", ntp_data.get("state", "unknown")),
+                    "servers": ntp_data.get("servers", ntp_data.get("config", [])),
+                    "last_sync": ntp_data.get("last_sync", ntp_data.get("last_update", "")),
+                }
+        except Exception as e:
+            print(f"OPNsense NTP failed: {e}")
+
+        # 9. DNSMasq status
+        results["dnsmasq_status"] = {}
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/services/dnsmasq/status",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                dns_data = json.loads(resp.read().decode())
+            if isinstance(dns_data, dict):
+                results["dnsmasq_status"] = {
+                    "status": dns_data.get("status", dns_data.get("state", "unknown")),
+                    "leases": dns_data.get("leases", dns_data.get("current_leases", 0)),
+                }
+        except Exception as e:
+            print(f"OPNsense DNSMasq failed: {e}")
+
         return results
     except Exception as e:
-        return {"status": "disconnected", "error": str(e), "opnsense_version": "unknown", "hostname": "unknown", "uptime": "unknown", "cpu_load": "unknown", "memory_usage": "unknown", "firewall_rules": 0, "dhcp_leases": 0}
+        return {
+            "status": "disconnected", "error": str(e),
+            "opnsense_version": "unknown", "interfaces": [],
+            "gateways": [], "interface_status": {},
+            "dhcp_leases": 0, "firewall_rules": 0,
+            "openvpn_tunnels": [], "ntp_status": {},
+            "dnsmasq_status": {},
+        }
 
 def query_alerts():
     conn = get_db()
