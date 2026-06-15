@@ -118,6 +118,8 @@ class NetworkClassifier:
         secret = os.getenv("OPN_API_SECRET", "")
         
         if not key or not secret:
+            import logging
+            logging.getLogger(__name__).warning("OPNsense API key not configured, skipping interface classification")
             return  # No API credentials configured
         
         try:
@@ -125,8 +127,12 @@ class NetworkClassifier:
             creds = base64.b64encode(f"{key}:{secret}".encode()).decode()
             headers = {"Authorization": f"Basic {creds}", "Accept": "application/json"}
             
+            import logging
+            logging.getLogger(__name__).info("Fetching OPNsense gateway info from %s...", url)
+            
             resp = requests.get(url, headers=headers, timeout=10, verify=False)
             if resp.status_code != 200:
+                logging.getLogger(__name__).warning("OPNsense API returned %d, skipping interface classification", resp.status_code)
                 return  # API not available or auth failed
             
             data = resp.json()
@@ -157,8 +163,17 @@ class NetworkClassifier:
                     **{iface: "VPN" for iface in vpn_interfaces},
                 }
                 self._api_loaded = True
+                logging.getLogger(__name__).info(
+                    "OPNsense API interface classification loaded: WAN=%s, VPN=%s",
+                    wan_interfaces, vpn_interfaces,
+                )
+                import logging
+                for iface, cls in self._api_interface_map.items():
+                    logging.getLogger(__name__).info("  %s → %s", iface, cls)
                 
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("OPNsense API classification failed: %s", e)
             pass  # Fail gracefully, fall back to log-driven classification
 
     # ── Per-IP classification ─────────────────────────────────────────────
