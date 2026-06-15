@@ -432,15 +432,16 @@ class NetworkClassifier:
         for ip, data in self.wan_ips.items():
             if exclude_own and ip in self.own_wan_ips:
                 continue
-            if data["count"] < min_events:
+            count = data.get("count", 0)
+            if count < min_events:
                 continue
             results.append({
                 "ip": ip,
-                "count": data["count"],
-                "interfaces": list(data["interfaces"]),
-                "ports": len(data["dst_ports"]),
-                "protocols": list(data["protocols"]),
-                "actions": dict(data["actions"]),
+                "count": count,
+                "interfaces": list(data.get("interfaces", set())),
+                "ports": len(data.get("dst_ports", set())),
+                "protocols": list(data.get("protocols", set())),
+                "actions": dict(data.get("actions", {})),
             })
 
         # Sort by event count descending
@@ -454,11 +455,11 @@ class NetworkClassifier:
             if ip in self.own_wan_ips:
                 results.append({
                     "ip": ip,
-                    "count": data["count"],
-                    "interfaces": list(data["interfaces"]),
-                    "ports": len(data["dst_ports"]),
-                    "protocols": list(data["protocols"]),
-                    "actions": dict(data["actions"]),
+                    "count": data.get("count", 0),
+                    "interfaces": list(data.get("interfaces", set())),
+                    "ports": len(data.get("dst_ports", set())),
+                    "protocols": list(data.get("protocols", set())),
+                    "actions": dict(data.get("actions", {})),
                 })
         return sorted(results, key=lambda x: x["count"], reverse=True)
 
