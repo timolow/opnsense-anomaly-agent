@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Firewall Dashboard</title>
 <style>
@@ -1711,13 +1714,33 @@ window.addEventListener('resize', () => {
 // OPNsense Tab
 // ═══════════════════════════════════════════════════════════
 function loadOpnsenseData() {
+  console.log('=== OPNsense load starting ===');
+  console.log('Fetching /api/opnsense from:', window.location.href);
   fetch('/api/opnsense')
-    .then(r => r.json())
-    .then(data => renderOpnsenseData(data))
+    .then(response => {
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+      if (!response.ok) {
+        return response.text().then(text => { throw new Error(text); });
+      }
+      return response.json();
+    })
+    .then(data => {
+      console.log('OPNsense data received:', data);
+      console.log('Keys:', Object.keys(data));
+      try {
+        renderOpnsenseData(data);
+        console.log('=== OPNsense render complete ===');
+      } catch (renderErr) {
+        console.error('OPNsense render failed:', renderErr);
+        document.getElementById('opnsense-system').innerHTML =
+          '<p style="color:var(--text-error); text-align:center; padding:20px;">Render error: ' + renderErr.message + '</p>';
+      }
+    })
     .catch(e => {
       console.error('OPNsense load failed:', e);
       document.getElementById('opnsense-system').innerHTML =
-        '<p style="color:var(--text-error); text-align:center; padding:20px;">Failed to load OPNsense data<br><small>' + (e.message || e.toString()) + '</small></p>';
+        '<p style="color:var(--text-error); text-align:center; padding:20px;">Failed to load OPNsense data<br><small>' + String(e) + '</small></p>';
     });
 }
 
