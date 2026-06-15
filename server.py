@@ -981,7 +981,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 
                 # Events without rule_name (firewall events only)
                 cur4 = conn.cursor()
-                cur4.execute("SELECT COUNT(*) FROM events WHERE rule_name IS NULL OR rule_name = '' OR rule_name = 'N/A' AND action IN ('PASS','BLOCK')")
+                cur4.execute("SELECT COUNT(*) FROM events WHERE (rule_name IS NULL OR rule_name = '' OR rule_name = 'N/A') AND action IN ('PASS','BLOCK')")
                 no_rule_firewall_count = cur4.fetchone()[0]
                 cur4.close()
                 
