@@ -25,6 +25,7 @@ COPY discord_bot.py .
 COPY reverse_dns.py .
 COPY network_classifier.py .
 COPY state_persistence.py .
+COPY rule_classifier.py .
 COPY server.py .
 COPY app.html .
 
