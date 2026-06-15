@@ -275,7 +275,8 @@ class NetworkClassifier:
         if not ip_str:
             return
 
-        classification = self.classify_ip(ip_str)
+        interface = event.get("interface")
+        classification = self.classify_ip(ip_str, interface=interface)
         
         record = {
             "count": 0,
