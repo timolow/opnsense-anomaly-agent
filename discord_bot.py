@@ -406,18 +406,19 @@ class CommandHandler:
 
 
 # ============================================================
-# Agent.py compatibility wrapper
+# Discord bot with message listener (discord.py)
 # ============================================================
 
 
 class DiscordBot:
-    """Wrapper around DiscordClient providing the DiscordBot interface."""
+    """Discord bot that both sends alerts AND listens for chat commands."""
     
     def __init__(self, config):
         self.config = config
         self._client = None
         self._running = False
         self._command_handler = CommandHandler()
+        self._bot_client = None  # discord.py bot instance
     
     def _get_client(self):
         if not self._client and self.config.discord_token and self.config.discord_channel_id:
@@ -442,14 +443,78 @@ class DiscordBot:
         client = self._get_client()
         if client:
             self._running = True
-            # Verify bot token works
+            # Verify bot token works via REST
             client.test_connection()
             logger.info("Discord bot enabled (bot API mode)")
+            # Start discord.py bot for message listening
+            self._start_bot_client()
         else:
             logger.warning("Discord token or channel not configured; alerts disabled")
     
+    def _start_bot_client(self):
+        """Start a discord.py bot client for listening to Discord messages."""
+        try:
+            import discord
+            
+            class OPNsenseBot(discord.Client):
+                """Discord bot that listens for /commands and responds."""
+                
+                def __init__(self, bot_instance):
+                    intents = discord.Intents.default()
+                    intents.message_content = True
+                    super().__init__(intents=intents)
+                    self._bot_instance = bot_instance
+                
+                async def on_ready(self):
+                    logger.info(
+                        "Discord bot connected as %s (ID: %s)",
+                        self.user.name, self.user.id,
+                    )
+                
+                async def on_message(self, message):
+                    # Ignore messages from the bot itself
+                    if message.author == self.user:
+                        return
+                    
+                    # Only respond in the configured channel
+                    if str(message.channel.id) != self._bot_instance.config.discord_channel_id:
+                        return
+                    
+                    # Strip leading slash and extract command
+                    content = message.content.strip()
+                    if content.startswith('/'):
+                        content = content[1:]
+                    
+                    # Split command and args
+                    parts = content.split(None, 1)
+                    cmd = parts[0].lower() if parts else ''
+                    args = parts[1] if len(parts) > 1 else ''
+                    
+                    # Handle the command
+                    result = self._bot_instance._command_handler.handle_command(cmd, args)
+                    
+                    # Send response
+                    await message.channel.send(result.content)
+            
+            # Create and run the bot (blocks until shutdown)
+            self._bot_client = OPNsenseBot(self)
+            self._bot_client.run(self.config.discord_token)
+            
+        except Exception as e:
+            logger.error("Failed to start Discord bot client: %s", e)
+            self._bot_client = None
+    
     def stop(self):
         self._running = False
+        if self._bot_client:
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self._bot_client.close())
+                loop.close()
+            except Exception as e:
+                logger.warning("Error stopping Discord bot: %s", e)
     
     def handle_command(self, command: str, args: str = '') -> CommandResult:
         return self._command_handler.handle_command(command, args)
