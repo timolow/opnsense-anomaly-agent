@@ -577,7 +577,6 @@ def query_opnsense_status():
                 ipv6 = iface.get("ipv6addr", "")
                 subnet4 = iface.get("subnet", "")
                 subnet6 = iface.get("ipv6mode", "")
-                # Get current status from /api/interfaces/status
                 results["interfaces"].append({
                     "name": name,
                     "description": description,
@@ -619,6 +618,40 @@ def query_opnsense_status():
                 })
         except Exception as e:
             print(f"OPNsense gateways failed: {e}")
+
+        # 3b. Derive interfaces from gateways if API didn't return any
+        if not results["interfaces"]:
+            iface_data = {}
+            for gw in results["gateways"]:
+                iface_name = gw.get("interface", "")
+                gw_ip = gw.get("gateway_ip", "")
+                if not iface_name:
+                    continue
+                if iface_name not in iface_data:
+                    iface_data[iface_name] = {"ipv4": "", "ipv6": ""}
+                if gw_ip:
+                    if gw_ip.startswith("fe80:") or gw_ip.startswith("fe8") or ":" in gw_ip:
+                        # IPv6 address
+                        if not iface_data[iface_name]["ipv6"]:
+                            iface_data[iface_name]["ipv6"] = gw_ip
+                    else:
+                        # IPv4 address
+                        if not gw.get("vpn_gateway"):
+                            if not iface_data[iface_name]["ipv4"]:
+                                iface_data[iface_name]["ipv4"] = gw_ip
+                        else:
+                            # VPN gateway - mark as vpn
+                            iface_data[iface_name]["vpn"] = gw_ip
+            for iface_name, data in iface_data.items():
+                results["interfaces"].append({
+                    "name": iface_name,
+                    "description": "WAN" if data.get("ipv4") and not data.get("vpn") else "LAN" if not data.get("ipv4") else "VPN",
+                    "mac": "",
+                    "ipv4": data.get("ipv4", ""),
+                    "ipv6": data.get("ipv6", ""),
+                    "subnet4": "",
+                    "subnet6": "",
+                })
 
         # 4. Interface status - up/down states
         results["interface_status"] = {}
