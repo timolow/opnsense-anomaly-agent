@@ -541,12 +541,14 @@ class OPNsenseAgent:
                     # Detect anomalies on all events
                     self._process_batch(events)
 
-                    # Save state periodically
+                    # Save state periodically (every learn_interval, alongside baseline save)
                     if now - self.last_save >= self.config.learn_interval:
                         self.last_save = now
                         # Get baseline summary to persist
                         baseline_summary = self.stat_model.get_baseline_summary()
                         self.db._save_baselines(baseline_summary)
+                        # Persist all ML/tracking state to JSON file
+                        self.persistence.save(self)
 
                     # Periodic status (time-based every 60s)
                     now = time.time()
