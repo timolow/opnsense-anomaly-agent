@@ -911,17 +911,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(query_opnsense_status())
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
+            # Only counts firewall events (action IN ('PASS','BLOCK'))
             try:
                 conn = get_db()
                 cur = conn.cursor()
                 
-                # Get rule statistics grouped by rule_name and action
+                # Get total firewall events only (exclude system logs with no action)
+                cur.execute("SELECT COUNT(*) FROM events WHERE action IN ('PASS','BLOCK')")
+                total_firewall_events = cur.fetchone()[0]
+                
+                # Get total system log events (no valid action)
+                cur.execute("SELECT COUNT(*) FROM events WHERE action IS NULL OR action = ''")
+                system_log_events = cur.fetchone()[0]
+                
+                # Get rule statistics grouped by rule_name and action (firewall only)
                 cur.execute("""
                     SELECT rule_name, action, COUNT(*) as cnt
                     FROM events
                     WHERE rule_name IS NOT NULL 
                       AND rule_name != '' 
                       AND rule_name != 'N/A'
+                      AND action IN ('PASS','BLOCK')
                     GROUP BY rule_name, action
                     ORDER BY cnt DESC
                 """)
@@ -969,16 +979,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 no_rule_count = cur2.fetchone()[0]
                 cur2.close()
                 
-                # Total event count
-                cur3 = conn.cursor()
-                cur3.execute("SELECT COUNT(*) FROM events")
-                total_events = cur3.fetchone()[0]
-                cur3.close()
+                # Events without rule_name (firewall events only)
+                cur4 = conn.cursor()
+                cur4.execute("SELECT COUNT(*) FROM events WHERE rule_name IS NULL OR rule_name = '' OR rule_name = 'N/A' AND action IN ('PASS','BLOCK')")
+                no_rule_firewall_count = cur4.fetchone()[0]
+                cur4.close()
                 
                 data = {
                     'total_rules': len(rules_list),
-                    'total_events': total_events,
-                    'events_without_rule': no_rule_count,
+                    'total_firewall_events': total_firewall_events,
+                    'firewall_events_without_rule': no_rule_firewall_count,
+                    'system_log_events': system_log_events,
                     'rules_by_type': {
                         'deny': deny_rules,
                         'permit': permit_rules,
