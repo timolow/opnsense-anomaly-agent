@@ -909,6 +909,87 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(query_alerts())
         elif path == "/api/opnsense":
             self._send_json(query_opnsense_status())
+        elif path == "/api/rules":
+            # Query rule_name distribution from PG for ML analysis
+            try:
+                conn = _get_db_connection()
+                cur = conn.cursor()
+                
+                # Get rule statistics grouped by rule_name and action
+                cur.execute("""
+                    SELECT rule_name, action, COUNT(*) as cnt
+                    FROM events
+                    WHERE rule_name IS NOT NULL 
+                      AND rule_name != '' 
+                      AND rule_name != 'N/A'
+                    GROUP BY rule_name, action
+                    ORDER BY cnt DESC
+                """)
+                rows = cur.fetchall()
+                cur.close()
+                conn.close()
+                
+                # Build rule summary
+                rules = {}
+                for rule_name, action, count in rows:
+                    if rule_name not in rules:
+                        rules[rule_name] = {'events': 0, 'actions': {}}
+                    rules[rule_name]['events'] += count
+                    rules[rule_name]['actions'][action] = count
+                
+                # Build response
+                rules_list = []
+                for name, info in sorted(rules.items(), key=lambda x: -x[1]['events'])[:50]:
+                    # Classify rule: if mostly BLOCK = DENY, mostly PASS = PERMIT
+                    total = info['events']
+                    block_count = info['actions'].get('BLOCK', 0)
+                    pass_count = info['actions'].get('PASS', 0)
+                    
+                    if block_count > pass_count:
+                        rule_type = 'DENY'
+                    elif pass_count > block_count:
+                        rule_type = 'PERMIT'
+                    else:
+                        rule_type = 'MIXED'
+                    
+                    rules_list.append({
+                        'name': name,
+                        'events': total,
+                        'actions': info['actions'],
+                        'type': rule_type,
+                    })
+                
+                # Count rules by type
+                deny_rules = sum(1 for r in rules_list if r['type'] == 'DENY')
+                permit_rules = sum(1 for r in rules_list if r['type'] == 'PERMIT')
+                mixed_rules = sum(1 for r in rules_list if r['type'] == 'MIXED')
+                
+                # Get events without rule_name
+                cur2 = conn.cursor()
+                cur2.execute("SELECT COUNT(*) FROM events WHERE rule_name IS NULL OR rule_name = '' OR rule_name = 'N/A'")
+                no_rule_count = cur2.fetchone()[0]
+                cur2.close()
+                
+                # Total event count
+                cur3 = conn.cursor()
+                cur3.execute("SELECT COUNT(*) FROM events")
+                total_events = cur3.fetchone()[0]
+                cur3.close()
+                
+                data = {
+                    'total_rules': len(rules_list),
+                    'total_events': total_events,
+                    'events_without_rule': no_rule_count,
+                    'rules_by_type': {
+                        'deny': deny_rules,
+                        'permit': permit_rules,
+                        'mixed': mixed_rules,
+                    },
+                    'rules': rules_list,
+                }
+                self._send_json(data)
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
         else:
             self.send_response(404)
             self.end_headers()

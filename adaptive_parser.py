@@ -288,6 +288,13 @@ class AdaptiveParser:
                         features['dst_ip'] = parts[19] if len(parts) > 19 else None
             
             features['interface'] = interface
+            
+            # Extract rule_name from CSV column 8 (firewall rule name)
+            # Filterlog CSV: 0:ver 1:action 2:ruid 3:uid 4:iface 5:dir 6:rule 7:subrule 8:rule-name
+            if len(parts) > 8:
+                rn = parts[8].strip()
+                if rn and rn not in ('', 'N/A'):
+                    features['rule_name'] = rn
         
         # Try key=value format as fallback
         if not features.get('src_ip'):

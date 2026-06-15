@@ -722,6 +722,7 @@ tr:hover td {
   <button class="nav-tab" onclick="switchTab('mutes', this)">🔇 Mutes</button>
   <button class="nav-tab" onclick="switchTab('geo', this)">🌍 Geo</button>
   <button class="nav-tab" onclick="switchTab('opnsense', this)">🔌 OPNsense</button>
+  <button class="nav-tab" onclick="switchTab('rules', this)">🛡️ Firewall Rules</button>
 </nav>
 
 <!-- ═══════════════════ Main Content ═══════════════════ -->
@@ -1699,6 +1700,52 @@ setInterval(() => {
   loadOverview();
   loadMutes();
 }, 30000);
+
+function loadRules() {
+  fetch('/api/rules')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('total-rules').textContent = data.total_rules || 0;
+      document.getElementById('deny-rules').textContent = data.rules_by_type?.deny || 0;
+      document.getElementById('permit-rules').textContent = data.rules_by_type?.permit || 0;
+      document.getElementById('mixed-rules').textContent = data.rules_by_type?.mixed || 0;
+      document.getElementById('no-rule-events').textContent = (data.events_without_rule || 0).toLocaleString();
+      document.getElementById('total-events').textContent = (data.total_events || 0).toLocaleString();
+      document.getElementById('rules-count').textContent = data.rules?.length || 0 + ' rules';
+      renderRulesTable(data.rules || []);
+    })
+    .catch(e => {
+      document.getElementById('rules-tbody').innerHTML =
+        '<tr><td colspan="5" style="text-align:center; color: var(--danger);">Failed to load rules</td></tr>';
+      console.error('Rules load failed:', e);
+    });
+}
+
+function renderRulesTable(rules) {
+  const tbody = document.getElementById('rules-tbody');
+  if (!rules.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-muted);">No rules found yet</td></tr>';
+    return;
+  }
+  
+  let html = '';
+  for (const r of rules) {
+    const typeColor = r.type === 'PERMIT' ? 'var(--success)' : r.type === 'DENY' ? 'var(--danger)' : 'var(--warning)';
+    const typeIcon = r.type === 'PERMIT' ? '✅' : r.type === 'DENY' ? '🚫' : '⚠️';
+    const breakdown = Object.entries(r.actions || {}).map(([action, count]) => 
+      `${action}: ${count.toLocaleString()}`
+    ).join(' | ');
+    
+    html += `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:6px 8px; font-weight:600;">${r.name}</td>
+      <td style="padding:6px 8px; text-align:right; font-family:monospace;">${r.events.toLocaleString()}</td>
+      <td style="padding:6px 8px; color:${typeColor}; font-weight:600;">${typeIcon} ${r.type}</td>
+      <td style="padding:6px 8px;">${Object.keys(r.actions || {}).join(', ') || '-'}</td>
+      <td style="padding:6px 8px; font-family:monospace; font-size:0.85em; color:var(--text-muted);">${breakdown}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
 
 // Handle resize
 window.addEventListener('resize', () => {

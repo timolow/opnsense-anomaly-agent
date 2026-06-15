@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS events (
     udp_datalen INTEGER,
     icmp_datalen INTEGER,
     raw_message TEXT,
+    rule_name TEXT,
     ingested_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -91,6 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_events_dst_port ON events(dst_port) WHERE dst_por
 CREATE INDEX IF NOT EXISTS idx_events_proto ON events(proto);
 CREATE INDEX IF NOT EXISTS idx_events_action ON events(action);
 CREATE INDEX IF NOT EXISTS idx_events_interface ON events(interface);
+CREATE INDEX IF NOT EXISTS idx_events_rule_name ON events(rule_name) WHERE rule_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_anomalies_attack_type ON anomalies(attack_type);
 CREATE INDEX IF NOT EXISTS idx_anomalies_severity ON anomalies(severity);
 CREATE INDEX IF NOT EXISTS idx_anomalies_created_at ON anomalies(created_at);
@@ -171,9 +173,9 @@ class EventDatabase:
                     proto, action, interface, direction, version,
                     ip_ttl, ip_total_length, tcp_flags, tcp_seq,
                     tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message)
+                    udp_datalen, icmp_datalen, raw_message, rule_name)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING id""",
                 (
                     event_data.get('timestamp'),
@@ -196,6 +198,7 @@ class EventDatabase:
                     event_data.get('udp_datalen'),
                     event_data.get('icmp_datalen'),
                     raw_message,
+                    event_data.get('rule_name'),
                 )
             )
             event_id = cur.fetchone()[0]
@@ -221,7 +224,7 @@ class EventDatabase:
                     proto, action, interface, direction, version,
                     ip_ttl, ip_total_length, tcp_flags, tcp_seq,
                     tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message)
+                    udp_datalen, icmp_datalen, raw_message, rule_name)
                    VALUES %s""",
                 events,
                 page_size=1000
