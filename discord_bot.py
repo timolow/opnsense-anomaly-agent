@@ -452,9 +452,10 @@ class DiscordBot:
             logger.warning("Discord token or channel not configured; alerts disabled")
     
     def _start_bot_client(self):
-        """Start a discord.py bot client for listening to Discord messages."""
+        """Start a discord.py bot client in a daemon thread for listening to messages."""
         try:
             import discord
+            from threading import Thread
             
             class OPNsenseBot(discord.Client):
                 """Discord bot that listens for /commands and responds."""
@@ -496,9 +497,15 @@ class DiscordBot:
                     # Send response
                     await message.channel.send(result.content)
             
-            # Create and run the bot (blocks until shutdown)
+            # Run the bot in a background thread so the main loop can continue
             self._bot_client = OPNsenseBot(self)
-            self._bot_client.run(self.config.discord_token)
+            thread = Thread(
+                target=self._bot_client.run,
+                args=(self.config.discord_token,),
+                daemon=True,
+            )
+            thread.start()
+            logger.info("Discord bot listener started in background thread")
             
         except Exception as e:
             logger.error("Failed to start Discord bot client: %s", e)
