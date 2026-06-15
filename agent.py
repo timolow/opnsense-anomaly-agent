@@ -56,6 +56,7 @@ from server import run_server as start_dashboard
 from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
+from rule_classifier import RuleClassifier
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -375,6 +376,7 @@ class OPNsenseAgent:
         
         # State persistence
         self.persistence = StatePersistence()
+        self.rule_classifier = RuleClassifier()
         self.persistence.load(self)
 
     # ── event callback (from syslog listener thread) ─────────────────
@@ -404,6 +406,9 @@ class OPNsenseAgent:
 
         # Store
         self.db.insert_event(event)
+
+        # Rule-based learning
+        self.rule_classifier.process_event(event)
 
         # Statistical model
         self.stat_model.add_event(event)
