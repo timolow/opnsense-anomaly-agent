@@ -1001,12 +1001,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
         elif path == "/api/system_logs":
-            # Read system log classifier state from agent data
+            # Read system log classifier state from state.json
             try:
-                slog_path = os.path.join(DATA_DIR, "system_log_classifier_state.json")
-                if os.path.exists(slog_path):
-                    with open(slog_path) as f:
-                        data = json.load(f)
+                state_path = os.path.join(DATA_DIR, "state.json")
+                slog_data = {}
+                if os.path.exists(state_path):
+                    with open(state_path) as f:
+                        state = json.load(f)
+                    slog_data = state.get("system_log_classifier", {})
+                
+                if slog_data:
+                    # Build response
+                    services = slog_data.get("services", {})
+                    services_by_volume = sorted(
+                        [{"service": k, "total": v} for k, v in slog_data.get("events_by_service", {}).items()],
+                        key=lambda x: x["total"],
+                        reverse=True,
+                    )
+                    data = {
+                        "services_tracked": len(services),
+                        "services_by_volume": {k: v for k, v in sorted(
+                            slog_data.get("events_by_service", {}).items(),
+                            key=lambda x: x[1],
+                            reverse=True,
+                        )[:50]},
+                        "services_by_level": slog_data.get("events_by_level", {}),
+                        "total_events_classified": slog_data.get("total_events", 0),
+                        "new_services": slog_data.get("new_services", []),
+                        "services": services,
+                        "anomalies": slog_data.get("anomaly_log", []),
+                    }
                     # Add log_type breakdown from PG for full picture
                     conn = get_db()
                     if conn:
