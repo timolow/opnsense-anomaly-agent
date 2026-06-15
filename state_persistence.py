@@ -168,22 +168,29 @@ class StatePersistence:
         
         # SYN flood events
         sf_events = {}
-        for key, events in agent.attack_detector.syn_flood._events.items():
-            window = agent.attack_detector.syn_flood.window_seconds
-            cutoff = now - timedelta(seconds=window)
-            kept = [(t.isoformat(),) for t in events if t >= cutoff]
+        sf_cutoff = now - timedelta(seconds=agent.attack_detector.syn_flood.window_seconds)
+        for dst_ip, events in agent.attack_detector.syn_flood._dst_events.items():
+            kept = [(t.isoformat(), s) for t, s in events if t >= sf_cutoff]
             if kept:
-                sf_events[key] = {"events": kept, "count": len(kept)}
+                sf_events[dst_ip] = {"events": kept, "count": len(kept)}
         
         if sf_events:
-            data["syn_flood_events"] = sf_events
+            data["syn_flood_dst_events"] = sf_events
+        
+        # SYN flood source events (all sources hitting any dst)
+        sf_src_events = []
+        for t, dst in agent.attack_detector.syn_flood._src_events:
+            if t >= sf_cutoff:
+                sf_src_events.append((t.isoformat(), dst))
+        if sf_src_events:
+            data["syn_flood_src_events"] = sf_src_events
         
         # Brute force events
         bf_events = {}
-        for key, events in agent.attack_detector.brute_force._events.items():
+        for key, events in agent.attack_detector.brute_force._sessions.items():
             window = agent.attack_detector.brute_force.window_seconds
             cutoff = now - timedelta(seconds=window)
-            kept = [(t.isoformat(), ip, port) for t, ip, port in events if t >= cutoff]
+            kept = [t.isoformat() for t in events if t >= cutoff]
             if kept:
                 bf_events[key] = {"events": kept, "count": len(kept)}
         
@@ -192,10 +199,10 @@ class StatePersistence:
         
         # Probe events
         pr_events = {}
-        for src_ip, events in agent.attack_detector.probe._events.items():
+        for src_ip, events in agent.attack_detector.probe._scan_events.items():
             window = agent.attack_detector.probe.window_seconds
             cutoff = now - timedelta(seconds=window)
-            kept = [(t.isoformat(), d, p, flags) for t, d, p, flags in events if t >= cutoff]
+            kept = [(t.isoformat(), flags) for t, flags in events if t >= cutoff]
             if kept:
                 pr_events[src_ip] = kept
         
@@ -225,27 +232,42 @@ class StatePersistence:
                         pass
         
         # SYN flood events
-        if "syn_flood_events" in saved_data:
-            for key, data in saved_data["syn_flood_events"].items():
+        if "syn_flood_dst_events" in saved_data:
+            for dst_ip, data in saved_data["syn_flood_dst_events"].items():
                 for ts_tuple in data.get("events", []):
                     try:
                         ts = datetime.fromisoformat(ts_tuple[0])
                         if ts.tzinfo is None:
                             ts = ts.replace(tzinfo=timezone.utc)
-                        agent.attack_detector.syn_flood._events[key].append(ts)
+                        agent.attack_detector.syn_flood._dst_events[dst_ip].append((ts, ts_tuple[1]))
                         loaded += 1
                     except Exception:
                         pass
         
+        if "syn_flood_src_events" in saved_data:
+            for ts_tuple in saved_data["syn_flood_src_events"]:
+                try:
+                    ts = datetime.fromisoformat(ts_tuple[0])
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    agent.attack_detector.syn_flood._src_events.append((ts, ts_tuple[1]))
+                    loaded += 1
+                except Exception:
+                    pass
+        
         # Brute force events
         if "brute_force_events" in saved_data:
-            for key, data in saved_data["brute_force_events"].items():
-                for ts_tuple in data.get("events", []):
+            for key_str, data in saved_data["brute_force_events"].items():
+                try:
+                    key = tuple(json.loads(key_str))
+                except Exception:
+                    continue
+                for ts_str in data.get("events", []):
                     try:
-                        ts = datetime.fromisoformat(ts_tuple[0])
+                        ts = datetime.fromisoformat(ts_str)
                         if ts.tzinfo is None:
                             ts = ts.replace(tzinfo=timezone.utc)
-                        agent.attack_detector.brute_force._events[key].append((ts, data.get("ip"), data.get("port")))
+                        agent.attack_detector.brute_force._sessions[key].append(ts)
                         loaded += 1
                     except Exception:
                         pass
@@ -253,12 +275,12 @@ class StatePersistence:
         # Probe events
         if "probe_events" in saved_data:
             for src_ip, events in saved_data["probe_events"].items():
-                for ts_str, dst, port, flags in events:
+                for ts_str, flags in events:
                     try:
                         ts = datetime.fromisoformat(ts_str)
                         if ts.tzinfo is None:
                             ts = ts.replace(tzinfo=timezone.utc)
-                        agent.attack_detector.probe._events[src_ip].append((ts, dst, port, flags))
+                        agent.attack_detector.probe._scan_events[src_ip].append((ts, flags))
                         loaded += 1
                     except Exception:
                         pass
