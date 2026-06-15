@@ -391,6 +391,10 @@ class OPNsenseAgent:
         """Single-event pipeline: classify → reverse DNS → store → stat model → attack detectors → geo → alert."""
         event["processed_at"] = datetime.now(timezone.utc).isoformat()
         
+        # Map parser 'ruid' to PG column 'rule_name' (the CSV field at position 3)
+        if 'ruid' in event:
+            event['rule_name'] = event.pop('ruid')
+        
         # Network classification: track IPs and classify event (per-IP auto-discovery)
         if self.network_classifier is not None:
             event = self.network_classifier.record_event(event)
