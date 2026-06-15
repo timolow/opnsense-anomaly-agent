@@ -1769,12 +1769,20 @@ function renderOpnsenseData(data) {
     gwHtml = '<table style="width:100%; font-size:12px;">';
     gwHtml += '<tr style="border-bottom:1px solid var(--border);"><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Name</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Interface</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Gateway IP</th><th style="padding:6px 8px; text-align:left; color:var(--text-muted);">Type</th></tr>';
     for (const gw of gateways) {
-      const gwType = gw.vpn_gateway ? '🟣 VPN' : (gw.upstream ? '🔴 WAN' : '🔵 GW');
+      const gwNameUpper = gw.name.toUpperCase();
+      let gwType, gwColor;
+      if (gw.upstream) {
+        gwType = '🔴 WAN'; gwColor = 'var(--success)';
+      } else if (gw.vpn_gateway || 'VPN' in gwNameUpper || 'WG' in gwNameUpper) {
+        gwType = '🟣 VPN'; gwColor = '#a78bfa';
+      } else {
+        gwType = '🔵 GW'; gwColor = '#60a5fa';
+      }
       gwHtml += `<tr style="border-bottom:1px solid var(--border);">
         <td style="padding:6px 8px; font-weight:600;">${gw.name}</td>
         <td style="padding:6px 8px; font-family:monospace;">${gw.interface || '-'}</td>
-        <td style="padding:6px 8px; font-family:monospace;">${gw.gateway_ip || '-'}</td>
-        <td style="padding:6px 8px;">${gwType}</td>
+        <td style="padding:6px 8px; font-family:monospace; color:var(--text-muted);">${gw.gateway_ip || '-'}</td>
+        <td style="padding:6px 8px; color:${gwColor}; font-weight:600;">${gwType}</td>
       </tr>`;
     }
     gwHtml += '</table>';
