@@ -194,11 +194,11 @@ class NetworkClassifier:
             else:
                 record = self.vpn_ips_auto[ip_str]
         elif classification == "OWN":
-            # Track own IPs with full stats
-            if ip_str not in self.lan_ips_auto:
-                self.lan_ips_auto[ip_str] = record
+            # Track own IPs with full stats (in wan_ips so get_own_wan_ips() finds them)
+            if ip_str not in self.wan_ips:
+                self.wan_ips[ip_str] = record
             else:
-                record = self.lan_ips_auto[ip_str]
+                record = self.wan_ips[ip_str]
 
         # Update record
         record["count"] += 1
