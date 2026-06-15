@@ -540,9 +540,12 @@ class OPNsenseAgent:
                         baseline_summary = self.stat_model.get_baseline_summary()
                         self.db._save_baselines(baseline_summary)
 
-                    # Periodic status
-                    if self.event_count % 100 == 0 and self.event_count > 0:
-                        self._send_status()
+                    # Periodic status (time-based every 60s instead of event-count-based)
+                    if now - self.start_time > 30 and (now - self.last_save) % 60 < self.config.poll_interval + 1:
+                        try:
+                            self._send_status()
+                        except Exception as e:
+                            logger.warning("Status log failed: %s", e)
 
                 time.sleep(self.config.poll_interval)
 
