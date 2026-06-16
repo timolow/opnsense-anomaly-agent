@@ -2113,6 +2113,21 @@ window.switchTab = function(tabId, btn) {
 };
 
 // Initial load for syslog tab if it's active on page load
+
+// Dashboard data loader - bootstraps the entire UI
+function loadDashboardData() {
+  loadOverview();
+  loadIPFlowData();
+  loadHeatmapData();
+  loadOpnsenseData();
+  // Auto-refresh every 30 seconds
+  setInterval(() => {
+    loadOverview();
+    loadIPFlowData();
+  }, 30000);
+}
+
+// Initial load for syslog tab if it's active on page load
 window.addEventListener('DOMContentLoaded', () => {
   initTheme();
   loadDashboardData();
