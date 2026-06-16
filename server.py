@@ -1092,37 +1092,34 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 def run_server(host="0.0.0.0", port=8766):
-    import traceback
-    import sys
-    import logging
+    # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
     import os
+    import traceback as tb
+    marker = "/app/agent_data/server_debug.txt"
+    try:
+        with open(marker, "w") as f:
+            f.write("run_server entered\n")
+            f.flush()
+            f.write(f"PID={os.getpid()}\n")
+            f.flush()
+    except:
+        pass
     
-    # Log everything to a file we can inspect
-    log_file = "/app/agent_data/server.log"
-    
-    def _safe_run():
-        try:
-            logging.getLogger("dashboard").warning("Dashboard server starting on http://%s:%d", host, port)
-            server = ThreadedHTTPServer((host, port), DashboardHandler)
-            logging.getLogger("dashboard").warning("Dashboard server running on http://%s:%d", host, port)
-            server.serve_forever()
-        except Exception as e:
-            logging.getLogger("dashboard").error("Dashboard server crashed: %s", e, exc_info=True)
-            with open(log_file, "w") as f:
-                f.write(f"CRASH: {e}\n")
-                traceback.print_exc(file=f)
-            raise
-    
-    # Override sys.excepthook for this process (daemon thread crashes)
-    orig_hook = sys.excepthook
-    def _crash_dump(type, value, tback):
-        with open(log_file, "w") as f:
-            f.write(f"EXCEPTION: {type.__name__}: {value}\n")
-            traceback.print_exception(type, value, tback, file=f)
-        orig_hook(type, value, tback)
-    sys.excepthook = _crash_dump
-    
-    _safe_run()
+    try:
+        server = ThreadedHTTPServer((host, port), DashboardHandler)
+        with open(marker, "a") as f:
+            f.write("ThreadedHTTPServer created\n")
+            f.flush()
+        server.serve_forever()
+        with open(marker, "a") as f:
+            f.write("serve_forever entered\n")
+            f.flush()
+    except Exception as e:
+        with open(marker, "a") as f:
+            f.write(f"EXCEPTION: {e}\n")
+            tb.print_exc(file=f)
+            f.flush()
+        raise
 
 if __name__ == "__main__":
     run_server()
