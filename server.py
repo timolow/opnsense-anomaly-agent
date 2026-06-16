@@ -1258,11 +1258,12 @@ def query_opnsense_firewall_rules():
         if not rules_list and isinstance(rules_data, dict):
             rules_list = rules_data.get("row", [])
 
-        # Index by rule id for easy lookup
+        # Index by rule id for easy lookup (also match on first 12 chars for partial matches)
         rules_by_id = {}
         for rule in rules_list:
             rule_id = rule.get("id", "")
             if rule_id:
+                # Store by full ID and by first 12 chars for partial matching
                 rules_by_id[rule_id] = {
                     "description": rule.get("description", ""),
                     "disabled": rule.get("disabled", False),
@@ -1281,6 +1282,11 @@ def query_opnsense_firewall_rules():
                     "log": rule.get("log", False),
                     "xml_node": rule.get("xml_node", {}),
                 }
+                # Also index by first 12 chars for partial matching
+                if len(rule_id) >= 12:
+                    short_id = rule_id[:12]
+                    if short_id not in rules_by_id:
+                        rules_by_id[short_id] = rules_by_id[rule_id]
         
         print(f"[OPNsense] Fetched {len(rules_list)} firewall rules, indexed {len(rules_by_id)} by ID")
         if rules_by_id:
