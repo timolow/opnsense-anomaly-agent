@@ -730,7 +730,7 @@ def discover_plugins():
         "cicp": ("CICAP", discover_generic_module),
         "clamav": ("ClamAV", discover_generic_module),
         "crowdsec": ("CrowdSec", discover_generic_module),
-        "dhcp": ("DHCP Server", discover_dhcp),
+        "dhcp": ("DHCP Server", lambda m: discover_generic_module(m)),
         "dyndns": ("Dynamic DNS", discover_generic_module),
         "freeradius": ("FreeRADIUS", discover_generic_module),
         "haproxy": ("HAProxy", discover_generic_module),
