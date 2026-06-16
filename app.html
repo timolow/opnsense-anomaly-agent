@@ -632,7 +632,7 @@ function loadAlerts() {
     var html = '';
     for (var i = 0; i < alerts.length; i++) {
       var a = alerts[i];
-      html += '<div class="list-item"><div class="list-title">' + escapeHtml(a.message || 'Alert') + '</div><div class="list-meta">' + (a.severity || '') + ' - ' + (a.timestamp || '') + '</div></div>';
+      html += '<div class="list-item" style="display:flex;justify-content:space-between;align-items:center"><div><div class="list-title">' + escapeHtml(a.attack_type || 'Unknown') + '</div><div class="list-meta">' + escapeHtml(a.severity || '') + ' • ' + (a.ip || 'N/A') + ' — ' + (a.count || 0) + ' events</div></div><div style="font-size:12px;color:var(--text-muted)">' + escapeHtml(a.interface || 'N/A') + '</div></div>';
     }
     document.getElementById('alertsList').innerHTML = html;
   });
