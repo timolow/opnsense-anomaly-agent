@@ -1249,53 +1249,54 @@ def query_opnsense_firewall_rules():
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         auth_header = f"Basic {auth_b64}"
 
+        # Use the correct OPNsense API endpoint for firewall rules
         req = urllib.request.Request(
-            f"{opn_url}/api/filter/rules",
+            f"{opn_url}/api/firewall/filter/search_rule",
             headers={"Authorization": auth_header},
         )
-        with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+        with urllib.request.urlopen(req, context=ssl_context, timeout=10) as resp:
             rules_data = json.loads(resp.read().decode())
 
-        rules_list = rules_data.get("rules", {}).get("row", [])
+        rules_list = rules_data.get("rows", [])
         if not rules_list and isinstance(rules_data, dict):
-            rules_list = rules_data.get("row", [])
+            rules_list = rules_data.get("rules", {}).get("row", [])
+            if not rules_list:
+                rules_list = rules_data.get("row", [])
 
-        # Index by rule id for easy lookup (also match on first 12 chars for partial matches)
-        rules_by_id = {}
+        # Index by UUID for easy lookup (OPNsense uses UUIDs)
+        rules_by_uuid = {}
         for rule in rules_list:
-            rule_id = rule.get("id", "")
-            if rule_id:
-                # Store by full ID and by first 12 chars for partial matching
-                rules_by_id[rule_id] = {
+            rule_uuid = rule.get("uuid", "")
+            if rule_uuid:
+                # Extract short ID from UUID (first part before hyphen)
+                short_id = rule_uuid.split("-")[0]
+                rules_by_uuid[rule_uuid] = {
+                    "uuid": rule_uuid,
                     "description": rule.get("description", ""),
-                    "disabled": rule.get("disabled", False),
-                    "protocol": rule.get("protocol", ""),
-                    "source": {
-                        "address": rule.get("source", {}).get("address", ""),
-                        "port": rule.get("source", {}).get("port", ""),
-                    },
-                    "destination": {
-                        "address": rule.get("destination", {}).get("address", ""),
-                        "port": rule.get("destination", {}).get("port", ""),
-                    },
-                    "action": rule.get("action", ""),
+                    "action": rule.get("action", rule.get("%action", "")),
                     "interface": rule.get("interface", ""),
-                    "direction": rule.get("direction", ""),
-                    "log": rule.get("log", False),
-                    "xml_node": rule.get("xml_node", {}),
+                    "source_net": rule.get("source_net", ""),
+                    "destination_net": rule.get("destination_net", ""),
+                    "enabled": rule.get("enabled", "1"),
+                    "log": rule.get("log", "0") == "1",
+                    "categories": rule.get("categories", ""),
+                    "source_port": rule.get("source_port", ""),
+                    "destination_port": rule.get("destination_port", ""),
+                    "protocol": rule.get("protocol", ""),
                 }
-                # Also index by first 12 chars for partial matching
-                if len(rule_id) >= 12:
-                    short_id = rule_id[:12]
-                    if short_id not in rules_by_id:
-                        rules_by_id[short_id] = rules_by_id[rule_id]
+                # Also index by short ID for partial matching
+                if short_id not in rules_by_uuid:
+                    rules_by_uuid[short_id] = rules_by_uuid[rule_uuid]
         
-        print(f"[OPNsense] Fetched {len(rules_list)} firewall rules, indexed {len(rules_by_id)} by ID")
-        if rules_by_id:
-            print(f"[OPNsense] Sample rule IDs: {list(rules_by_id.keys())[:3]}")
-        return rules_by_id
+        print(f"[OPNsense] Fetched {len(rules_list)} firewall rules, indexed {len(rules_by_uuid)} by UUID")
+        if rules_by_uuid:
+            print(f"[OPNsense] Sample UUIDs: {list(rules_by_uuid.keys())[:3]}")
+            print(f"[OPNsense] Sample description: {rules_by_uuid[list(rules_by_uuid.keys())[0]].get('description', 'N/A')}")
+        return rules_by_uuid
     except Exception as e:
         print(f"OPNsense firewall rules fetch failed: {e}")
+        import traceback
+        traceback.print_exc()
         return {}
 
 
@@ -1351,18 +1352,25 @@ def query_rules_classified():
         # Enrich each classified rule with OPNsense metadata for human readability
         for rule in classified_rules:
             rname = rule.get('rule_name', '')
+            # Try to match by UUID (first 8 chars of rule_name match first part of UUID)
+            short_id = rname[:8] if rname else ''
             meta = opnsense_rules.get(rname, {})
+            if not meta and short_id:
+                meta = opnsense_rules.get(short_id, {})
             if meta:
-                rule['human_readable_name'] = meta.get('description', '') or rname[:12]
+                desc = meta.get('description', '') or meta.get('description', '') or rname[:12]
+                rule['human_readable_name'] = desc
                 rule['rule_description'] = meta.get('description', '')
                 rule['rule_action'] = meta.get('action', '')
                 rule['rule_protocol'] = meta.get('protocol', '')
                 rule['rule_interface'] = meta.get('interface', '')
-                rule['source_address'] = meta.get('source', {}).get('address', '')
-                rule['source_port'] = meta.get('source', {}).get('port', '')
-                rule['destination_address'] = meta.get('destination', {}).get('address', '')
-                rule['destination_port'] = meta.get('destination', {}).get('port', '')
-                rule['rule_disabled'] = meta.get('disabled', False)
+                rule['source_address'] = meta.get('source_net', '')
+                rule['source_port'] = meta.get('source_port', '')
+                rule['destination_address'] = meta.get('destination_net', '')
+                rule['destination_port'] = meta.get('destination_port', '')
+                rule['rule_disabled'] = meta.get('enabled', '1') != '1'
+                rule['rule_log'] = meta.get('log', False)
+                rule['rule_uuid'] = meta.get('uuid', '')
             else:
                 rule['human_readable_name'] = rname[:12]
                 rule['rule_description'] = ''
@@ -1374,6 +1382,8 @@ def query_rules_classified():
                 rule['destination_address'] = ''
                 rule['destination_port'] = ''
                 rule['rule_disabled'] = False
+                rule['rule_log'] = False
+                rule['rule_uuid'] = ''
         
         # Save state
         classifier.save_state()
