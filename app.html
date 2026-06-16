@@ -229,12 +229,12 @@ tr:hover { background: var(--bg-tertiary); }
   .bar-label { width: 80px !important; }
 }
 /* Heatmap */
-.heatmap-grid { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
-.heatmap-cell { height: 30px; background: var(--bg-tertiary); border-radius: 2px; transition: all 0.2s; cursor: pointer; }
-.heatmap-cell:hover { transform: scale(1.2); z-index: 1; }
-.heatmap-row { display: flex; align-items: center; gap: 2px; margin-bottom: 1px; }
-.heatmap-row-label { width: 60px; font-size: 10px; color: var(--text-muted); text-align: right; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.heatmap-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+.heatmap-grid { display: flex; flex-direction: column; gap: 1px; }
+.heatmap-cell { width: 18px; height: 16px; border-radius: 1px; cursor: pointer; flex-shrink: 0; }
+.heatmap-cell:hover { transform: scale(2); z-index: 10; position: relative; }
+.heatmap-row { display: flex; align-items: center; }
+.heatmap-row-label { width: 50px; font-size: 10px; color: var(--text-muted); text-align: right; padding-right: 6px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heatmap-labels { display: flex; margin-top: 8px; }
 /* Mutes */
 .mute-form { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .mute-form input, .mute-form select {
