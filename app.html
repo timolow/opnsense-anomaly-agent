@@ -696,32 +696,39 @@ function loadOPNsense() {
       return;
     }
     var html = '';
-    var items = [
-      { label: 'API Connection', detail: data.api_status || 'Unknown', icon: '🔗' },
-      { label: 'Firewall Rules', detail: data.rules_count || '0', icon: '🛡️' },
-      { label: 'System Status', detail: data.system_status || 'Unknown', icon: '⚙️' },
-      { label: 'Network Interfaces', detail: data.interfaces_count || '0', icon: '🌐' }
-    ];
-    for (var i = 0; i < items.length; i++) {
-      html += '<div class="status-item"><div class="status-icon ok">' + items[i].icon + '</div><div><div class="status-text">' + items[i].label + '</div><div class="status-detail">' + escapeHtml(items[i].detail) + '</div></div></div>';
+    // Build status cards from actual API response
+    var statusColor = data.status === 'connected' || data.status === 'active' ? 'ok' : 'err';
+    html += '<div class="status-item"><div class="status-icon ' + statusColor + '">🔗</div><div><div class="status-text">API Connection</div><div class="status-detail">' + escapeHtml(data.status || 'Unknown') + '</div></div></div>';
+    html += '<div class="status-item"><div class="status-icon ok">⚙️</div><div><div class="status-text">OPNsense Version</div><div class="status-detail">' + escapeHtml(data.opnsense_version || 'Unknown') + '</div></div></div>';
+    var ifaceCount = (data.interfaces || []).length;
+    html += '<div class="status-item"><div class="status-icon ok">🛡️</div><div><div class="status-text">Firewall Rules</div><div class="status-detail">' + (data.firewall_rules || 0) + ' rules</div></div></div>';
+    html += '<div class="status-item"><div class="status-icon ok">🌐</div><div><div class="status-text">Network Interfaces (' + ifaceCount + ')</div><div class="status-detail">';
+    for (var i = 0; i < (data.interfaces || []).length; i++) {
+      var iface = data.interfaces[i];
+      html += '<div style="margin-top:2px">' + escapeHtml(iface.name) + ' - ' + escapeHtml(iface.description) + (iface.ipv4 ? ' [' + escapeHtml(iface.ipv4) + ']' : '') + '</div>';
     }
+    if (ifaceCount === 0) { html += 'None detected'; }
+    html += '</div></div></div>';
     document.getElementById('opnsenseStatus').innerHTML = html;
   });
 }
 
 // Rules
 function loadRules() {
-  apiFetch('/api/rules').then(function(rules) {
-    if (!rules || rules.length === 0) {
+  apiFetch('/api/rules').then(function(data) {
+    if (!data || !data.rules || data.rules.length === 0) {
       document.getElementById('rulesTable').innerHTML = '<div class="error-msg">No firewall rules found</div>';
       return;
     }
-    var html = '<table><thead><tr><th>Rule</th><th>Action</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Events</th></tr></thead><tbody>';
+    var html = '<table><thead><tr><th>Rule</th><th>Type</th><th>Events</th><th>Actions</th></tr></thead><tbody>';
+    var rules = data.rules;
     for (var i = 0; i < rules.length; i++) {
       var r = rules[i];
-      html += '<tr><td>' + escapeHtml(r.name || 'Rule ' + (r.rule_id || i)) + '</td><td><span class="badge badge-' + (r.action === 'PASS' ? 'pass' : 'block') + '">' + (r.action || 'N/A') + '</span></td><td>' + escapeHtml(r.source || 'Any') + '</td><td>' + escapeHtml(r.destination || 'Any') + '</td><td>' + escapeHtml(r.protocol || 'Any') + '</td><td>' + (r.events || 0) + '</td></tr>';
+      var actionBadge = r.actions && r.actions.BLOCK ? '<span class="badge badge-block">BLOCK</span>' : '<span class="badge badge-pass">PASS</span>';
+      html += '<tr><td>' + escapeHtml(r.name) + '</td><td><span class="badge badge-' + (r.type === 'DENY' ? 'block' : 'pass') + '">' + escapeHtml(r.type) + '</span></td><td>' + (r.events || 0) + '</td><td>' + escapeHtml(JSON.stringify(r.actions)) + '</td></tr>';
     }
     html += '</tbody></table>';
+    html += '<div style="margin-top:12px;font-size:13px;color:var(--text-secondary)">Total: ' + (data.total_rules || 0) + ' rules | Firewall events: ' + (data.total_firewall_events || 0).toLocaleString() + ' | Without rule: ' + (data.firewall_events_without_rule || 0).toLocaleString() + ' | System logs: ' + (data.system_log_events || 0).toLocaleString() + '</div>';
     document.getElementById('rulesTable').innerHTML = html;
   });
 }
