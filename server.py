@@ -1282,7 +1282,7 @@ def query_rules_classified():
             'summary': summary,
             'classified_rules': classified_rules,
             'events_fetched': len(events),
-            'timestamp': datetime.datetime.now(timezone.utc).isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
         logger.error("query_rules_classified failed: %s", e)
