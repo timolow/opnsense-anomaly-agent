@@ -345,10 +345,12 @@ tr:hover { background: var(--bg-tertiary); }
   <!-- Heatmap Tab -->
   <div class="tab-content" id="tab-heatmap">
     <div class="card">
-      <div class="card-header">24-Hour Event Heatmap</div>
+      <div class="card-header">24-Hour Event Heatmap — ntopng style</div>
       <div class="card-body">
-        <div class="heatmap-grid" id="heatmapGrid"></div>
-        <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+        <canvas id="heatmapGrid" width="1200" height="500" style="width:100%;border-radius:4px;background:var(--bg-primary);cursor:grab"></canvas>
+        <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-muted)">
+          <span>Viridis color scale | Scroll to zoom | Drag to pan | Auto-refresh: 30s</span>
+        </div>
       </div>
     </div>
   </div>
@@ -588,38 +590,280 @@ function barItem(label, value, pct, color) {
   return '<div class="bar-item"><div class="bar-label">' + label + '</div><div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div><div class="bar-value">' + value + '</div></div>';
 }
 
-// Heatmap
+// Heatmap — Canvas-based ntopng style
+var heatmapData = null;
+var heatmapCanvas = null;
+var heatmapCtx = null;
+var heatmapScale = 1; // zoom
+var heatmapOffX = 0; // pan offset
+var heatmapOffY = 0;
+var heatmapDragging = false;
+var heatmapDragStartX = 0;
+var heatmapDragStartY = 0;
+var heatmapDragOffX = 0;
+var heatmapDragOffY = 0;
+var heatmapHoverCell = null;
+var heatmapTimer = null;
+
 function loadHeatmap() {
   apiFetch('/api/heatmap').then(function(data) {
     if (!data || !data.data || data.data.length === 0) {
       document.getElementById('heatmapGrid').innerHTML = '<div class="error-msg">Heatmap data unavailable</div>';
       return;
     }
-    var html = '';
-    var maxVal = 0;
-    for (var r = 0; r < data.data.length; r++) {
-      for (var c = 0; c < data.data[r].length; c++) {
-        if (data.data[r][c] > maxVal) maxVal = data.data[r][c];
-      }
-    }
-    for (var r = 0; r < data.data.length; r++) {
-      html += '<div class="heatmap-row">';
-      if (r < 10) {
-        html += '<div class="heatmap-row-label" title="' + escapeHtml((data.labels_y[r] || 'IP ' + r)) + '">' + (data.labels_y[r] || 'IP ' + r) + '</div>';
-      } else {
-        html += '<div class="heatmap-row-label">IP ' + (r+1) + '</div>';
-      }
-      for (var c = 0; c < data.data[r].length; c++) {
-        var count = data.data[r][c] || 0;
-        var intensity = maxVal > 0 ? Math.min(100, count / maxVal * 100) : 0;
-        var bg = intensity > 0 ? 'hsl(220,' + (40 + intensity/2) + '%,' + (25 + intensity/4) + '%)' : 'var(--bg-tertiary)';
-        html += '<div class="heatmap-cell" style="background:' + bg + '" title="' + escapeHtml(data.labels_y[r] || 'IP ' + r) + ' @ ' + (data.labels_x[c] || 'hr ' + c) + ': ' + count + ' events"></div>';
-      }
-      html += '</div>';
-    }
-    html += '<div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>';
-    document.getElementById('heatmapGrid').innerHTML = html;
+    heatmapData = data;
+    heatmapCanvas = document.getElementById('heatmapGrid');
+    if (!heatmapCanvas) return;
+    var ctx = heatmapCanvas.getContext('2d');
+    heatmapCtx = ctx;
+    heatmapScale = 1;
+    heatmapOffX = 0;
+    heatmapOffY = 0;
+    drawHeatmap();
+    // Auto-refresh every 30s
+    if (heatmapTimer) clearInterval(heatmapTimer);
+    heatmapTimer = setInterval(loadHeatmap, 30000);
   });
+}
+
+function viridisColor(t) {
+  // Viridis-like color scale: dark→blue→purple→yellow
+  t = Math.max(0, Math.min(1, t));
+  var r, g, b;
+  if (t < 0.1116) { r = 68; g = 1; b = 84; }
+  else if (t < 0.3333) { var s = (t - 0.1116) / (0.3333 - 0.1116); r = 68 + s * (-30); g = 1 + s * 58; b = 84 + s * 83; }
+  else if (t < 0.5556) { var s = (t - 0.3333) / (0.5556 - 0.3333); r = 38 + s * 85; g = 59 + s * 48; b = 167 + s * 42; }
+  else if (t < 0.7778) { var s = (t - 0.5556) / (0.7778 - 0.5556); r = 123 + s * 113; g = 107 + s * 62; b = 209 + s * (-114); }
+  else { var s = (t - 0.7778) / (1.0 - 0.7778); r = 236 + s * (-20); g = 169 + s * 80; b = 95 + s * 123; }
+  return 'rgb(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
+}
+
+function drawHeatmap() {
+  if (!heatmapData || !heatmapData.data || heatmapData.data.length === 0) return;
+  var canvas = heatmapCanvas;
+  var ctx = heatmapCtx;
+  var data = heatmapData.data;
+  var rows = data.length;
+  var cols = data[0] ? data[0].length : 0;
+  if (rows === 0 || cols === 0) return;
+
+  var cellW = 18;
+  var cellH = 16;
+  var labelW = 75;
+  var timeLabelsH = 24;
+  var legendH = 30;
+  var gridW = cols * cellW;
+  var gridH = rows * cellH;
+  var totalW = labelW + gridW + 120; // + legend
+  var totalH = gridH + timeLabelsH + legendH + 40;
+
+  // Handle zoom/pan
+  var offsetX = labelW + heatmapOffX;
+  var offsetY = timeLabelsH + legendH + 20 + heatmapOffY;
+
+  // Scale canvas to fit viewport
+  canvas.width = Math.max(totalW, canvas.offsetWidth || 1200);
+  canvas.height = Math.max(totalH, canvas.offsetHeight || 500);
+
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var bgColor = isDark ? '#0d1117' : '#f8f9fa';
+  var textColor = isDark ? '#f0f6fc' : '#212529';
+  var mutedColor = isDark ? '#8b949e' : '#6c757d';
+
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Find max value for color scale
+  var maxVal = 0;
+  for (var r = 0; r < data.length; r++) {
+    for (var c = 0; c < data[r].length; c++) {
+      if (data[r][c] > maxVal) maxVal = data[r][c];
+    }
+  }
+  if (maxVal === 0) maxVal = 1;
+
+  ctx.save();
+  ctx.translate(offsetX * heatmapScale, offsetY * heatmapScale);
+  ctx.scale(heatmapScale, heatmapScale);
+
+  // Draw grid lines
+  ctx.strokeStyle = isDark ? '#30363d' : '#dee2e6';
+  ctx.lineWidth = 0.5;
+  for (var c = 0; c <= cols; c++) {
+    ctx.beginPath();
+    ctx.moveTo(c * cellW, 0);
+    ctx.lineTo(c * cellW, gridH);
+    ctx.stroke();
+  }
+  for (var r = 0; r <= rows; r++) {
+    ctx.beginPath();
+    ctx.moveTo(0, r * cellH);
+    ctx.lineTo(gridW, r * cellH);
+    ctx.stroke();
+  }
+
+  // Draw cells
+  for (var r = 0; r < rows; r++) {
+    for (var c = 0; c < cols; c++) {
+      var val = data[r][c] || 0;
+      var intensity = Math.min(1, val / maxVal);
+      if (intensity > 0) {
+        ctx.fillStyle = viridisColor(intensity);
+      } else {
+        ctx.fillStyle = isDark ? '#161b22' : '#e9ecef';
+      }
+      ctx.fillRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
+    }
+  }
+
+  // Draw IP labels on left
+  ctx.fillStyle = mutedColor;
+  ctx.font = '9px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  for (var r = 0; r < rows; r++) {
+    var label = heatmapData.labels_y && heatmapData.labels_y[r] ? heatmapData.labels_y[r] : 'IP ' + r;
+    ctx.fillText(label.substring(0, 12), labelW - 4, r * cellH + cellH / 2 + 3);
+  }
+
+  // Draw time labels at bottom
+  ctx.fillStyle = mutedColor;
+  ctx.font = '9px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  var timeLabels = ['00:00', '06:00', '12:00', '18:00', '24:00'];
+  for (var i = 0; i < timeLabels.length; i++) {
+    var colIdx = Math.floor(i / timeLabels.length * cols);
+    ctx.fillText(timeLabels[i], colIdx * cellW + cellW / 2, gridH + 14);
+  }
+
+  // Draw legend on right
+  var legendX = gridW + 8;
+  ctx.fillStyle = mutedColor;
+  ctx.font = '9px -apple-system, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Events', legendX, 10);
+
+  // Color bar
+  var barW = 12;
+  var barH = 120;
+  for (var i = 0; i < barH; i++) {
+    var t = 1 - i / barH;
+    ctx.fillStyle = viridisColor(t);
+    ctx.fillRect(legendX, 16 + i, barW, 1.5);
+  }
+
+  // Legend labels
+  ctx.fillStyle = mutedColor;
+  ctx.font = '8px -apple-system, sans-serif';
+  ctx.fillText(maxVal.toLocaleString(), legendX + barW + 4, 22);
+  ctx.fillText('0', legendX + barW + 4, 16 + barH);
+
+  // Highlight hovered cell
+  if (heatmapHoverCell) {
+    var h = heatmapHoverCell;
+    ctx.strokeStyle = isDark ? '#58a6ff' : '#4361ee';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(h.col * cellW + 0.5, h.row * cellH + 0.5, cellW - 1, cellH - 1);
+
+    // Tooltip
+    var tooltipX = h.col * cellW + cellW / 2;
+    var tooltipY = h.row * cellH - 8;
+    ctx.fillStyle = isDark ? '#1c2128' : '#fff';
+    ctx.strokeStyle = isDark ? '#444' : '#ccc';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.rect(tooltipX - 60, tooltipY - 30, 120, 28);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = textColor;
+    ctx.font = '10px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    var tipLabel = heatmapData.labels_y && heatmapData.labels_y[h.row] ? heatmapData.labels_y[h.row] : 'IP ' + h.row;
+    var tipTime = heatmapData.labels_x && heatmapData.labels_x[h.col] ? heatmapData.labels_x[h.col] : '';
+    ctx.fillText(tipLabel + ' ' + tipTime + ': ' + h.val + ' events', tooltipX, tooltipY - 12);
+  }
+
+  ctx.restore();
+
+  // Draw zoom indicator
+  ctx.fillStyle = mutedColor;
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('Zoom: ' + Math.round(heatmapScale * 100) + '% | Scroll to zoom, drag to pan', canvas.width - 10, canvas.height - 10);
+}
+
+// Heatmap mouse events for pan/zoom
+function initHeatmapEvents() {
+  var canvas = heatmapCanvas;
+  if (!canvas) return;
+
+  canvas.addEventListener('mousedown', function(e) {
+    heatmapDragging = true;
+    heatmapDragStartX = e.clientX - heatmapOffX;
+    heatmapDragStartY = e.clientY - heatmapOffY;
+    canvas.style.cursor = 'grabbing';
+  });
+
+  canvas.addEventListener('mousemove', function(e) {
+    if (heatmapDragging) {
+      heatmapOffX = e.clientX - heatmapDragStartX;
+      heatmapOffY = e.clientY - heatmapDragStartY;
+      drawHeatmap();
+      return;
+    }
+    // Calculate cell hover
+    if (!heatmapData || heatmapScale <= 0.5) return;
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var labelW = 75;
+    var timeLabelsH = 24;
+    var legendH = 30;
+    var offsetX = labelW + heatmapOffX;
+    var offsetY = timeLabelsH + legendH + 20;
+    var gx = (mx - offsetX * heatmapScale) / heatmapScale;
+    var gy = (my - offsetY * heatmapScale) / heatmapScale;
+    var cellW = 18;
+    var cellH = 16;
+    var row = Math.floor(gy / cellH);
+    var col = Math.floor(gx / cellW);
+    if (row >= 0 && row < heatmapData.data.length && col >= 0 && col < heatmapData.data[row].length) {
+      if (!heatmapHoverCell || heatmapHoverCell.row !== row || heatmapHoverCell.col !== col) {
+        heatmapHoverCell = {row: row, col: col, val: heatmapData.data[row][col]};
+        drawHeatmap();
+      }
+    } else {
+      if (heatmapHoverCell) {
+        heatmapHoverCell = null;
+        drawHeatmap();
+      }
+    }
+  });
+
+  canvas.addEventListener('mouseup', function() {
+    heatmapDragging = false;
+    canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('mouseleave', function() {
+    heatmapDragging = false;
+    heatmapHoverCell = null;
+    canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    var delta = e.deltaY > 0 ? 0.9 : 1.1;
+    heatmapScale = Math.max(0.5, Math.min(4, heatmapScale * delta));
+    drawHeatmap();
+  });
+
+  canvas.style.cursor = 'grab';
+}
+
+// Init heatmap on DOMContentLoaded
+function initAppHeatmap() {
+  loadHeatmap();
+  setTimeout(function(){ initHeatmapEvents(); }, 500);
 }
 
 // IP Flow
