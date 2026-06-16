@@ -1091,32 +1091,14 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def handle_error(self, request, client_address):
-        import traceback
-        import sys
-        print(f"\n[SERVER ERROR] Exception in request handler from {client_address}:", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
-        super().handle_error(request, client_address)
-
 def run_server(host="0.0.0.0", port=8766):
-    import sys
-    import traceback as tb
-    
-    def _excepthook(type, value, tback):
-        sys.stderr.write(f"\n[CRITICAL SERVER ERROR]\n")
-        sys.stderr.write("".join(tb.format_exception(type, value, tback)))
-        sys.stderr.flush()
-    
-    sys.excepthook = _excepthook
-    
     try:
         server = ThreadedHTTPServer((host, port), DashboardHandler)
-        sys.stdout.write(f"Dashboard server running on http://{host}:{port}\n")
-        sys.stdout.flush()
+        print(f"Dashboard server running on http://{host}:{port}")
         server.serve_forever()
     except Exception as e:
-        tb.print_exc()
+        import traceback
+        traceback.print_exc()
         raise
 
 if __name__ == "__main__":
