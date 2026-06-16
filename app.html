@@ -1683,6 +1683,12 @@ function initAppFlows() {
 // Rules ML Tab — ML-Based Rule Classification
 // ═══════════════════════════════════════════
 
+function escapeHTML(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
 function loadRulesML() {
   apiFetch('/api/rules-classified').then(function(data) {
     if (!data) {
