@@ -1075,7 +1075,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass
+        import sys
+        sys.stderr.write(f"[HTTP] {self.client_address[0]} {format % args}\n")
+        sys.stderr.flush()
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
@@ -1090,16 +1092,24 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         super().handle_error(request, client_address)
 
 def run_server(host="0.0.0.0", port=8766):
+    import sys
+    import traceback as tb
+    
+    def _excepthook(type, value, tback):
+        sys.stderr.write(f"\n[CRITICAL SERVER ERROR]\n")
+        sys.stderr.write("".join(tb.format_exception(type, value, tback)))
+        sys.stderr.flush()
+    
+    sys.excepthook = _excepthook
+    
     try:
         server = ThreadedHTTPServer((host, port), DashboardHandler)
-        print(f"Dashboard server running on http://{host}:{port}")
+        sys.stdout.write(f"Dashboard server running on http://{host}:{port}\n")
+        sys.stdout.flush()
         server.serve_forever()
     except Exception as e:
-        import traceback
-        import logging
-        logger = logging.getLogger("server")
-        logger.error("Dashboard server crashed: %s", e, exc_info=True)
-        traceback.print_exc()
+        tb.print_exc()
+        raise
 
 if __name__ == "__main__":
     run_server()
