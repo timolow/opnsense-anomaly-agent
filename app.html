@@ -232,6 +232,8 @@ tr:hover { background: var(--bg-tertiary); }
 .heatmap-grid { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
 .heatmap-cell { height: 30px; background: var(--bg-tertiary); border-radius: 2px; transition: all 0.2s; cursor: pointer; }
 .heatmap-cell:hover { transform: scale(1.2); z-index: 1; }
+.heatmap-row { display: flex; align-items: center; gap: 2px; margin-bottom: 1px; }
+.heatmap-row-label { width: 60px; font-size: 10px; color: var(--text-muted); text-align: right; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .heatmap-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 8px; }
 /* Mutes */
 .mute-form { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -572,17 +574,33 @@ function barItem(label, value, pct, color) {
 // Heatmap
 function loadHeatmap() {
   apiFetch('/api/heatmap').then(function(data) {
-    if (!data) {
+    if (!data || !data.data || data.data.length === 0) {
       document.getElementById('heatmapGrid').innerHTML = '<div class="error-msg">Heatmap data unavailable</div>';
       return;
     }
     var html = '';
-    for (var i = 0; i < 24; i++) {
-      var count = data[i] || 0;
-      var intensity = Math.min(100, count / 100 * 100);
-      var bg = 'hsl(220,' + intensity + '%,45%)';
-      html += '<div class="heatmap-cell" style="background:' + bg + '" title="Hour ' + i + ': ' + count + ' events"></div>';
+    var maxVal = 0;
+    for (var r = 0; r < data.data.length; r++) {
+      for (var c = 0; c < data.data[r].length; c++) {
+        if (data.data[r][c] > maxVal) maxVal = data.data[r][c];
+      }
     }
+    for (var r = 0; r < data.data.length; r++) {
+      html += '<div class="heatmap-row">';
+      if (r < 10) {
+        html += '<div class="heatmap-row-label" title="' + escapeHtml((data.labels_y[r] || 'IP ' + r)) + '">' + (data.labels_y[r] || 'IP ' + r) + '</div>';
+      } else {
+        html += '<div class="heatmap-row-label">IP ' + (r+1) + '</div>';
+      }
+      for (var c = 0; c < data.data[r].length; c++) {
+        var count = data.data[r][c] || 0;
+        var intensity = maxVal > 0 ? Math.min(100, count / maxVal * 100) : 0;
+        var bg = intensity > 0 ? 'hsl(220,' + (40 + intensity/2) + '%,' + (25 + intensity/4) + '%)' : 'var(--bg-tertiary)';
+        html += '<div class="heatmap-cell" style="background:' + bg + '" title="' + escapeHtml(data.labels_y[r] || 'IP ' + r) + ' @ ' + (data.labels_x[c] || 'hr ' + c) + ': ' + count + ' events"></div>';
+      }
+      html += '</div>';
+    }
+    html += '<div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>';
     document.getElementById('heatmapGrid').innerHTML = html;
   });
 }
