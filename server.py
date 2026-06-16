@@ -1081,6 +1081,14 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+    def handle_error(self, request, client_address):
+        import traceback
+        import sys
+        print(f"\n[SERVER ERROR] Exception in request handler from {client_address}:", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        super().handle_error(request, client_address)
+
 def run_server(host="0.0.0.0", port=8766):
     try:
         server = ThreadedHTTPServer((host, port), DashboardHandler)
