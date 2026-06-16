@@ -610,6 +610,7 @@ class OPNsenseAgent:
                         self.db._save_baselines(baseline_summary)
                         # Persist all ML/tracking state to JSON file
                         self.persistence.save(self)
+                        self.service_monitor.save()
 
                     # Periodic status (time-based every 60s)
                     now = time.time()
