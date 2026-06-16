@@ -1281,6 +1281,10 @@ def query_opnsense_firewall_rules():
                     "log": rule.get("log", False),
                     "xml_node": rule.get("xml_node", {}),
                 }
+        
+        print(f"[OPNsense] Fetched {len(rules_list)} firewall rules, indexed {len(rules_by_id)} by ID")
+        if rules_by_id:
+            print(f"[OPNsense] Sample rule IDs: {list(rules_by_id.keys())[:3]}")
         return rules_by_id
     except Exception as e:
         print(f"OPNsense firewall rules fetch failed: {e}")
