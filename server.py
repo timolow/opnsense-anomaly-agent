@@ -1082,13 +1082,16 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 def run_server(host="0.0.0.0", port=8766):
-    server = ThreadedHTTPServer((host, port), DashboardHandler)
-    print(f"Dashboard server running on http://{host}:{port}")
     try:
+        server = ThreadedHTTPServer((host, port), DashboardHandler)
+        print(f"Dashboard server running on http://{host}:{port}")
         server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        server.shutdown()
+    except Exception as e:
+        import traceback
+        import logging
+        logger = logging.getLogger("server")
+        logger.error("Dashboard server crashed: %s", e, exc_info=True)
+        traceback.print_exc()
 
 if __name__ == "__main__":
     run_server()
