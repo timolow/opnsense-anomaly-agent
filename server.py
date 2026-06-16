@@ -836,7 +836,12 @@ def query_service_status():
     """Read service monitor state from JSON file."""
     state_path = os.path.join(DATA_DIR, "service_monitor.json")
     if not os.path.exists(state_path):
-        return {"services": {}, "services_tracked": 0, "total_events": 0}
+        return {
+            "services": {},
+            "services_tracked": 5,
+            "services_monitored": 0,
+            "api_polls": 0,
+        }
     
     try:
         with open(state_path) as f:
@@ -845,44 +850,59 @@ def query_service_status():
         services = state.get("services", {})
         total_events = sum(s.get("total_events", 0) for s in services.values())
         
-        # Build summary
+        # Count monitored vs not monitored
+        services_monitored = sum(s.get("monitored", False) for s in services.values())
+        
+        # Build summary with API-based metrics
         services_summary = {}
         for name, svc_data in services.items():
             metrics = svc_data.get("metrics", {})
             service_metrics = {}
-            if "actions" in metrics:
-                service_metrics["actions"] = dict(metrics["actions"]) if isinstance(metrics["actions"], dict) else metrics["actions"]
-            if "leases_24h" in metrics:
-                service_metrics["leases_24h"] = metrics["leases_24h"]
-            if "drift_samples" in metrics:
-                drifts = metrics["drift_samples"]
-                if drifts:
-                    abs_drifts = [abs(d) for d in drifts]
-                    service_metrics["current_drift"] = max(abs_drifts)
-                    service_metrics["avg_drift"] = sum(abs_drifts) / len(abs_drifts)
-            if "active_connections" in metrics:
-                service_metrics["active_connections"] = metrics["active_connections"]
-            if "queries_24h" in metrics:
-                service_metrics["queries_24h"] = metrics["queries_24h"]
-            if "sync_successes" in metrics:
-                service_metrics["sync_successes"] = metrics["sync_successes"]
+            
+            # Unbound-specific metrics (from API)
+            if "unbound_settings" in metrics:
+                settings = metrics["unbound_settings"]
+                service_metrics["unbound_enabled"] = settings.get("enabled", False)
+                service_metrics["unbound_port"] = settings.get("port", "53")
+                service_metrics["unbound_dnssec"] = settings.get("dnssec_enabled", False)
+                service_metrics["unbound_acl_count"] = settings.get("acl_count", 0)
+                service_metrics["unbound_forward_zones"] = settings.get("forward_zone_count", 0)
+                service_metrics["unbound_poll_count"] = settings.get("poll_count", 0)
+            else:
+                settings = {}
+            
+            # WireGuard-specific metrics (from API)
+            if "wg_peers" in metrics:
+                wg = metrics["wg_peers"]
+                service_metrics["wg_server_count"] = len(wg.get("servers", []))
+                service_metrics["wg_client_count"] = len(wg.get("clients", []))
+                service_metrics["wg_total_peers"] = wg.get("total_peers", 0)
+                # List client names (safe — no keys exposed)
+                client_names = [c.get("name", "") for c in wg.get("clients", []) if c.get("enabled") == "1"]
+                service_metrics["wg_active_clients"] = client_names
+                server_info = [{"name": s.get("name", ""), "enabled": s.get("enabled", False)}
+                              for s in wg.get("servers", [])]
+                service_metrics["wg_servers"] = server_info
+                service_metrics["wg_poll_count"] = settings.get("poll_count", 0)
             
             services_summary[name] = {
                 "total_events": svc_data.get("total_events", 0),
                 "anomaly_count": len(svc_data.get("anomaly_log", [])),
                 "first_seen": svc_data.get("first_seen"),
                 "last_seen": svc_data.get("last_seen"),
+                "monitored": svc_data.get("monitored", False),
                 "metrics": service_metrics,
                 "anomalies": svc_data.get("anomaly_log", []),
             }
         
         return {
             "services_tracked": len(services),
+            "services_monitored": services_monitored,
             "total_events": total_events,
             "services": services_summary,
         }
     except Exception as e:
-        return {"error": str(e), "services_tracked": 0}
+        return {"error": str(e), "services_tracked": 0, "services_monitored": 0}
 
 def query_health():
     conn = get_db()
