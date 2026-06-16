@@ -1229,11 +1229,72 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass  # Suppress HTTP request logging to reduce log noise
 
 
+def query_opnsense_firewall_rules():
+    """Fetch actual firewall rules from OPNsense with descriptions."""
+    opn_url, opn_key, opn_secret, verify_ssl = _read_opn_config()
+    if not opn_url:
+        return {}
+    try:
+        import urllib.request
+        import ssl
+        import base64
+
+        ssl_context = ssl.create_default_context()
+        if not verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+        auth_string = f"{opn_key}:{opn_secret}"
+        auth_b64 = base64.b64encode(auth_string.encode()).decode()
+        auth_header = f"Basic {auth_b64}"
+
+        req = urllib.request.Request(
+            f"{opn_url}/api/filter/rules",
+            headers={"Authorization": auth_header},
+        )
+        with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+            rules_data = json.loads(resp.read().decode())
+
+        rules_list = rules_data.get("rules", {}).get("row", [])
+        if not rules_list and isinstance(rules_data, dict):
+            rules_list = rules_data.get("row", [])
+
+        # Index by rule id for easy lookup
+        rules_by_id = {}
+        for rule in rules_list:
+            rule_id = rule.get("id", "")
+            if rule_id:
+                rules_by_id[rule_id] = {
+                    "description": rule.get("description", ""),
+                    "disabled": rule.get("disabled", False),
+                    "protocol": rule.get("protocol", ""),
+                    "source": {
+                        "address": rule.get("source", {}).get("address", ""),
+                        "port": rule.get("source", {}).get("port", ""),
+                    },
+                    "destination": {
+                        "address": rule.get("destination", {}).get("address", ""),
+                        "port": rule.get("destination", {}).get("port", ""),
+                    },
+                    "action": rule.get("action", ""),
+                    "interface": rule.get("interface", ""),
+                    "direction": rule.get("direction", ""),
+                    "log": rule.get("log", False),
+                    "xml_node": rule.get("xml_node", {}),
+                }
+        return rules_by_id
+    except Exception as e:
+        print(f"OPNsense firewall rules fetch failed: {e}")
+        return {}
+
+
 def query_rules_classified():
     """Query and classify firewall rules using ML engine."""
     try:
         from rule_classify import RuleClassifierML
-        
+
+        # Fetch OPNsense rule metadata for human-readable names
+        opnsense_rules = query_opnsense_firewall_rules()
+
         conn = get_db()
         cur = conn.cursor()
         
@@ -1274,6 +1335,33 @@ def query_rules_classified():
         classifier.ingest_events(events)
         summary = classifier.get_summary()
         classified_rules = classifier.get_classified_rules()
+        
+        # Enrich each classified rule with OPNsense metadata for human readability
+        for rule in classified_rules:
+            rname = rule.get('rule_name', '')
+            meta = opnsense_rules.get(rname, {})
+            if meta:
+                rule['human_readable_name'] = meta.get('description', '') or rname[:12]
+                rule['rule_description'] = meta.get('description', '')
+                rule['rule_action'] = meta.get('action', '')
+                rule['rule_protocol'] = meta.get('protocol', '')
+                rule['rule_interface'] = meta.get('interface', '')
+                rule['source_address'] = meta.get('source', {}).get('address', '')
+                rule['source_port'] = meta.get('source', {}).get('port', '')
+                rule['destination_address'] = meta.get('destination', {}).get('address', '')
+                rule['destination_port'] = meta.get('destination', {}).get('port', '')
+                rule['rule_disabled'] = meta.get('disabled', False)
+            else:
+                rule['human_readable_name'] = rname[:12]
+                rule['rule_description'] = ''
+                rule['rule_action'] = rule.get('action', '')
+                rule['rule_protocol'] = ''
+                rule['rule_interface'] = ''
+                rule['source_address'] = ''
+                rule['source_port'] = ''
+                rule['destination_address'] = ''
+                rule['destination_port'] = ''
+                rule['rule_disabled'] = False
         
         # Save state
         classifier.save_state()
