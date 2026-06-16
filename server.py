@@ -4,10 +4,13 @@
 import json
 import os
 import time
-import datetime
+import logging
+from datetime import datetime, timezone
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+
+logger = logging.getLogger(__name__)
 
 try:
     import psycopg2
@@ -994,6 +997,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "events_processed": counters.get("event_count", 0),
                 "anomalies_detected": counters.get("anomaly_count", 0),
             })
+        elif path == "/api/rules-classified":
+            self._send_json(query_rules_classified())
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
             # Only counts firewall events (action IN ('PASS','BLOCK'))
@@ -1222,6 +1227,71 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass  # Suppress HTTP request logging to reduce log noise
+
+
+def query_rules_classified():
+    """Query and classify firewall rules using ML engine."""
+    try:
+        from rule_classify import RuleClassifierML
+        
+        conn = get_db()
+        cur = conn.cursor()
+        
+        # Fetch all firewall events (recent window for performance)
+        cur.execute("""
+            SELECT timestamp, src_ip, dst_ip, dport, sport,
+                   action, rule_name, proto,
+                   interface, direction
+            FROM events
+            WHERE action IN ('PASS', 'BLOCK')
+              AND rule_name IS NOT NULL
+              AND rule_name != ''
+              AND rule_name != 'N/A'
+            ORDER BY timestamp DESC
+            LIMIT 50000
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        
+        # Build events list
+        events = []
+        for row in rows:
+            events.append({
+                'timestamp': row[0].isoformat() if row[0] else None,
+                'src_ip': row[1],
+                'dst_ip': row[2],
+                'dport': row[3],
+                'sport': row[4],
+                'action': row[5],
+                'rule_name': row[6],
+                'proto': row[7],
+                'interface': row[8],
+                'direction': row[9],
+            })
+        
+        # Run ML classification
+        classifier = RuleClassifierML()
+        classifier.ingest_events(events)
+        summary = classifier.get_summary()
+        classified_rules = classifier.get_classified_rules()
+        
+        # Save state
+        classifier.save_state()
+        
+        return {
+            'summary': summary,
+            'classified_rules': classified_rules,
+            'events_fetched': len(events),
+            'timestamp': datetime.datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error("query_rules_classified failed: %s", e)
+        return {
+            'error': str(e),
+            'summary': {'total_rules': 0},
+            'classified_rules': [],
+        }
+
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True

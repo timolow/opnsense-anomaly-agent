@@ -313,6 +313,7 @@ tr:hover { background: var(--bg-tertiary); }
       <button class="tab-btn" data-tab="rules" onclick="switchTab('rules')">🛡️ Rules</button>
       <button class="tab-btn" data-tab="syslogs" onclick="switchTab('syslogs')">📋 System Logs</button>
       <button class="tab-btn" data-tab="services" onclick="switchTab('services')">🔧 Services</button>
+      <button class="tab-btn" data-tab="rules-classified" onclick="switchTab('rules-classified')">🤖 Rules ML</button>
     </div>
   </div>
 </nav>
@@ -509,6 +510,41 @@ tr:hover { background: var(--bg-tertiary); }
       </div>
     </div>
   </div>
+
+  <!-- Rules ML Tab -->
+  <div class="tab-content" id="tab-rules-classified">
+    <div class="card">
+      <div class="card-header">🤖 ML Firewall Rule Classification Engine</div>
+      <div class="card-body">
+        <p style="color:var(--text-muted);margin-bottom:16px">
+          The ML engine analyzes traffic patterns to classify each firewall rule into one of 3 categories:
+          <strong style="color:#22c55e">Good (legitimate traffic)</strong>,
+          <strong style="color:#ef4444">Abusive (scanning, brute force)</strong>, or
+          <strong style="color:#f59e0b">SUSPICIOUS</strong>.
+          Traffic with no rule falls into <strong style="color:#8b5cf6">Default Deny</strong>.
+        </p>
+        <div class="grid" id="rulesMLSummary"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">⚠️ Abusive Rules — Scanning, Brute Force, Suspicious Patterns</div>
+      <div class="card-body" id="rulesMLABUSIVE">
+        <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">✅ Good Rules — Normal, Legitimate Traffic Patterns</div>
+      <div class="card-body" id="rulesMLGOOD">
+        <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">📊 Default Deny — Events Caught Without Any Rule</div>
+      <div class="card-body" id="rulesMLOther">
+        <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
+      </div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -582,6 +618,7 @@ function loadTabData(tabId) {
     case 'rules': loadRules(); break;
     case 'syslogs': loadSysLogs(); break;
     case 'services': loadServices(); break;
+    case 'rules-classified': loadRulesML(); break;
   }
 }
 
@@ -1640,6 +1677,104 @@ function initFlowsEvents() {
 function initAppFlows() {
   // Do not auto-load, wait for user to click the tab
   setTimeout(function(){ initFlowsEvents(); }, 500);
+}
+
+// ═══════════════════════════════════════════
+// Rules ML Tab — ML-Based Rule Classification
+// ═══════════════════════════════════════════
+
+function loadRulesML() {
+  apiFetch('/api/rules-classified').then(function(data) {
+    if (!data) {
+      document.getElementById('rulesMLABUSIVE').innerHTML = '<div class="error">Failed to load ML classification data. Try again.</div>';
+      document.getElementById('rulesMLGOOD').innerHTML = '<div class="error">Failed to load ML classification data.</div>';
+      document.getElementById('rulesMLOther').innerHTML = '<div class="error">Failed to load ML classification data.</div>';
+      return;
+    }
+
+    var summary = data.summary || {};
+    var rules = data.classified_rules || [];
+    var eventsFetched = data.events_fetched || 0;
+
+    // Summary cards
+    var byClass = summary.by_classification || {};
+    var goodCount = byClass['GOOD'] || 0;
+    var abusiveCount = byClass['ABUSIVE'] || 0;
+    var suspiciousCount = byClass['SUSPICIOUS'] || 0;
+    var uncertainCount = byClass['UNCERTAIN'] || 0;
+    var defaultDeny = summary.default_deny || {};
+    var totalRules = summary.total_rules || 0;
+    var eventsWithRule = summary.events_with_rule || 0;
+    var eventsWithoutRule = summary.events_without_rule || 0;
+
+    var summaryHTML = ''
+      + metricBlock('📋 Total Rules Classified', totalRules)
+      + metricBlock('⚠️ Abusive Rules', abusiveCount)
+      + metricBlock('🔍 Suspicious', suspiciousCount)
+      + metricBlock('✅ Good Rules', goodCount)
+      + metricBlock('📊 Events Processed', eventsFetched.toLocaleString())
+      + metricBlock('🔥 Default Deny Events', defaultDeny.events ? defaultDeny.events.toLocaleString() : 'N/A')
+      + metricBlock('📝 Rule Match Rate', summary.default_deny.percentage != null ? (100 - summary.default_deny.percentage).toFixed(1) + '%' : 'N/A')
+      + metricBlock('⏱️ Classification Time', data.timestamp ? 'Just now' : 'N/A');
+
+    document.getElementById('rulesMLSummary').innerHTML = summaryHTML;
+
+    // Build rules table
+    function buildRulesTable(rules, color, header) {
+      if (rules.length === 0) {
+        return '<div style="color:var(--text-muted);padding:20px;text-align:center">' + header + '</div>';
+      }
+      var html = '<table class="rules-table">';
+      html += '<thead><tr><th>Rule</th><th>Confidence</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan Score</th><th>Goodness</th><th>Details</th></tr></thead>';
+      html += '<tbody>';
+      rules.forEach(function(r) {
+        var scanScore = ((r.port_scan_score || 0) + (r.dest_scan_score || 0)) / 2;
+        var scanColor = scanScore > 0.5 ? '#ef4444' : scanScore > 0.2 ? '#f59e0b' : '#22c55e';
+        html += '<tr class="rule-row-' + color + '">'
+          + '<td><code>' + escapeHTML(r.rule_name || '?') + '</code></td>'
+          + '<td><span class="confidence-' + (r.confidence > 0.7 ? 'high' : r.confidence > 0.4 ? 'med' : 'low') + '">' + (r.confidence * 100).toFixed(0) + '%</span></td>'
+          + '<td>' + (r.total_events || 0).toLocaleString() + '</td>'
+          + '<td style="color:#22c55e">' + (r.pass_count || 0).toLocaleString() + '</td>'
+          + '<td style="color:#ef4444">' + (r.block_count || 0).toLocaleString() + '</td>'
+          + '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>'
+          + '<td><span class="goodness-' + (r.goodness_score > 0.65 ? 'high' : r.goodness_score > 0.35 ? 'med' : 'low') + '">' + (r.goodness_score * 100).toFixed(0) + '%</span></td>'
+          + '<td>' + escapeHTML((r.details || {}).note || '') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      return html;
+    }
+
+    document.getElementById('rulesMLABUSIVE').innerHTML = buildRulesTable(
+      rules.filter(function(r) { return r.classification === 'ABUSIVE'; }),
+      'abusive',
+      'No abusive rules detected in the sample window.'
+    );
+
+    document.getElementById('rulesMLGOOD').innerHTML = buildRulesTable(
+      rules.filter(function(r) { return r.classification === 'GOOD'; }),
+      'good',
+      'No good rules detected in the sample window.'
+    );
+
+    var otherRules = rules.filter(function(r) {
+      return r.classification === 'SUSPICIOUS' || r.classification === 'UNCERTAIN';
+    });
+    var defaultDenyHTML = ''
+      + '<div class="card"><div class="card-body">'
+      + '<h4 style="margin-top:0;color:var(--primary)">📊 Default Deny Traffic</h4>'
+      + '<p>Events that reached the firewall but did not match any rule — these are dropped by the default deny policy.</p>'
+      + '<div class="grid">'
+      + metricBlock('🔥 Default Deny Events', defaultDeny.events ? defaultDeny.events.toLocaleString() : 'N/A')
+      + metricBlock('📊 Deny % of Total', defaultDeny.percentage != null ? defaultDeny.percentage.toFixed(1) + '%' : 'N/A')
+      + metricBlock('📝 Events with Rules', eventsWithRule.toLocaleString())
+      + metricBlock('🚫 Events without Rules', eventsWithoutRule.toLocaleString())
+      + '</div></div></div>';
+    if (otherRules.length > 0) {
+      defaultDenyHTML += buildRulesTable(otherRules, 'suspicious', '');
+    }
+    document.getElementById('rulesMLOther').innerHTML = defaultDenyHTML;
+  });
 }
 
 // ═══════════════════════════════════════════
