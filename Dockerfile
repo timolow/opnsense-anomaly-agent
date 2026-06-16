@@ -27,6 +27,7 @@ COPY network_classifier.py .
 COPY state_persistence.py .
 COPY rule_classifier.py .
 COPY system_log_classifier.py .
+COPY rule_classify.py .
 COPY service_monitor.py .
 COPY server.py .
 COPY app.html .
