@@ -1232,7 +1232,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def query_opnsense_firewall_rules():
     """Fetch actual firewall rules from OPNsense with descriptions."""
     opn_url, opn_key, opn_secret, verify_ssl = _read_opn_config()
+    print(f"[OPNsense] Config: url={bool(opn_url)}, key={bool(opn_key)}")
     if not opn_url:
+        print("[OPNsense] No URL configured, returning empty")
         return {}
     try:
         import urllib.request
