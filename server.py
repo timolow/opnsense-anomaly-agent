@@ -1239,7 +1239,7 @@ def query_rules_classified():
         
         # Fetch all firewall events (recent window for performance)
         cur.execute("""
-            SELECT timestamp, src_ip, dst_ip, dport, sport,
+            SELECT timestamp, src_ip, dst_ip, dst_port, src_port,
                    action, rule_name, proto,
                    interface, direction
             FROM events
