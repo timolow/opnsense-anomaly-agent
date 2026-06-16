@@ -735,17 +735,42 @@ function loadRules() {
 
 // System Logs
 function loadSysLogs() {
-  apiFetch('/api/system_logs').then(function(logs) {
-    if (!logs || logs.length === 0) {
-      document.getElementById('syslogsTable').innerHTML = '<div class="error-msg">No system logs found</div>';
+  apiFetch('/api/system_logs').then(function(data) {
+    if (!data) {
+      document.getElementById('syslogsTable').innerHTML = '<div class="error-msg">System logs unavailable</div>';
       return;
     }
-    var html = '<table><thead><tr><th>Timestamp</th><th>Type</th><th>Source</th><th>Message</th></tr></thead><tbody>';
-    for (var i = 0; i < logs.length; i++) {
-      var l = logs[i];
-      html += '<tr><td>' + escapeHtml(l.timestamp || '') + '</td><td>' + escapeHtml(l.log_type || 'system') + '</td><td>' + escapeHtml(l.source || '-') + '</td><td>' + escapeHtml(l.message || '').substring(0, 100) + '</td></tr>';
+    var html = '';
+    // Summary stats cards
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">';
+    html += '<div class="metric-card"><div class="metric-value">' + (data.services_tracked || 0) + '</div><div class="metric-label">Services Tracked</div></div>';
+    html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.system_log_events || 0) + '</div><div class="metric-label">System Log Events</div></div>';
+    html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.firewall_events || 0) + '</div><div class="metric-label">Firewall Events</div></div>';
+    html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.total_events_classified || 0) + '</div><div class="metric-label">Events Classified</div></div>';
+    html += '</div>';
+    // Services by volume
+    if (data.services_by_volume) {
+      html += '<h3 style="font-size:15px;margin-bottom:8px;color:var(--text-secondary)">Services by Volume</h3>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">';
+      for (var svc in data.services_by_volume) {
+        if (data.services_by_volume.hasOwnProperty(svc)) {
+          html += '<div style="background:var(--bg-secondary);padding:6px 12px;border-radius:4px;font-size:13px"><span style="color:var(--text-primary);font-weight:600">' + escapeHtml(svc) + '</span> <span style="color:var(--text-muted)">(' + formatNum(data.services_by_volume[svc]) + ')</span></div>';
+        }
+      }
+      html += '</div>';
     }
-    html += '</tbody></table>';
+    // Recent log entries table
+    if (data.recent_logs && data.recent_logs.length > 0) {
+      html += '<h3 style="font-size:15px;margin-bottom:8px;color:var(--text-secondary)">Recent Log Entries</h3>';
+      html += '<table><thead><tr><th>Timestamp</th><th>Type</th><th>Source</th><th>Message</th></tr></thead><tbody>';
+      for (var i = 0; i < data.recent_logs.length; i++) {
+        var l = data.recent_logs[i];
+        html += '<tr><td>' + escapeHtml(l.timestamp || '') + '</td><td>' + escapeHtml(l.log_type || 'system') + '</td><td>' + escapeHtml(l.source || '-') + '</td><td>' + escapeHtml(l.message || '').substring(0, 150) + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    } else {
+      html += '<div style="padding:20px;text-align:center;color:var(--text-muted)">No log entries available yet</div>';
+    }
     document.getElementById('syslogsTable').innerHTML = html;
   });
 }
