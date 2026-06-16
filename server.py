@@ -909,6 +909,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(query_alerts())
         elif path == "/api/opnsense":
             self._send_json(query_opnsense_status())
+        elif path == "/api/heartbeat":
+            # Simple heartbeat - returns current time and counters from state
+            state = load_state()
+            counters = state.get("agent_counters", {}) if state else {}
+            self._send_json({
+                "ok": True,
+                "timestamp": time.time(),
+                "events_processed": counters.get("event_count", 0),
+                "anomalies_detected": counters.get("anomaly_count", 0),
+            })
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
             # Only counts firewall events (action IN ('PASS','BLOCK'))
