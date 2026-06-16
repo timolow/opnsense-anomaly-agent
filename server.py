@@ -1092,14 +1092,37 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 def run_server(host="0.0.0.0", port=8766):
-    try:
-        server = ThreadedHTTPServer((host, port), DashboardHandler)
-        print(f"Dashboard server running on http://{host}:{port}")
-        server.serve_forever()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise
+    import traceback
+    import sys
+    import logging
+    import os
+    
+    # Log everything to a file we can inspect
+    log_file = "/app/agent_data/server.log"
+    
+    def _safe_run():
+        try:
+            logging.getLogger("dashboard").warning("Dashboard server starting on http://%s:%d", host, port)
+            server = ThreadedHTTPServer((host, port), DashboardHandler)
+            logging.getLogger("dashboard").warning("Dashboard server running on http://%s:%d", host, port)
+            server.serve_forever()
+        except Exception as e:
+            logging.getLogger("dashboard").error("Dashboard server crashed: %s", e, exc_info=True)
+            with open(log_file, "w") as f:
+                f.write(f"CRASH: {e}\n")
+                traceback.print_exc(file=f)
+            raise
+    
+    # Override sys.excepthook for this process (daemon thread crashes)
+    orig_hook = sys.excepthook
+    def _crash_dump(type, value, tback):
+        with open(log_file, "w") as f:
+            f.write(f"EXCEPTION: {type.__name__}: {value}\n")
+            traceback.print_exception(type, value, tback, file=f)
+        orig_hook(type, value, tback)
+    sys.excepthook = _crash_dump
+    
+    _safe_run()
 
 if __name__ == "__main__":
     run_server()
