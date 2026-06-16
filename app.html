@@ -304,6 +304,7 @@ tr:hover { background: var(--bg-tertiary); }
     <div class="nav-inner" id="navTabs">
       <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 Overview</button>
       <button class="tab-btn" data-tab="heatmap" onclick="switchTab('heatmap')">🔥 Heatmap</button>
+      <button class="tab-btn" data-tab="flows" onclick="switchTab('flows')">🌐 Flows</button>
       <button class="tab-btn" data-tab="ipflow" onclick="switchTab('ipflow')">🌐 IP Flow</button>
       <button class="tab-btn" data-tab="alerts" onclick="switchTab('alerts')">🚨 Alerts</button>
       <button class="tab-btn" data-tab="mutes" onclick="switchTab('mutes')">🔇 Mutes</button>
@@ -348,6 +349,21 @@ tr:hover { background: var(--bg-tertiary); }
       <div class="card-body">
         <div class="heatmap-grid" id="heatmapGrid"></div>
         <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flows Tab (ntopng-style Sankey) -->
+  <div class="tab-content" id="tab-flows">
+    <div class="card">
+      <div class="card-header">Traffic Flows — Top Talkers Sankey Diagram</div>
+      <div class="card-body">
+        <div style="text-align:center;color:var(--text-muted);padding:40px" id="flowsLoading">
+          <div class="loading-spinner" style="margin:0 auto 12px"></div>
+          Loading flows...
+        </div>
+        <canvas id="flowsSankey" width="1200" height="600" style="display:none;width:100%;border-radius:4px;background:var(--bg-primary)"></canvas>
+        <div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap" id="flowsSummary"></div>
       </div>
     </div>
   </div>
@@ -762,16 +778,237 @@ function loadSysLogs() {
     // Recent log entries table
     if (data.recent_logs && data.recent_logs.length > 0) {
       html += '<h3 style="font-size:15px;margin-bottom:8px;color:var(--text-secondary)">Recent Log Entries</h3>';
-      html += '<table><thead><tr><th>Timestamp</th><th>Type</th><th>Source</th><th>Message</th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>Timestamp</th><th>Type</th><th>Source IP</th><th>Interface</th><th>Message</th></tr></thead><tbody>';
       for (var i = 0; i < data.recent_logs.length; i++) {
         var l = data.recent_logs[i];
-        html += '<tr><td>' + escapeHtml(l.timestamp || '') + '</td><td>' + escapeHtml(l.log_type || 'system') + '</td><td>' + escapeHtml(l.source || '-') + '</td><td>' + escapeHtml(l.message || '').substring(0, 150) + '</td></tr>';
+        html += '<tr><td>' + escapeHtml(l.timestamp || '') + '</td><td>' + escapeHtml(l.log_type || 'system') + '</td><td>' + escapeHtml(l.source || '-') + '</td><td>' + escapeHtml(l.interface || '-') + '</td><td>' + escapeHtml(l.message || '') + '</td></tr>';
       }
       html += '</tbody></table>';
     } else {
       html += '<div style="padding:20px;text-align:center;color:var(--text-muted)">No log entries available yet</div>';
     }
     document.getElementById('syslogsTable').innerHTML = html;
+  });
+}
+
+// ═══════════════════════════════════════════
+// Flows Tab — ntopng-style Sankey Diagram
+// ═══════════════════════════════════════════
+
+function loadFlows() {
+  var loadEl = document.getElementById('flowsLoading');
+  var canvas = document.getElementById('flowsSankey');
+  var summaryEl = document.getElementById('flowsSummary');
+  loadEl.style.display = 'block';
+  canvas.style.display = 'none';
+  summaryEl.innerHTML = '';
+
+  apiFetch('/api/flows').then(function(data) {
+    if (!data || !data.flows || data.flows.length === 0) {
+      loadEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">No flow data available yet</div>';
+      return;
+    }
+
+    loadEl.style.display = 'none';
+    canvas.style.display = 'block';
+
+    // Summary cards
+    var html = '<div class="metric-card"><div class="metric-value">' + data.total_flows + '</div><div class="metric-label">Total Flows</div></div>';
+    if (data.protocols) {
+      for (var proto in data.protocols) {
+        if (data.protocols.hasOwnProperty(proto)) {
+          html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.protocols[proto]) + '</div><div class="metric-label">' + escapeHtml(proto) + '</div></div>';
+        }
+      }
+    }
+    summaryEl.innerHTML = html;
+
+    // Build Sankey — collect unique IPs and flows
+    var ipSet = {};
+    var srcNodes = {};
+    var dstNodes = {};
+    for (var i = 0; i < data.flows.length; i++) {
+      var f = data.flows[i];
+      var src = f.src_ip, dst = f.dst_ip, cnt = f.events;
+      if (!ipSet[src]) { ipSet[src] = 0; }
+      if (!ipSet[dst]) { ipSet[dst] = 0; }
+      ipSet[src] += cnt;
+      ipSet[dst] += cnt;
+      srcNodes[src] = (srcNodes[src] || 0) + cnt;
+      dstNodes[dst] = (dstNodes[dst] || 0) + cnt;
+    }
+
+    // Separate left (src-heavy) and right (dst-heavy) nodes
+    var leftNodes = [], rightNodes = [];
+    for (var ip in ipSet) {
+      if (ipSet[ip] === 0) continue;
+      var srcPct = srcNodes[ip] || 0;
+      var dstPct = dstNodes[ip] || 0;
+      var total = srcPct + dstPct;
+      if (total === 0) continue;
+      var ratio = srcPct / total;
+      if (ratio > 0.5) {
+        leftNodes.push({ip: ip, total: total, ratio: ratio});
+      } else {
+        rightNodes.push({ip: ip, total: total, ratio: ratio});
+      }
+    }
+
+    // Sort and limit
+    leftNodes.sort(function(a, b){return b.total - a.total});
+    rightNodes.sort(function(a, b){return b.total - a.total});
+    // Keep top nodes to avoid overcrowding
+    var maxNodes = 15;
+    leftNodes = leftNodes.slice(0, maxNodes);
+    rightNodes = rightNodes.slice(0, maxNodes);
+
+    if (leftNodes.length === 0 || rightNodes.length === 0) return;
+
+    // Filter flows to only those connecting our selected nodes
+    var leftSet = {}, rightSet = {};
+    for (var i = 0; i < leftNodes.length; i++) leftSet[leftNodes[i].ip] = true;
+    for (var i = 0; i < rightNodes.length; i++) rightSet[rightNodes[i].ip] = true;
+
+    var filteredFlows = [];
+    for (var i = 0; i < data.flows.length; i++) {
+      var f = data.flows[i];
+      if (leftSet[f.src_ip] && rightSet[f.dst_ip]) {
+        filteredFlows.push(f);
+      } else if (leftSet[f.dst_ip] && rightSet[f.src_ip]) {
+        filteredFlows.push({src_ip: f.dst_ip, dst_ip: f.src_ip, events: f.events});
+      }
+    }
+
+    // Draw Sankey
+    var w = canvas.width, h = canvas.height;
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+
+    // Dark theme colors
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    var bgColor = isDark ? '#0d1117' : '#f8f9fa';
+    var textColor = isDark ? '#f0f6fc' : '#212529';
+    var mutedColor = isDark ? '#484f58' : '#adb5bd';
+
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, w, h);
+
+    var padding = 60;
+    var leftX = padding;
+    var rightX = w - padding;
+    var midX = (leftX + rightX) / 2;
+    var availableH = h - 40;
+
+    // Calculate node heights proportional to total
+    var maxTotal = Math.max(
+      leftNodes.reduce(function(m, n){return Math.max(m, n.total)}, 0),
+      rightNodes.reduce(function(m, n){return Math.max(m, n.total)}, 0)
+    );
+
+    var nodeGap = 8;
+    var leftTotal = leftNodes.reduce(function(s, n){return s + n.total}, 0);
+    var rightTotal = rightNodes.reduce(function(s, n){return s + n.total}, 0);
+
+    // Position left nodes
+    var leftPositions = [];
+    var curY = 20;
+    for (var i = 0; i < leftNodes.length; i++) {
+      var node = leftNodes[i];
+      var nodeH = Math.max(15, (node.total / leftTotal) * availableH);
+      leftPositions.push({ip: node.ip, y: curY, h: nodeH, total: node.total});
+      curY += nodeH + nodeGap;
+    }
+
+    // Position right nodes
+    var rightPositions = [];
+    curY = 20;
+    for (var i = 0; i < rightNodes.length; i++) {
+      var node = rightNodes[i];
+      var nodeH = Math.max(15, (node.total / rightTotal) * availableH);
+      rightPositions.push({ip: node.ip, y: curY, h: nodeH, total: node.total});
+      curY += nodeH + nodeGap;
+    }
+
+    // Draw links
+    var linkData = {};
+    for (var i = 0; i < filteredFlows.length; i++) {
+      var f = filteredFlows[i];
+      var key = f.src_ip + '->' + f.dst_ip;
+      if (!linkData[key]) { linkData[key] = {src: f.src_ip, dst: f.dst_ip, total: 0}; }
+      linkData[key].total += f.events;
+    }
+
+    var maxLink = 0;
+    for (var key in linkData) {
+      if (linkData[key].total > maxLink) maxLink = linkData[key].total;
+    }
+
+    for (var key in linkData) {
+      var l = linkData[key];
+      var srcPos = null, dstPos = null;
+      for (var i = 0; i < leftPositions.length; i++) {
+        if (leftPositions[i].ip === l.src) { srcPos = leftPositions[i]; break; }
+      }
+      for (var i = 0; i < rightPositions.length; i++) {
+        if (rightPositions[i].ip === l.dst) { dstPos = rightPositions[i]; break; }
+      }
+      if (!srcPos || !dstPos) continue;
+
+      var linkH = Math.max(1, (l.total / maxLink) * 40);
+      var srcCenter = srcPos.y + srcPos.h / 2;
+      var dstCenter = dstPos.y + dstPos.h / 2;
+
+      // Semi-transparent gradient link
+      var alpha = Math.max(0.1, Math.min(0.5, (l.total / maxLink) * 0.8));
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(67, 97, 238, ' + alpha + ')';
+      ctx.lineWidth = linkH;
+      ctx.lineCap = 'round';
+      ctx.moveTo(leftX + 10, srcCenter);
+      ctx.quadraticCurveTo(midX, srcCenter, midX, dstCenter);
+      ctx.quadraticCurveTo(midX, dstCenter, rightX - 10, dstCenter);
+      ctx.stroke();
+    }
+
+    // Draw nodes
+    // Left nodes
+    for (var i = 0; i < leftPositions.length; i++) {
+      var np = leftPositions[i];
+      ctx.fillStyle = '#4361ee';
+      ctx.fillRect(leftX - 3, np.y, 6, np.h);
+
+      // Label
+      ctx.fillStyle = textColor;
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(np.ip, leftX - 10, np.y + np.h / 2 + 4);
+      ctx.fillStyle = mutedColor;
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.fillText(formatNum(np.total), leftX - 10, np.y + np.h / 2 + 15);
+    }
+
+    // Right nodes
+    for (var i = 0; i < rightPositions.length; i++) {
+      var np = rightPositions[i];
+      ctx.fillStyle = '#2d6a4f';
+      ctx.fillRect(rightX - 3, np.y, 6, np.h);
+
+      // Label
+      ctx.fillStyle = textColor;
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(np.ip, rightX + 10, np.y + np.h / 2 + 4);
+      ctx.fillStyle = mutedColor;
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.fillText(formatNum(np.total), rightX + 10, np.y + np.h / 2 + 15);
+    }
+
+    // Legend
+    ctx.fillStyle = mutedColor;
+    ctx.font = '12px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('← Top Talkers (Source)     Traffic Flows →     Top Talkers (Destination) →', w / 2, h - 15);
+
   });
 }
 
