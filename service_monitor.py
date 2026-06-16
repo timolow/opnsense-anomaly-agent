@@ -537,6 +537,14 @@ class ServiceMonitor:
         raw = (event.get("raw", "") or "").lower()
         log_type = (event.get("log_type", "") or "").lower()
         
+        # DEBUG: log first 50 events to understand field structure
+        if not hasattr(self, "_debug_count"):
+            self._debug_count = 0
+        self._debug_count += 1
+        if self._debug_count <= 50:
+            all_fields = {k: (v[:80] if isinstance(v, str) and len(v) > 80 else v) for k, v in event.items()}
+            logger.debug("ServiceMonitor event #%d fields: %s", self._debug_count, json.dumps(all_fields, default=str))
+
         # Combined text for matching
         combined = f"{process} {message} {raw} {log_type}"
 
