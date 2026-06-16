@@ -1053,9 +1053,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             cur.execute("SELECT COUNT(*) FROM events WHERE action IN ('PASS','BLOCK')")
                             data['firewall_events'] = cur.fetchone()[0]
                             # Get recent log entries for the table
-                            cur.execute("SELECT timestamp, log_type, source, message FROM events WHERE log_type IS NOT NULL AND log_type != '' ORDER BY timestamp DESC LIMIT 100")
+                            cur.execute("SELECT timestamp, log_type, src_ip, interface, raw_message FROM events WHERE log_type IS NOT NULL AND log_type != '' ORDER BY timestamp DESC LIMIT 100")
                             rows = cur.fetchall()
-                            data['recent_logs'] = [{'timestamp': r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0]), 'log_type': r[1], 'source': r[2], 'message': r[3] or ''} for r in rows]
+                            data['recent_logs'] = [{'timestamp': r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0]), 'log_type': r[1], 'source': r[2] or '-', 'interface': r[3] or '-', 'message': (r[4] or '')[0:200]} for r in rows]
                             cur.close()
                         except Exception:
                             pass
@@ -1064,6 +1064,63 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({"message": "No system log classifier data yet", "services_tracked": 0, "services_by_volume": {}})
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
+        elif path == "/api/flows":
+            # Get top flow pairs (src_ip -> dst_ip) - ntopng-style Sankey data
+            conn = get_db()
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    # Top flow pairs
+                    cur.execute("""
+                        SELECT src_ip, dst_ip, COUNT(*) as cnt
+                        FROM events
+                        WHERE src_ip IS NOT NULL AND dst_ip IS NOT NULL
+                        AND src_ip != '0.0.0.0'
+                        GROUP BY src_ip, dst_ip
+                        ORDER BY cnt DESC
+                        LIMIT 50
+                    """)
+                    flows = []
+                    for r in cur.fetchall():
+                        flows.append({
+                            'src_ip': r[0],
+                            'dst_ip': r[1],
+                            'events': r[2]
+                        })
+                    # Top talkers (unique IPs)
+                    cur.execute("""
+                        SELECT ip, COUNT(*) as cnt
+                        FROM (
+                            SELECT src_ip as ip FROM events WHERE src_ip IS NOT NULL
+                            UNION ALL
+                            SELECT dst_ip as ip FROM events WHERE dst_ip IS NOT NULL
+                        ) t
+                        GROUP BY ip ORDER BY cnt DESC LIMIT 50
+                    """)
+                    talkers = []
+                    for r in cur.fetchall():
+                        talkers.append({
+                            'ip': r[0],
+                            'events': r[1]
+                        })
+                    # Protocol distribution
+                    cur.execute("SELECT proto, COUNT(*) FROM events WHERE proto IS NOT NULL AND proto != '' GROUP BY proto ORDER BY COUNT(*) DESC")
+                    proto_dist = dict(cur.fetchall())
+                    # Action distribution
+                    cur.execute("SELECT COALESCE(action, 'none') as action, COUNT(*) FROM events GROUP BY action ORDER BY COUNT(*) DESC")
+                    action_dist = dict(cur.fetchall())
+                    cur.close()
+                    self._send_json({
+                        'flows': flows,
+                        'talkers': talkers,
+                        'protocols': proto_dist,
+                        'actions': action_dist,
+                        'total_flows': len(flows)
+                    })
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            else:
+                self._send_json({'error': 'No database connection'})
         else:
             self.send_response(404)
             self.end_headers()
