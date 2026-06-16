@@ -1725,26 +1725,35 @@ function loadRulesML() {
 
     document.getElementById('rulesMLSummary').innerHTML = summaryHTML;
 
-    // Build rules table
+    // Build rules table with human-readable names
     function buildRulesTable(rules, color, header) {
       if (rules.length === 0) {
         return '<div style="color:var(--text-muted);padding:20px;text-align:center">' + header + '</div>';
       }
       var html = '<table class="rules-table">';
-      html += '<thead><tr><th>Rule</th><th>Confidence</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan Score</th><th>Goodness</th><th>Details</th></tr></thead>';
+      html += '<thead><tr><th>Rule Name</th><th>Classification</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan Score</th><th>Confidence</th><th>Goodness</th><th>Description</th></tr></thead>';
       html += '<tbody>';
       rules.forEach(function(r) {
         var scanScore = ((r.port_scan_score || 0) + (r.dest_scan_score || 0)) / 2;
         var scanColor = scanScore > 0.5 ? '#ef4444' : scanScore > 0.2 ? '#f59e0b' : '#22c55e';
+        var confPercent = (r.confidence * 100).toFixed(0);
+        var goodnessPercent = (r.goodness_score * 100).toFixed(0);
+        var confClass = r.confidence > 0.7 ? 'high' : r.confidence > 0.4 ? 'med' : 'low';
+        var goodnessClass = r.goodness_score > 0.65 ? 'high' : r.goodness_score > 0.35 ? 'med' : 'low';
+        var humanName = escapeHTML(r.human_readable_name || '?');
+        var description = escapeHTML(r.rule_description || '');
+        var classification = escapeHTML(r.classification || '?');
+        
         html += '<tr class="rule-row-' + color + '">'
-          + '<td><code>' + escapeHTML(r.rule_name || '?') + '</code></td>'
-          + '<td><span class="confidence-' + (r.confidence > 0.7 ? 'high' : r.confidence > 0.4 ? 'med' : 'low') + '">' + (r.confidence * 100).toFixed(0) + '%</span></td>'
+          + '<td style="font-weight:bold">' + humanName + '</td>'
+          + '<td><span class="badge-' + color + '">' + classification + '</span></td>'
           + '<td>' + (r.total_events || 0).toLocaleString() + '</td>'
           + '<td style="color:#22c55e">' + (r.pass_count || 0).toLocaleString() + '</td>'
           + '<td style="color:#ef4444">' + (r.block_count || 0).toLocaleString() + '</td>'
           + '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>'
-          + '<td><span class="goodness-' + (r.goodness_score > 0.65 ? 'high' : r.goodness_score > 0.35 ? 'med' : 'low') + '">' + (r.goodness_score * 100).toFixed(0) + '%</span></td>'
-          + '<td>' + escapeHTML((r.details || {}).note || '') + '</td>'
+          + '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>'
+          + '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>'
+          + '<td style="color:var(--text-muted);font-size:0.85em">' + (description || '(no description)') + '</td>'
           + '</tr>';
       });
       html += '</tbody></table>';
