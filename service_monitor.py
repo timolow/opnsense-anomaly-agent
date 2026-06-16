@@ -532,17 +532,43 @@ class ServiceMonitor:
 
     def process_event(self, event: dict):
         """Route a single event to the correct service handler."""
-        raw = event.get("raw", "")
-        log_type = event.get("log_type", "")
+        process = (event.get("process", "") or "").lower()
+        message = (event.get("message", "") or "").lower()
+        raw = (event.get("raw", "") or "").lower()
+        log_type = (event.get("log_type", "") or "").lower()
+        
+        # Combined text for matching
+        combined = f"{process} {message} {raw} {log_type}"
 
-        if "dhcp" in raw or "dhcpleases" in log_type:
-            self.process_dhcp_event(event)
-        elif "unbound" in log_type or "dns" in log_type or "dnsmasq" in log_type:
-            self._process_dns_event(event)
-        elif "ntpd" in log_type or "ntp" in log_type:
-            self.process_ntp_event(event)
-        elif "openvpn" in log_type or "vpn" in log_type:
-            self.process_openvpn_event(event)
+        matched = None
+        if ("dhcp" in process or "dhcp" in message or "dhcp" in log_type
+            or "dhcpleases" in combined):
+            matched = "dhcp"
+        
+        elif ("unbound" in process or "unbound" in message
+              or "dnsmasq" in process or "dnsmasq" in message
+              or "dns" in process or "dns" in log_type):
+            matched = "unbound"
+        
+        elif ("ntpd" in process or "ntp" in process
+              or "ntp" in log_type):
+            matched = "ntp"
+        
+        elif ("openvpn" in process or "openvpn" in message
+              or "ovpn" in process):
+            matched = "openvpn"
+
+        if matched:
+            logger.info("ServiceMonitor matched service=%s process=%s message=%s", 
+                       matched, process, message[:80])
+            if matched == "dhcp":
+                self.process_dhcp_event(event)
+            elif matched == "unbound":
+                self._process_dns_event(event)
+            elif matched == "ntp":
+                self.process_ntp_event(event)
+            elif matched == "openvpn":
+                self.process_openvpn_event(event)
 
     def learn(self, events: list):
         """Process events and detect anomalies."""
