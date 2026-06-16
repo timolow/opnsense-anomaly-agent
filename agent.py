@@ -58,6 +58,7 @@ from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
 from rule_classifier import RuleClassifier
 from system_log_classifier import SystemLogClassifier
+from service_monitor import ServiceMonitor
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -380,6 +381,9 @@ class OPNsenseAgent:
         self.persistence = StatePersistence()
         self.rule_classifier = RuleClassifier()
         self.system_log_classifier = SystemLogClassifier()
+        # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
+        self.service_monitor = ServiceMonitor(None)
+        self.service_monitor.load()
         self.persistence.load(self)
 
     # ── event callback (from syslog listener thread) ─────────────────
@@ -430,6 +434,9 @@ class OPNsenseAgent:
 
         # Rule-based learning (firewall rules only)
         self.rule_classifier.process_event(event)
+
+        # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
+        self.service_monitor.process_event(event)
 
         # Statistical model
         self.stat_model.add_event(event)
@@ -483,6 +490,17 @@ class OPNsenseAgent:
         for anomaly in anomalies:
             self.anomaly_count += 1
             logger.info("System log anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            self.discord_bot.send_alert(anomaly)
+
+    def _check_service_anomalies(self):
+        """Check service monitor for anomalies and send alerts."""
+        anomalies = self.service_monitor.check_all()
+        if not anomalies:
+            return
+        
+        for anomaly in anomalies:
+            self.anomaly_count += 1
+            logger.info("Service anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             self.discord_bot.send_alert(anomaly)
 
     def _send_status(self):

@@ -832,6 +832,58 @@ def _fallback_alerts():
     alerts.sort(key=lambda a: a["count"], reverse=True)
     return alerts[:50]
 
+def query_service_status():
+    """Read service monitor state from JSON file."""
+    state_path = os.path.join(DATA_DIR, "service_monitor.json")
+    if not os.path.exists(state_path):
+        return {"services": {}, "services_tracked": 0, "total_events": 0}
+    
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+        
+        services = state.get("services", {})
+        total_events = sum(s.get("total_events", 0) for s in services.values())
+        
+        # Build summary
+        services_summary = {}
+        for name, svc_data in services.items():
+            metrics = svc_data.get("metrics", {})
+            service_metrics = {}
+            if "actions" in metrics:
+                service_metrics["actions"] = dict(metrics["actions"]) if isinstance(metrics["actions"], dict) else metrics["actions"]
+            if "leases_24h" in metrics:
+                service_metrics["leases_24h"] = metrics["leases_24h"]
+            if "drift_samples" in metrics:
+                drifts = metrics["drift_samples"]
+                if drifts:
+                    abs_drifts = [abs(d) for d in drifts]
+                    service_metrics["current_drift"] = max(abs_drifts)
+                    service_metrics["avg_drift"] = sum(abs_drifts) / len(abs_drifts)
+            if "active_connections" in metrics:
+                service_metrics["active_connections"] = metrics["active_connections"]
+            if "queries_24h" in metrics:
+                service_metrics["queries_24h"] = metrics["queries_24h"]
+            if "sync_successes" in metrics:
+                service_metrics["sync_successes"] = metrics["sync_successes"]
+            
+            services_summary[name] = {
+                "total_events": svc_data.get("total_events", 0),
+                "anomaly_count": len(svc_data.get("anomaly_log", [])),
+                "first_seen": svc_data.get("first_seen"),
+                "last_seen": svc_data.get("last_seen"),
+                "metrics": service_metrics,
+                "anomalies": svc_data.get("anomaly_log", []),
+            }
+        
+        return {
+            "services_tracked": len(services),
+            "total_events": total_events,
+            "services": services_summary,
+        }
+    except Exception as e:
+        return {"error": str(e), "services_tracked": 0}
+
 def query_health():
     conn = get_db()
     state = load_state()
@@ -909,6 +961,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(query_alerts())
         elif path == "/api/opnsense":
             self._send_json(query_opnsense_status())
+        elif path == "/api/service-status":
+            # Service monitor status — DHCP, Unbound, NTP, OpenVPN, WireGuard
+            self._send_json(query_service_status())
         elif path == "/api/heartbeat":
             # Simple heartbeat - returns current time and counters from state
             state = load_state()
