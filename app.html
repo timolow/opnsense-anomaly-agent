@@ -2123,13 +2123,10 @@ window.switchTab = function(tabId, btn) {
 // Dashboard data loader - bootstraps the entire UI
 function loadDashboardData() {
   loadOverview();
-  loadIPFlowData();
-  loadHeatmapData();
   loadOpnsenseData();
   // Auto-refresh every 30 seconds
   setInterval(() => {
     loadOverview();
-    loadIPFlowData();
   }, 30000);
 }
 
