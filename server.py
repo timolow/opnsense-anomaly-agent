@@ -1052,6 +1052,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             data['system_log_events'] = cur.fetchone()[0]
                             cur.execute("SELECT COUNT(*) FROM events WHERE action IN ('PASS','BLOCK')")
                             data['firewall_events'] = cur.fetchone()[0]
+                            # Get recent log entries for the table
+                            cur.execute("SELECT timestamp, log_type, source, message FROM events WHERE log_type IS NOT NULL AND log_type != '' ORDER BY timestamp DESC LIMIT 100")
+                            rows = cur.fetchall()
+                            data['recent_logs'] = [{'timestamp': r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0]), 'log_type': r[1], 'source': r[2], 'message': r[3] or ''} for r in rows]
                             cur.close()
                         except Exception:
                             pass
