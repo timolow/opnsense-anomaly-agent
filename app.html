@@ -1037,8 +1037,21 @@ function loadSysLogs() {
 }
 
 // ═══════════════════════════════════════════
-// Flows Tab — ntopng-style Sankey Diagram
+// Flows Tab — ntopng-style Sankey with pan/zoom/auto-refresh
 // ═══════════════════════════════════════════
+
+var flowsData = null;
+var flowsScale = 1; // zoom
+var flowsOffX = 0; // pan offset
+var flowsOffY = 0;
+var flowsDragging = false;
+var flowsDragStartX = 0;
+var flowsDragStartY = 0;
+var flowsHoverLink = null;
+var flowsHoverNode = null;
+var flowsTimer = null;
+var flowsLastDraw = 0;
+var flowsMinDrawInterval = 150; // throttle redraws
 
 function loadFlows() {
   var loadEl = document.getElementById('flowsLoading');
@@ -1054,8 +1067,12 @@ function loadFlows() {
       return;
     }
 
+    flowsData = data;
     loadEl.style.display = 'none';
     canvas.style.display = 'block';
+    flowsScale = 1;
+    flowsOffX = 0;
+    flowsOffY = 0;
 
     // Summary cards
     var html = '<div class="metric-card"><div class="metric-value">' + data.total_flows + '</div><div class="metric-label">Total Flows</div></div>';
@@ -1068,193 +1085,342 @@ function loadFlows() {
     }
     summaryEl.innerHTML = html;
 
-    // Build Sankey — collect unique IPs and flows
-    var ipSet = {};
-    var srcNodes = {};
-    var dstNodes = {};
-    for (var i = 0; i < data.flows.length; i++) {
-      var f = data.flows[i];
-      var src = f.src_ip, dst = f.dst_ip, cnt = f.events;
-      if (!ipSet[src]) { ipSet[src] = 0; }
-      if (!ipSet[dst]) { ipSet[dst] = 0; }
-      ipSet[src] += cnt;
-      ipSet[dst] += cnt;
-      srcNodes[src] = (srcNodes[src] || 0) + cnt;
-      dstNodes[dst] = (dstNodes[dst] || 0) + cnt;
+    drawSankey();
+    // Auto-refresh every 30s
+    if (flowsTimer) clearInterval(flowsTimer);
+    flowsTimer = setInterval(loadFlows, 30000);
+  });
+}
+
+function drawSankey() {
+  if (!flowsData || !flowsData.flows) return;
+  var now = Date.now();
+  if (now - flowsLastDraw < flowsMinDrawInterval) return;
+  flowsLastDraw = now;
+
+  var canvas = document.getElementById('flowsSankey');
+  var ctx = canvas.getContext('2d');
+  var data = flowsData.flows;
+  if (data.length === 0) return;
+
+  // Rebuild Sankey data
+  var ipSet = {};
+  var srcNodes = {};
+  var dstNodes = {};
+  for (var i = 0; i < data.length; i++) {
+    var f = data[i];
+    var src = f.src_ip, dst = f.dst_ip, cnt = f.events;
+    if (!ipSet[src]) { ipSet[src] = 0; }
+    if (!ipSet[dst]) { ipSet[dst] = 0; }
+    ipSet[src] += cnt;
+    ipSet[dst] += cnt;
+    srcNodes[src] = (srcNodes[src] || 0) + cnt;
+    dstNodes[dst] = (dstNodes[dst] || 0) + cnt;
+  }
+
+  var leftNodes = [], rightNodes = [];
+  for (var ip in ipSet) {
+    if (ipSet[ip] === 0) continue;
+    var srcPct = srcNodes[ip] || 0;
+    var dstPct = dstNodes[ip] || 0;
+    var total = srcPct + dstPct;
+    if (total === 0) continue;
+    var ratio = srcPct / total;
+    if (ratio > 0.5) {
+      leftNodes.push({ip: ip, total: total, ratio: ratio});
+    } else {
+      rightNodes.push({ip: ip, total: total, ratio: ratio});
+    }
+  }
+
+  leftNodes.sort(function(a, b){return b.total - a.total});
+  rightNodes.sort(function(a, b){return b.total - a.total});
+  var maxNodes = 20;
+  leftNodes = leftNodes.slice(0, maxNodes);
+  rightNodes = rightNodes.slice(0, maxNodes);
+
+  if (leftNodes.length === 0 || rightNodes.length === 0) return;
+
+  var leftSet = {}, rightSet = {};
+  for (var i = 0; i < leftNodes.length; i++) leftSet[leftNodes[i].ip] = true;
+  for (var i = 0; i < rightNodes.length; i++) rightSet[rightNodes[i].ip] = true;
+
+  var filteredFlows = [];
+  for (var i = 0; i < data.length; i++) {
+    var f = data[i];
+    if (leftSet[f.src_ip] && rightSet[f.dst_ip]) {
+      filteredFlows.push(f);
+    } else if (leftSet[f.dst_ip] && rightSet[f.src_ip]) {
+      filteredFlows.push({src_ip: f.dst_ip, dst_ip: f.src_ip, events: f.events});
+    }
+  }
+
+  // Compute layout
+  var padding = 60;
+  var leftX = padding;
+  var rightX = canvas.width - padding;
+  var midX = (leftX + rightX) / 2;
+  var availableH = canvas.height - 40;
+
+  var nodeGap = 8;
+  var leftTotal = leftNodes.reduce(function(s, n){return s + n.total}, 0);
+  var rightTotal = rightNodes.reduce(function(s, n){return s + n.total}, 0);
+
+  var leftPositions = [];
+  var curY = 20;
+  for (var i = 0; i < leftNodes.length; i++) {
+    var node = leftNodes[i];
+    var nodeH = Math.max(15, (node.total / leftTotal) * availableH);
+    leftPositions.push({ip: node.ip, y: curY, h: nodeH, total: node.total});
+    curY += nodeH + nodeGap;
+  }
+
+  var rightPositions = [];
+  curY = 20;
+  for (var i = 0; i < rightNodes.length; i++) {
+    var node = rightNodes[i];
+    var nodeH = Math.max(15, (node.total / rightTotal) * availableH);
+    rightPositions.push({ip: node.ip, y: curY, h: nodeH, total: node.total});
+    curY += nodeH + nodeGap;
+  }
+
+  // Compute links
+  var linkData = {};
+  for (var i = 0; i < filteredFlows.length; i++) {
+    var f = filteredFlows[i];
+    var key = f.src_ip + '->' + f.dst_ip;
+    if (!linkData[key]) { linkData[key] = {src: f.src_ip, dst: f.dst_ip, total: 0}; }
+    linkData[key].total += f.events;
+  }
+  var maxLink = 0;
+  for (var key in linkData) {
+    if (linkData[key].total > maxLink) maxLink = linkData[key].total;
+  }
+
+  // Draw
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var bgColor = isDark ? '#0d1117' : '#f8f9fa';
+  var textColor = isDark ? '#f0f6fc' : '#212529';
+  var mutedColor = isDark ? '#484f58' : '#adb5bd';
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(flowsOffX, flowsOffY);
+  ctx.scale(flowsScale, flowsScale);
+
+  // Draw links
+  for (var key in linkData) {
+    var l = linkData[key];
+    var srcPos = null, dstPos = null;
+    for (var i = 0; i < leftPositions.length; i++) {
+      if (leftPositions[i].ip === l.src) { srcPos = leftPositions[i]; break; }
+    }
+    for (var i = 0; i < rightPositions.length; i++) {
+      if (rightPositions[i].ip === l.dst) { dstPos = rightPositions[i]; break; }
+    }
+    if (!srcPos || !dstPos) continue;
+
+    var linkH = Math.max(1, (l.total / maxLink) * 40);
+    var srcCenter = srcPos.y + srcPos.h / 2;
+    var dstCenter = dstPos.y + dstPos.h / 2;
+    var alpha = Math.max(0.1, Math.min(0.5, (l.total / maxLink) * 0.8));
+
+    // Check hover
+    if (flowsHoverLink && flowsHoverLink.key === key) {
+      alpha = 0.7;
+      ctx.strokeStyle = 'rgba(88, 166, 255, ' + alpha + ')';
+      ctx.lineWidth = linkH + 3;
+    } else {
+      ctx.strokeStyle = 'rgba(67, 97, 238, ' + alpha + ')';
+      ctx.lineWidth = linkH;
+    }
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(leftX + 10, srcCenter);
+    ctx.quadraticCurveTo(midX, srcCenter, midX, dstCenter);
+    ctx.quadraticCurveTo(midX, dstCenter, rightX - 10, dstCenter);
+    ctx.stroke();
+  }
+
+  // Draw nodes
+  for (var i = 0; i < leftPositions.length; i++) {
+    var np = leftPositions[i];
+    var isHovered = flowsHoverNode && flowsHoverNode.ip === np.ip && flowsHoverNode.side === 'left';
+    ctx.fillStyle = isHovered ? '#79c0ff' : '#4361ee';
+    ctx.fillRect(leftX - 3, np.y, 6, np.h);
+
+    ctx.fillStyle = textColor;
+    ctx.font = (isHovered ? 'bold ' : '') + '11px -apple-system, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(np.ip, leftX - 10, np.y + np.h / 2 + 4);
+    ctx.fillStyle = mutedColor;
+    ctx.font = '10px -apple-system, sans-serif';
+    ctx.fillText(formatNum(np.total), leftX - 10, np.y + np.h / 2 + 15);
+  }
+
+  for (var i = 0; i < rightPositions.length; i++) {
+    var np = rightPositions[i];
+    var isHovered = flowsHoverNode && flowsHoverNode.ip === np.ip && flowsHoverNode.side === 'right';
+    ctx.fillStyle = isHovered ? '#56d364' : '#2d6a4f';
+    ctx.fillRect(rightX - 3, np.y, 6, np.h);
+
+    ctx.fillStyle = textColor;
+    ctx.font = (isHovered ? 'bold ' : '') + '11px -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(np.ip, rightX + 10, np.y + np.h / 2 + 4);
+    ctx.fillStyle = mutedColor;
+    ctx.font = '10px -apple-system, sans-serif';
+    ctx.fillText(formatNum(np.total), rightX + 10, np.y + np.h / 2 + 15);
+  }
+
+  ctx.restore();
+
+  // Legend and controls
+  ctx.fillStyle = mutedColor;
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('← Top Talkers (Source) →    Traffic Flows ←    Top Talkers (Destination) →', 10, canvas.height - 8);
+
+  // Zoom controls
+  ctx.fillStyle = isDark ? '#f0f6fc' : '#212529';
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('Zoom: ' + Math.round(flowsScale * 100) + '% | Scroll to zoom, drag to pan, hover to highlight', canvas.width - 10, canvas.height - 8);
+}
+
+function initFlowsEvents() {
+  var canvas = document.getElementById('flowsSankey');
+  if (!canvas) return;
+
+  canvas.addEventListener('mousedown', function(e) {
+    flowsDragging = true;
+    flowsDragStartX = e.clientX - flowsOffX;
+    flowsDragStartY = e.clientY - flowsOffY;
+    canvas.style.cursor = 'grabbing';
+  });
+
+  canvas.addEventListener('mousemove', function(e) {
+    if (flowsDragging) {
+      flowsOffX = e.clientX - flowsDragStartX;
+      flowsOffY = e.clientY - flowsDragStartY;
+      drawSankey();
+      return;
+    }
+    // Node hover
+    if (!flowsData || !flowsData.flows) return;
+    var rect = canvas.getBoundingClientRect();
+    var mx = (e.clientX - rect.left - flowsOffX) / flowsScale;
+    var my = (e.clientY - rect.top - flowsOffY) / flowsScale;
+
+    var padding = 60;
+    var leftX = padding;
+    var rightX = canvas.width - padding;
+
+    // Rebuild positions for hover
+    var data = flowsData.flows;
+    var ipSet = {}, srcNodes = {}, dstNodes = {};
+    for (var i = 0; i < data.length; i++) {
+      var f = data[i];
+      ipSet[f.src_ip] = (ipSet[f.src_ip] || 0) + f.events;
+      ipSet[f.dst_ip] = (ipSet[f.dst_ip] || 0) + f.events;
+      srcNodes[f.src_ip] = (srcNodes[f.src_ip] || 0) + f.events;
+      dstNodes[f.dst_ip] = (dstNodes[f.dst_ip] || 0) + f.events;
     }
 
-    // Separate left (src-heavy) and right (dst-heavy) nodes
     var leftNodes = [], rightNodes = [];
     for (var ip in ipSet) {
-      if (ipSet[ip] === 0) continue;
-      var srcPct = srcNodes[ip] || 0;
-      var dstPct = dstNodes[ip] || 0;
-      var total = srcPct + dstPct;
+      var total = (srcNodes[ip] || 0) + (dstNodes[ip] || 0);
       if (total === 0) continue;
-      var ratio = srcPct / total;
-      if (ratio > 0.5) {
-        leftNodes.push({ip: ip, total: total, ratio: ratio});
-      } else {
-        rightNodes.push({ip: ip, total: total, ratio: ratio});
-      }
+      if ((srcNodes[ip] || 0) / total > 0.5) leftNodes.push({ip: ip, total: total});
+      else rightNodes.push({ip: ip, total: total});
     }
-
-    // Sort and limit
     leftNodes.sort(function(a, b){return b.total - a.total});
     rightNodes.sort(function(a, b){return b.total - a.total});
-    // Keep top nodes to avoid overcrowding
-    var maxNodes = 15;
-    leftNodes = leftNodes.slice(0, maxNodes);
-    rightNodes = rightNodes.slice(0, maxNodes);
+    leftNodes = leftNodes.slice(0, 20);
+    rightNodes = rightNodes.slice(0, 20);
 
-    if (leftNodes.length === 0 || rightNodes.length === 0) return;
-
-    // Filter flows to only those connecting our selected nodes
     var leftSet = {}, rightSet = {};
     for (var i = 0; i < leftNodes.length; i++) leftSet[leftNodes[i].ip] = true;
     for (var i = 0; i < rightNodes.length; i++) rightSet[rightNodes[i].ip] = true;
 
-    var filteredFlows = [];
-    for (var i = 0; i < data.flows.length; i++) {
-      var f = data.flows[i];
-      if (leftSet[f.src_ip] && rightSet[f.dst_ip]) {
-        filteredFlows.push(f);
-      } else if (leftSet[f.dst_ip] && rightSet[f.src_ip]) {
-        filteredFlows.push({src_ip: f.dst_ip, dst_ip: f.src_ip, events: f.events});
-      }
-    }
-
-    // Draw Sankey
-    var w = canvas.width, h = canvas.height;
-    var ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, w, h);
-
-    // Dark theme colors
-    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    var bgColor = isDark ? '#0d1117' : '#f8f9fa';
-    var textColor = isDark ? '#f0f6fc' : '#212529';
-    var mutedColor = isDark ? '#484f58' : '#adb5bd';
-
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, w, h);
-
-    var padding = 60;
-    var leftX = padding;
-    var rightX = w - padding;
-    var midX = (leftX + rightX) / 2;
-    var availableH = h - 40;
-
-    // Calculate node heights proportional to total
-    var maxTotal = Math.max(
-      leftNodes.reduce(function(m, n){return Math.max(m, n.total)}, 0),
-      rightNodes.reduce(function(m, n){return Math.max(m, n.total)}, 0)
-    );
-
-    var nodeGap = 8;
+    var availableH = canvas.height - 40;
     var leftTotal = leftNodes.reduce(function(s, n){return s + n.total}, 0);
     var rightTotal = rightNodes.reduce(function(s, n){return s + n.total}, 0);
+    var nodeGap = 8;
 
-    // Position left nodes
-    var leftPositions = [];
+    // Check left nodes
     var curY = 20;
     for (var i = 0; i < leftNodes.length; i++) {
-      var node = leftNodes[i];
-      var nodeH = Math.max(15, (node.total / leftTotal) * availableH);
-      leftPositions.push({ip: node.ip, y: curY, h: nodeH, total: node.total});
+      var nodeH = Math.max(15, (leftNodes[i].total / leftTotal) * availableH);
+      if (my >= curY && my <= curY + nodeH) {
+        if (!flowsHoverNode || flowsHoverNode.ip !== leftNodes[i].ip || flowsHoverNode.side !== 'left') {
+          flowsHoverNode = {ip: leftNodes[i].ip, side: 'left'};
+          drawSankey();
+        }
+        return;
+      }
       curY += nodeH + nodeGap;
     }
 
-    // Position right nodes
-    var rightPositions = [];
+    // Check right nodes
     curY = 20;
     for (var i = 0; i < rightNodes.length; i++) {
-      var node = rightNodes[i];
-      var nodeH = Math.max(15, (node.total / rightTotal) * availableH);
-      rightPositions.push({ip: node.ip, y: curY, h: nodeH, total: node.total});
+      var nodeH = Math.max(15, (rightNodes[i].total / rightTotal) * availableH);
+      if (my >= curY && my <= curY + nodeH) {
+        if (!flowsHoverNode || flowsHoverNode.ip !== rightNodes[i].ip || flowsHoverNode.side !== 'right') {
+          flowsHoverNode = {ip: rightNodes[i].ip, side: 'right'};
+          drawSankey();
+        }
+        return;
+      }
       curY += nodeH + nodeGap;
     }
 
-    // Draw links
-    var linkData = {};
-    for (var i = 0; i < filteredFlows.length; i++) {
-      var f = filteredFlows[i];
-      var key = f.src_ip + '->' + f.dst_ip;
-      if (!linkData[key]) { linkData[key] = {src: f.src_ip, dst: f.dst_ip, total: 0}; }
-      linkData[key].total += f.events;
+    if (flowsHoverNode) {
+      flowsHoverNode = null;
+      drawSankey();
     }
-
-    var maxLink = 0;
-    for (var key in linkData) {
-      if (linkData[key].total > maxLink) maxLink = linkData[key].total;
-    }
-
-    for (var key in linkData) {
-      var l = linkData[key];
-      var srcPos = null, dstPos = null;
-      for (var i = 0; i < leftPositions.length; i++) {
-        if (leftPositions[i].ip === l.src) { srcPos = leftPositions[i]; break; }
-      }
-      for (var i = 0; i < rightPositions.length; i++) {
-        if (rightPositions[i].ip === l.dst) { dstPos = rightPositions[i]; break; }
-      }
-      if (!srcPos || !dstPos) continue;
-
-      var linkH = Math.max(1, (l.total / maxLink) * 40);
-      var srcCenter = srcPos.y + srcPos.h / 2;
-      var dstCenter = dstPos.y + dstPos.h / 2;
-
-      // Semi-transparent gradient link
-      var alpha = Math.max(0.1, Math.min(0.5, (l.total / maxLink) * 0.8));
-      ctx.beginPath();
-      ctx.strokeStyle = 'rgba(67, 97, 238, ' + alpha + ')';
-      ctx.lineWidth = linkH;
-      ctx.lineCap = 'round';
-      ctx.moveTo(leftX + 10, srcCenter);
-      ctx.quadraticCurveTo(midX, srcCenter, midX, dstCenter);
-      ctx.quadraticCurveTo(midX, dstCenter, rightX - 10, dstCenter);
-      ctx.stroke();
-    }
-
-    // Draw nodes
-    // Left nodes
-    for (var i = 0; i < leftPositions.length; i++) {
-      var np = leftPositions[i];
-      ctx.fillStyle = '#4361ee';
-      ctx.fillRect(leftX - 3, np.y, 6, np.h);
-
-      // Label
-      ctx.fillStyle = textColor;
-      ctx.font = '11px -apple-system, sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(np.ip, leftX - 10, np.y + np.h / 2 + 4);
-      ctx.fillStyle = mutedColor;
-      ctx.font = '10px -apple-system, sans-serif';
-      ctx.fillText(formatNum(np.total), leftX - 10, np.y + np.h / 2 + 15);
-    }
-
-    // Right nodes
-    for (var i = 0; i < rightPositions.length; i++) {
-      var np = rightPositions[i];
-      ctx.fillStyle = '#2d6a4f';
-      ctx.fillRect(rightX - 3, np.y, 6, np.h);
-
-      // Label
-      ctx.fillStyle = textColor;
-      ctx.font = '11px -apple-system, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(np.ip, rightX + 10, np.y + np.h / 2 + 4);
-      ctx.fillStyle = mutedColor;
-      ctx.font = '10px -apple-system, sans-serif';
-      ctx.fillText(formatNum(np.total), rightX + 10, np.y + np.h / 2 + 15);
-    }
-
-    // Legend
-    ctx.fillStyle = mutedColor;
-    ctx.font = '12px -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('← Top Talkers (Source)     Traffic Flows →     Top Talkers (Destination) →', w / 2, h - 15);
-
   });
+
+  canvas.addEventListener('mouseup', function() {
+    flowsDragging = false;
+    canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('mouseleave', function() {
+    flowsDragging = false;
+    flowsHoverNode = null;
+    canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+
+    // Zoom toward mouse position
+    var oldScale = flowsScale;
+    var delta = e.deltaY > 0 ? 0.9 : 1.1;
+    flowsScale = Math.max(0.5, Math.min(3, flowsScale * delta));
+
+    // Adjust offset to zoom toward cursor
+    flowsOffX = mx - (mx - flowsOffX) * (flowsScale / oldScale);
+    flowsOffY = my - (my - flowsOffY) * (flowsScale / oldScale);
+
+    drawSankey();
+  });
+
+  canvas.style.cursor = 'grab';
+}
+
+// Init flows on DOMContentLoaded
+function initAppFlows() {
+  // Do not auto-load, wait for user to click the tab
+  setTimeout(function(){ initFlowsEvents(); }, 500);
 }
 
 // ═══════════════════════════════════════════
@@ -1291,6 +1457,8 @@ function escapeHtml(str) {
 window.addEventListener('DOMContentLoaded', function() {
   loadOverview();
   setInterval(function() { loadOverview(); }, 30000);
+  initAppHeatmap();
+  initAppFlows();
 });
 </script>
 
