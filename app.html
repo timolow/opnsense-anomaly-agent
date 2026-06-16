@@ -571,7 +571,7 @@ function barItem(label, value, pct, color) {
 
 // Heatmap
 function loadHeatmap() {
-  apiFetch('/api/heatmaps').then(function(data) {
+  apiFetch('/api/heatmap').then(function(data) {
     if (!data) {
       document.getElementById('heatmapGrid').innerHTML = '<div class="error-msg">Heatmap data unavailable</div>';
       return;
