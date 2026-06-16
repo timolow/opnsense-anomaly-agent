@@ -312,6 +312,7 @@ tr:hover { background: var(--bg-tertiary); }
       <button class="tab-btn" data-tab="opnsense" onclick="switchTab('opnsense')">🔌 OPNsense</button>
       <button class="tab-btn" data-tab="rules" onclick="switchTab('rules')">🛡️ Rules</button>
       <button class="tab-btn" data-tab="syslogs" onclick="switchTab('syslogs')">📋 System Logs</button>
+      <button class="tab-btn" data-tab="services" onclick="switchTab('services')">🔧 Services</button>
     </div>
   </div>
 </nav>
@@ -458,6 +459,56 @@ tr:hover { background: var(--bg-tertiary); }
       </div>
     </div>
   </div>
+
+  <!-- Services Tab -->
+  <div class="tab-content" id="tab-services">
+    <div class="grid">
+      <div class="card">
+        <div class="card-header">📊 Service Overview</div>
+        <div class="card-body" id="servicesOverview">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🚨 Active Alerts</div>
+        <div class="card-body" id="serviceAlerts">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-header">🔵 DHCP — Lease Management</div>
+        <div class="card-body" id="dhcpStatus">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🔵 Unbound — DNS Resolver</div>
+        <div class="card-body" id="unboundStatus">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🔵 NTP — Time Sync</div>
+        <div class="card-body" id="ntpStatus">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🔵 OpenVPN — Virtual Private Network</div>
+        <div class="card-body" id="openvpnStatus">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🔵 WireGuard — Modern VPN</div>
+        <div class="card-body" id="wireguardStatus">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -530,6 +581,7 @@ function loadTabData(tabId) {
     case 'opnsense': loadOPNsense(); break;
     case 'rules': loadRules(); break;
     case 'syslogs': loadSysLogs(); break;
+    case 'services': loadServices(); break;
   }
 }
 
@@ -1037,6 +1089,173 @@ function loadSysLogs() {
 }
 
 // ═══════════════════════════════════════════
+// Services Tab — DHCP, Unbound, NTP, OpenVPN, WireGuard
+// ═══════════════════════════════════════════
+
+function loadServices() {
+  apiFetch('/api/service-status').then(function(data) {
+    if (!data) return;
+    renderServicesOverview(data);
+    renderServiceAlerts(data);
+    renderDHCPStatus(data);
+    renderUnboundStatus(data);
+    renderNTPStatus(data);
+    renderOpenVPNStatus(data);
+    renderWireGuardStatus(data);
+  });
+}
+
+function renderServicesOverview(data) {
+  var el = document.getElementById('servicesOverview');
+  if (!el || !data.services) { el.innerHTML = '<div class="loading">No data</div>'; return; }
+  
+  var html = '<div style="display:flex;gap:16px;flex-wrap:wrap;">';
+  for (var name in data.services) {
+    var svc = data.services[name];
+    var color = svc.anomaly_count > 0 ? 'var(--warning)' : 'var(--success)';
+    html += '<div style="background:var(--bg-secondary);padding:16px;border-radius:6px;border-left:3px solid ' + color + ';min-width:140px;">';
+    html += '<div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">' + name.toUpperCase() + '</div>';
+    html += '<div style="font-size:20px;font-weight:600;">' + formatNum(svc.total_events) + ' events</div>';
+    html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">';
+    if (svc.last_seen) {
+      html += 'Last: ' + new Date(svc.last_seen).toLocaleTimeString();
+    }
+    html += '</div></div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderServiceAlerts(data) {
+  var el = document.getElementById('serviceAlerts');
+  if (!el) return;
+  
+  var allAlerts = [];
+  if (data.services) {
+    for (var name in data.services) {
+      var svc = data.services[name];
+      if (svc.anomalies && svc.anomalies.length > 0) {
+        for (var i = 0; i < svc.anomalies.length; i++) {
+          allAlerts.push(svc.anomalies[i]);
+        }
+      }
+    }
+  }
+  
+  if (allAlerts.length === 0) {
+    el.innerHTML = '<div style="color:var(--success);text-align:center;padding:20px;">✅ No service anomalies detected</div>';
+    return;
+  }
+  
+  var html = '';
+  for (var i = 0; i < Math.min(allAlerts.length, 10); i++) {
+    var alert = allAlerts[i];
+    var sev = alert.severity || 'warning';
+    var sevColor = sev === 'critical' ? 'var(--danger)' : sev === 'warning' ? 'var(--warning)' : 'var(--success)';
+    html += '<div style="padding:10px 0;border-bottom:1px solid var(--border-color);">';
+    html += '<span style="color:' + sevColor + ';font-weight:600;">[' + sev.toUpperCase() + ']</span> ';
+    html += '<span style="color:var(--text-muted);">' + alert.service + '</span>: ';
+    html += '<span>' + alert.description + '</span>';
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderDHCPStatus(data) {
+  var el = document.getElementById('dhcpStatus');
+  if (!el || !data.services || !data.services.dhcp) { el.innerHTML = '<div class="loading">Waiting for DHCP events...</div>'; return; }
+  
+  var svc = data.services.dhcp;
+  var metrics = svc.metrics || {};
+  var actions = metrics.actions || {};
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">';
+  html += metricBlock('Total Events', formatNum(svc.total_events));
+  html += metricBlock('Leases (24h)', formatNum(metrics.leases_24h || 0));
+  html += metricBlock('Client Requests', formatNum(actions.client_request || 0));
+  html += metricBlock('Lease Granted', formatNum(actions.lease_granted || 0));
+  html += metricBlock('Lease Denied', formatNum(actions.lease_denied || 0));
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderUnboundStatus(data) {
+  var el = document.getElementById('unboundStatus');
+  if (!el || !data.services || !data.services.unbound) { el.innerHTML = '<div class="loading">Waiting for DNS events...</div>'; return; }
+  
+  var svc = data.services.unbound;
+  var metrics = svc.metrics || {};
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">';
+  html += metricBlock('Total Events', formatNum(svc.total_events));
+  html += metricBlock('DNS Queries (24h)', formatNum(metrics.queries_24h || 0));
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderNTPStatus(data) {
+  var el = document.getElementById('ntpStatus');
+  if (!el || !data.services || !data.services.ntp) { el.innerHTML = '<div class="loading">Waiting for NTP events...</div>'; return; }
+  
+  var svc = data.services.ntp;
+  var metrics = svc.metrics || {};
+  var driftSamples = metrics.drift_samples || [];
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">';
+  html += metricBlock('Total Events', formatNum(svc.total_events));
+  html += metricBlock('Sync Attempts', formatNum(metrics.sync_attempts || 0));
+  html += metricBlock('Sync Successes', formatNum(metrics.sync_successes || 0));
+  html += metricBlock('Current Drift', (metrics.current_drift || 0).toFixed(4) + 's');
+  html += metricBlock('Avg Drift', (metrics.avg_drift || 0).toFixed(4) + 's');
+  html += '</div>';
+  
+  // Add drift indicator
+  var currentDrift = metrics.current_drift || 0;
+  var driftColor = 'var(--success)';
+  var driftText = 'Normal';
+  if (currentDrift > 1.0) { driftColor = 'var(--danger)'; driftText = 'Critical'; }
+  else if (currentDrift > 0.5) { driftColor = 'var(--warning)'; driftText = 'Warning'; }
+  else if (currentDrift > 0.05) { driftColor = '#ffc107'; driftText = 'Elevated'; }
+  
+  html += '<div style="margin-top:12px;padding:12px;border-radius:4px;background:' + driftColor + '20;border:1px solid ' + driftColor + ';text-align:center;">';
+  html += '<div style="font-size:14px;font-weight:600;color:' + driftColor + ';">🕐 NTP Sync: ' + driftText + '</div>';
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderOpenVPNStatus(data) {
+  var el = document.getElementById('openvpnStatus');
+  if (!el || !data.services || !data.services.openvpn) { el.innerHTML = '<div class="loading">Waiting for OpenVPN events...</div>'; return; }
+  
+  var svc = data.services.openvpn;
+  var metrics = svc.metrics || {};
+  var actions = metrics.actions || {};
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">';
+  html += metricBlock('Total Events', formatNum(svc.total_events));
+  html += metricBlock('Active Connections', formatNum(metrics.active_connections || 0));
+  html += metricBlock('Client Connects', formatNum(actions.client_connect || 0));
+  html += metricBlock('Auth Success', formatNum(actions.auth_success || 0));
+  html += metricBlock('Auth Failures', formatNum(actions.auth_failure || 0));
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function renderWireGuardStatus(data) {
+  var el = document.getElementById('wireguardStatus');
+  if (!el || !data.services || !data.services.wireguard) { el.innerHTML = '<div class="loading">Waiting for WireGuard events...</div>'; return; }
+  
+  var svc = data.services.wireguard;
+  var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">';
+  html += metricBlock('Total Events', formatNum(svc.total_events));
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function metricBlock(label, value) {
+  return '<div style="background:var(--bg-secondary);padding:12px;border-radius:4px;text-align:center;">'
+    + '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">' + label + '</div>'
+    + '<div style="font-size:18px;font-weight:600;margin-top:4px;">' + value + '</div>'
+    + '</div>';
+}
+
+// ═══════════════════════════════════════════
 // Flows Tab — ntopng-style Sankey with pan/zoom/auto-refresh
 // ═══════════════════════════════════════════
 
@@ -1459,6 +1678,8 @@ window.addEventListener('DOMContentLoaded', function() {
   setInterval(function() { loadOverview(); }, 30000);
   initAppHeatmap();
   initAppFlows();
+  loadServices();
+  setInterval(loadServices, 30000);
 });
 </script>
 
