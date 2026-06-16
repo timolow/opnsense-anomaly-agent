@@ -1085,7 +1085,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        logging.getLogger("http.server").info("%s - %s", self.client_address[0], format % args)
+        pass  # Suppress HTTP request logging to reduce log noise
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
