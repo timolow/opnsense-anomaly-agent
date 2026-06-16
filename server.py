@@ -1075,8 +1075,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        import logging
-        logging.getLogger("http").info("%s - %s", self.client_address[0], format % args)
+        logging.getLogger("http.server").info("%s - %s", self.client_address[0], format % args)
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
