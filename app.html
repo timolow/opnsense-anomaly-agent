@@ -1117,7 +1117,13 @@ async function loadOverview() {
   const health = await api('/api/health');
   const geo = await api('/api/geo');
   
-  if (!stats || !health) return;
+  if (!stats || !health) {
+    // Fallback: API calls failed, show error status instead of stuck "Connecting..."
+    const statusEl = document.getElementById('status-text');
+    statusEl.textContent = 'API Error — check connection';
+    statusEl.style.color = 'var(--text-error)';
+    return;
+  }
   
   const c = stats.counters || {};
   const topCountries = (stats.top_countries || []).map(cc => {
