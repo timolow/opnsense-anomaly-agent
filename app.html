@@ -694,7 +694,7 @@ tr:hover td {
 }
 </style>
 </head>
-<!-- version: $TIMESTAMP$ -->
+<!-- version: v1781572863 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <body>
 
@@ -1051,6 +1051,7 @@ tr:hover td {
 // Global State
 // ═══════════════════════════════════════════════════════════
 const API_BASE = '';
+const CACHE_BUST = '?v=' + Date.now();
 let dashboardData = {};
 let heatmapData = {};
 let ipFlowData = {};
@@ -1103,7 +1104,7 @@ function switchTab(tabId, btn) {
 // ═══════════════════════════════════════════════════════════
 async function api(path) {
   try {
-    const r = await fetch(API_BASE + path);
+    const r = await fetch(API_BASE + path + CACHE_BUST);
     return await r.json();
   } catch (e) {
     console.warn('API error:', path, e);
@@ -1185,7 +1186,7 @@ async function loadOverview() {
   const eventsEl = document.getElementById('recent-events');
   const attackData = {};
   // Parse from state to get attack summaries
-  const state = await fetch(API_BASE + '/api/events').then(r => r.json()).catch(() => []);
+  const state = await fetch(API_BASE + '/api/events' + CACHE_BUST).then(r => r.json()).catch(() => []);
   if (state.length > 0) {
     eventsEl.innerHTML = state.slice(0, 8).map(a => `
       <div class="alert-item ${a.severity === 'CRITICAL' ? 'critical' : a.severity === 'WARNING' ? 'warning' : 'info'}">
@@ -1720,7 +1721,7 @@ async function submitMute() {
   };
   
   try {
-    await fetch(API_BASE + '/api/mutes', {
+    await fetch(API_BASE + '/api/mutes' + CACHE_BUST, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1737,7 +1738,7 @@ async function submitMute() {
 
 async function removeMute(id) {
   try {
-    await fetch(API_BASE + '/api/mutes/' + id, { method: 'DELETE' });
+    await fetch(API_BASE + '/api/mutes/' + id + CACHE_BUST, { method: 'DELETE' });
     loadMutes();
     loadOverview();
   } catch (e) {
@@ -1818,7 +1819,7 @@ setInterval(() => {
 }, 30000);
 
 function loadRules() {
-  fetch('/api/rules')
+  fetch('/api/rules' + CACHE_BUST)
     .then(r => r.json())
     .then(data => {
       document.getElementById('total-rules').textContent = data.total_rules || 0;
@@ -1879,7 +1880,7 @@ window.addEventListener('resize', () => {
 function loadOpnsenseData() {
   console.log('=== OPNsense load starting ===');
   console.log('Fetching /api/opnsense from:', window.location.href);
-  fetch('/api/opnsense')
+  fetch('/api/opnsense' + CACHE_BUST)
     .then(response => {
       console.log('Response status:', response.status);
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
@@ -2054,7 +2055,7 @@ window.switchTab = function(tabId, btn) {
 // System Logs Tab
 // ═══════════════════════════════════════════════════════════
 function loadSystemLogsData() {
-  fetch(`${API_BASE}/api/system_logs`)
+  fetch(`${API_BASE}/api/system_logs${CACHE_BUST}`)
     .then(res => res.json())
     .then(data => renderSystemLogs(data))
     .catch(() => {
@@ -2134,8 +2135,14 @@ function loadDashboardData() {
 
 // Initial load for syslog tab if it's active on page load
 window.addEventListener('DOMContentLoaded', () => {
-  initTheme();
-  loadDashboardData();
+  try {
+    initTheme();
+    loadDashboardData();
+  } catch(e) {
+    console.error('Dashboard boot failed:', e);
+    const statusEl = document.getElementById('status-text');
+    if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.style.color = 'var(--text-error)'; }
+  }
   // Load syslog data if tab is active (unlikely on initial load, but safety net)
   if (document.getElementById('tab-syslog') && document.getElementById('tab-syslog').classList.contains('active')) {
     loadSystemLogsData();
