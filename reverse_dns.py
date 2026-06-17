@@ -20,7 +20,7 @@ class ReverseDNSResolver:
 
     def __init__(
         self,
-        dns_server: str = "192.168.1.1",
+        dns_server: str = "",
         enabled: bool = False,
         cache_ttl: int = 3600,
         redis_url: str = "redis://redis:6379/0",
@@ -44,13 +44,11 @@ class ReverseDNSResolver:
         if static_map_file:
             self._load_static_map(static_map_file)
         else:
-            # Default internal IP map
-            self.static_map = {
-                "192.168.1.1": "opnsense",
-                "192.168.1.19": "hassio",
-                "192.168.1.50": "anomaly-agent",
-            }
-            logger.info("Loaded default static hostname map (%d entries)", len(self.static_map))
+            # No hardcoded static map — users should configure REVERSE_DNS_STATIC_MAP
+            # or use their own DNS server. The default static map ensures zero
+            # assumptions about any particular network layout.
+            self.static_map = {}
+            logger.info("Loaded default static hostname map (empty — configure via REVERSE_DNS_STATIC_MAP or DNS)")
 
         # Redis cache (persistent across restarts)
         self._redis = None
@@ -63,7 +61,8 @@ class ReverseDNSResolver:
 
         # Always initialize resolver (used when lookups happen)
         self._resolver = dns.resolver.Resolver()
-        self._resolver.nameservers = [dns_server]
+        if dns_server:
+            self._resolver.nameservers = [dns_server]
         self._resolver.timeout = 2  # 2 second timeout per query
         self._resolver.lifetime = 4  # 4 second total lifetime
 
