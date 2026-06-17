@@ -103,6 +103,48 @@ CREATE INDEX IF NOT EXISTS idx_baselines_metric ON baselines(metric, time_window
 CREATE UNIQUE INDEX IF NOT EXISTS idx_baselines_metric_window ON baselines(metric, time_window);
 CREATE INDEX IF NOT EXISTS idx_anomalies_src_ip ON anomalies(src_ip) WHERE src_ip IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_anomalies_timestamp ON anomalies(timestamp);
+
+-- Week 1: User feedback table for ML classification feedback
+CREATE TABLE IF NOT EXISTS rule_feedback (
+    id SERIAL PRIMARY KEY,
+    rule_name TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    label TEXT NOT NULL,              -- "correct" or "incorrect"
+    reason TEXT,                      -- optional explanation
+    user_id TEXT,                     -- optional user identifier
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Week 2: Per-rule baseline statistics
+CREATE TABLE IF NOT EXISTS rule_baselines (
+    id SERIAL PRIMARY KEY,
+    rule_name TEXT NOT NULL UNIQUE,
+    avg_port_diversity DOUBLE PRECISION DEFAULT 0,
+    avg_dest_diversity DOUBLE PRECISION DEFAULT 0,
+    avg_volume DOUBLE PRECISION DEFAULT 0,
+    avg_block_ratio DOUBLE PRECISION DEFAULT 0,
+    baseline_goodness DOUBLE PRECISION DEFAULT 0,
+    sample_count INTEGER DEFAULT 0,
+    baseline_updated BOOLEAN DEFAULT FALSE,
+    window_start TIMESTAMPTZ,
+    window_end TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Week 3: Temporal patterns per rule
+CREATE TABLE IF NOT EXISTS rule_temporal_patterns (
+    id SERIAL PRIMARY KEY,
+    rule_name TEXT NOT NULL UNIQUE,
+    hour_distribution JSONB DEFAULT '{}',  -- {hour: percentage}
+    total_samples INTEGER DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for self-learning tables
+CREATE INDEX IF NOT EXISTS idx_rule_feedback_rule_name ON rule_feedback(rule_name);
+CREATE INDEX IF NOT EXISTS idx_rule_feedback_timestamp ON rule_feedback(timestamp);
+CREATE INDEX IF NOT EXISTS idx_rule_feedback_label ON rule_feedback(label);
+CREATE INDEX IF NOT EXISTS idx_rule_temporal_patterns_rule_name ON rule_temporal_patterns(rule_name);
 """
 
 
@@ -571,3 +613,289 @@ class EventDatabase:
                 conn.close()
         except Exception as e:
             logger.warning("Failed to save baselines: %s", e)
+    
+    # ── Week 1: User Feedback Methods ────────────────────────────────────
+    
+    def save_feedback(self, rule_name: str, label: str, reason: str = None, user_id: str = None):
+        """Save user feedback for a rule classification."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO rule_feedback 
+                   (rule_name, timestamp, label, reason, user_id)
+                   VALUES (%s, NOW(), %s, %s, %s)""",
+                (rule_name, label, reason or "", user_id or "")
+            )
+            return True
+        finally:
+            cur.close()
+    
+    def get_feedback_records(self, rule_name: str, limit: int = 50) -> List[Dict]:
+        """Get feedback records for a specific rule."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """SELECT id, rule_name, timestamp, label, reason, user_id
+                   FROM rule_feedback
+                   WHERE rule_name = %s
+                   ORDER BY timestamp DESC
+                   LIMIT %s""",
+                (rule_name, limit)
+            )
+            if cur.description:
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+                return [dict(zip(cols, row)) for row in rows]
+            return []
+        finally:
+            cur.close()
+    
+    def get_feedback_stats(self, rule_name: str) -> Dict[str, Any]:
+        """Get feedback statistics for a rule."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """SELECT COUNT(*) as total,
+                          SUM(CASE WHEN label = 'correct' THEN 1 ELSE 0 END) as correct,
+                          SUM(CASE WHEN label = 'incorrect' THEN 1 ELSE 0 END) as incorrect
+                   FROM rule_feedback
+                   WHERE rule_name = %s""",
+                (rule_name,)
+            )
+            row = cur.fetchone()
+            if row:
+                total = row[0] or 0
+                correct = row[1] or 0
+                incorrect = row[2] or 0
+            else:
+                total = 0
+                correct = 0
+                incorrect = 0
+            
+            agreement_rate = correct / total if total > 0 else 1.0
+            
+            return {
+                'total_records': total,
+                'correct_count': correct,
+                'incorrect_count': incorrect,
+                'agreement_rate': agreement_rate,
+            }
+        finally:
+            cur.close()
+    
+    # ── Week 2: Baseline Methods ────────────────────────────────────────
+    
+    def save_rule_baseline(self, rule_name: str, baseline_data: Dict[str, Any]):
+        """Save baseline statistics for a rule."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO rule_baselines
+                   (rule_name, avg_port_diversity, avg_dest_diversity, avg_volume,
+                    avg_block_ratio, baseline_goodness, sample_count, baseline_updated,
+                    window_start, window_end)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (rule_name)
+                   DO UPDATE SET
+                       avg_port_diversity = EXCLUDED.avg_port_diversity,
+                       avg_dest_diversity = EXCLUDED.avg_dest_diversity,
+                       avg_volume = EXCLUDED.avg_volume,
+                       avg_block_ratio = EXCLUDED.avg_block_ratio,
+                       baseline_goodness = EXCLUDED.baseline_goodness,
+                       sample_count = EXCLUDED.sample_count,
+                       baseline_updated = EXCLUDED.baseline_updated,
+                       window_start = EXCLUDED.window_start,
+                       window_end = EXCLUDED.window_end,
+                       updated_at = NOW()""",
+                (
+                    rule_name,
+                    baseline_data.get('avg_port_diversity', 0),
+                    baseline_data.get('avg_dest_diversity', 0),
+                    baseline_data.get('avg_volume', 0),
+                    baseline_data.get('avg_block_ratio', 0),
+                    baseline_data.get('baseline_goodness', 0),
+                    baseline_data.get('sample_count', 0),
+                    baseline_data.get('baseline_updated', False),
+                    baseline_data.get('window_start'),
+                    baseline_data.get('window_end'),
+                )
+            )
+            return True
+        finally:
+            cur.close()
+    
+    def get_rule_baseline(self, rule_name: str) -> Optional[Dict]:
+        """Get baseline statistics for a rule."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """SELECT rule_name, avg_port_diversity, avg_dest_diversity,
+                          avg_volume, avg_block_ratio, baseline_goodness,
+                          sample_count, baseline_updated, window_start, window_end
+                   FROM rule_baselines
+                   WHERE rule_name = %s""",
+                (rule_name,)
+            )
+            row = cur.fetchone()
+            if row and cur.description:
+                cols = [desc[0] for desc in cur.description]
+                return dict(zip(cols, row))
+            return None
+        finally:
+            cur.close()
+    
+    def update_rule_baselines_from_events(self, rules_data: Dict[str, Dict]):
+        """Update all rule baselines from current events."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            for rule_name, data in rules_data.items():
+                cur.execute(
+                    """INSERT INTO rule_baselines
+                       (rule_name, avg_port_diversity, avg_dest_diversity, avg_volume,
+                        avg_block_ratio, baseline_goodness, sample_count, baseline_updated)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (rule_name)
+                       DO UPDATE SET
+                           avg_port_diversity = EXCLUDED.avg_port_diversity,
+                           avg_dest_diversity = EXCLUDED.avg_dest_diversity,
+                           avg_volume = EXCLUDED.avg_volume,
+                           avg_block_ratio = EXCLUDED.avg_block_ratio,
+                           baseline_goodness = EXCLUDED.baseline_goodness,
+                           sample_count = EXCLUDED.sample_count,
+                           baseline_updated = EXCLUDED.baseline_updated,
+                           updated_at = NOW()""",
+                    (
+                        rule_name,
+                        data.get('avg_port_diversity', 0),
+                        data.get('avg_dest_diversity', 0),
+                        data.get('avg_volume', 0),
+                        data.get('avg_block_ratio', 0),
+                        data.get('baseline_goodness', 0),
+                        data.get('sample_count', 0),
+                        data.get('baseline_updated', False),
+                    )
+                )
+            conn.commit()
+            logger.info(f"Updated baselines for {len(rules_data)} rules")
+        except Exception as e:
+            conn.rollback()
+            logger.warning(f"Failed to update rule baselines: {e}")
+        finally:
+            cur.close()
+            conn.close()
+    
+    # ── Week 3: Temporal Pattern Methods ────────────────────────────────
+    
+    def save_temporal_pattern(self, rule_name: str, hour_distribution: Dict[int, float], total_samples: int):
+        """Save temporal pattern for a rule."""
+        cur = self._new_cursor()
+        try:
+            import json
+            cur.execute(
+                """INSERT INTO rule_temporal_patterns
+                   (rule_name, hour_distribution, total_samples)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (rule_name)
+                   DO UPDATE SET
+                       hour_distribution = EXCLUDED.hour_distribution,
+                       total_samples = EXCLUDED.total_samples,
+                       updated_at = NOW()""",
+                (rule_name, json.dumps(hour_distribution), total_samples)
+            )
+            return True
+        finally:
+            cur.close()
+    
+    def get_temporal_pattern(self, rule_name: str) -> Optional[Dict]:
+        """Get temporal pattern for a rule."""
+        cur = self._new_cursor()
+        try:
+            import json
+            cur.execute(
+                """SELECT rule_name, hour_distribution, total_samples, updated_at
+                   FROM rule_temporal_patterns
+                   WHERE rule_name = %s""",
+                (rule_name,)
+            )
+            row = cur.fetchone()
+            if row and cur.description:
+                cols = [desc[0] for desc in cur.description]
+                result = dict(zip(cols, row))
+                # Parse JSONB column
+                result['hour_distribution'] = json.loads(result.get('hour_distribution', '{}') or '{}')
+                return result
+            return None
+        finally:
+            cur.close()
+    
+    def update_temporal_patterns_from_events(self, rules_data: Dict[str, Dict]):
+        """Update all temporal patterns from current events."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            import json
+            for rule_name, data in rules_data.items():
+                cur.execute(
+                    """INSERT INTO rule_temporal_patterns
+                       (rule_name, hour_distribution, total_samples)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (rule_name)
+                       DO UPDATE SET
+                           hour_distribution = EXCLUDED.hour_distribution,
+                           total_samples = EXCLUDED.total_samples,
+                           updated_at = NOW()""",
+                    (rule_name, json.dumps(data.get('hour_distribution', {})), data.get('total_samples', 0))
+                )
+            conn.commit()
+            logger.info(f"Updated temporal patterns for {len(rules_data)} rules")
+        except Exception as e:
+            conn.rollback()
+            logger.warning(f"Failed to update temporal patterns: {e}")
+        finally:
+            cur.close()
+            conn.close()
+    
+    # ── Utility Methods ─────────────────────────────────────────────────
+    
+    def get_ml_summary_stats(self) -> Dict[str, Any]:
+        """Get summary statistics for ML self-learning."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            # Feedback stats
+            cur.execute(
+                """SELECT COUNT(*) as total,
+                          SUM(CASE WHEN label = 'correct' THEN 1 ELSE 0 END) as correct
+                   FROM rule_feedback"""
+            )
+            row = cur.fetchone()
+            if row:
+                feedback_total = row[0] or 0
+                feedback_correct = row[1] or 0
+            else:
+                feedback_total = 0
+                feedback_correct = 0
+            feedback_agreement = feedback_correct / feedback_total if feedback_total > 0 else 1.0
+            
+            # Baselines count
+            cur.execute("SELECT COUNT(*) FROM rule_baselines WHERE baseline_updated = TRUE")
+            row = cur.fetchone()
+            baselines_updated = row[0] or 0 if row else 0
+            
+            # Temporal patterns count
+            cur.execute("SELECT COUNT(*) FROM rule_temporal_patterns WHERE total_samples > 0")
+            row = cur.fetchone()
+            temporal_patterns = row[0] or 0 if row else 0
+            
+            return {
+                'feedback_total': feedback_total,
+                'feedback_correct': feedback_correct,
+                'feedback_agreement': feedback_agreement,
+                'baselines_updated': baselines_updated,
+                'temporal_patterns': temporal_patterns,
+            }
+        finally:
+            cur.close()
+            conn.close()
+

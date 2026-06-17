@@ -1028,6 +1028,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "events_processed": counters.get("event_count", 0),
                 "anomalies_detected": counters.get("anomaly_count", 0),
             })
+        elif path == "/api/feedback" and self.command == "POST":
+            # Save user feedback (Week 1)
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 0:
+                    body = json.loads(self.rfile.read(content_length))
+                    rule_name = body.get('rule_name', '')
+                    label = body.get('label', '')
+                    reason = body.get('reason', '')
+                    user_id = body.get('user_id', '')
+                else:
+                    rule_name = ''
+                    label = ''
+                    reason = ''
+                    user_id = ''
+                
+                if not rule_name or not label:
+                    self._send_json({'error': 'rule_name and label required'}, 400)
+                else:
+                    result = api_save_feedback(rule_name, label, reason, user_id)
+                    self._send_json(result)
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+        elif path == "/api/ml-summary":
+            # ML summary statistics (Weeks 1-5)
+            try:
+                data = api_ml_summary()
+                self._send_json(data)
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+        elif path == "/api/active-learning-queue":
+            # Active learning queue (Week 4)
+            try:
+                data = api_active_learning_queue()
+                self._send_json(data)
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
         elif path == "/api/rules-classified":
             # Check Redis cache first
             cache_key = "rules-classified"
@@ -1625,6 +1662,73 @@ def query_rules_classified():
             'summary': {'total_rules': 0},
             'classified_rules': [],
         }
+
+
+# ── Self-Learning API Endpoints ──────────────────────────────────────────
+
+def api_save_feedback(rule_name, label, reason=None, user_id=None):
+    """Save user feedback for a rule classification (Week 1)."""
+    try:
+        db = get_db()
+        if db:
+            db.save_feedback(rule_name, label, reason, user_id)
+        return {'success': True}
+    except Exception as e:
+        logger.error("save_feedback failed: %s", e)
+        return {'error': str(e)}
+
+
+def api_ml_summary():
+    """Get ML summary statistics (Weeks 1-5)."""
+    try:
+        db = get_db()
+        if db:
+            ml_stats = db.get_ml_summary_stats()
+        else:
+            ml_stats = {'feedback_total': 0, 'feedback_correct': 0, 'feedback_agreement': 1.0, 'baselines_updated': 0, 'temporal_patterns': 0}
+        
+        # Get rules classification summary
+        summary = query_rules_classified()
+        
+        return {
+            'ml_stats': ml_stats,
+            'classification_summary': summary.get('summary', {}),
+        }
+    except Exception as e:
+        logger.error("ml_summary failed: %s", e)
+        return {'error': str(e)}
+
+
+def api_active_learning_queue():
+    """Get active learning queue (Week 4)."""
+    try:
+        import sys
+        sys.path.insert(0, '/app')
+        from ml_learning import SelfLearningClassifier
+        
+        # Load classifier state
+        classifier = SelfLearningClassifier(get_db())
+        if not classifier.load_state():
+            return {'queue': [], 'message': 'No classification state available'}
+        
+        # Get active learning queue
+        queue = classifier.get_active_learning_queue()
+        
+        return {
+            'queue': [
+                {
+                    'rule_name': item.rule_name,
+                    'classification': item.classification,
+                    'confidence': item.confidence,
+                    'reasons': item.reasons,
+                }
+                for item in queue
+            ],
+            'count': len(queue),
+        }
+    except Exception as e:
+        logger.error("active_learning_queue failed: %s", e)
+        return {'error': str(e), 'queue': []}
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):

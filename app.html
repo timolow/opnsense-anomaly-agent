@@ -528,11 +528,18 @@ tr:hover { background: var(--bg-tertiary); }
           Traffic with no rule falls into <strong style="color:#8b5cf6">Default Deny</strong>.
         </p>
         <div class="grid" id="rulesMLSummary"></div>
+        <div id="mlSelfLearningStats" style="margin-top:20px"></div>
       </div>
     </div>
     <div class="card">
       <div class="card-header">🔍 Understanding Classifications</div>
       <div class="card-body" id="rulesMLExplanation">
+        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">📋 Active Learning Queue — Rules Needing Review</div>
+      <div class="card-body" id="activeLearningQueue">
         <div class="loading"><div class="loading-spinner"></div>Loading...</div>
       </div>
     </div>
@@ -2157,6 +2164,113 @@ function loadRulesML() {
       defaultDenyHTML += '</div></div>';
     }
     document.getElementById('rulesMLOther').innerHTML = defaultDenyHTML;
+    
+    // Load self-learning stats
+    loadMLSelfLearningStats();
+    
+    // Load active learning queue
+    loadActiveLearningQueue();
+  });
+}
+
+function loadMLSelfLearningStats() {
+  apiFetch('/api/ml-summary').then(function(data) {
+    if (!data) return;
+    
+    var mlStats = data.ml_stats || {};
+    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:16px">';
+    html += '<div class="card"><div class="card-body" style="padding:16px">';
+    html += '<div style="font-size:12px;color:var(--text-muted)">📊 Feedback Stats</div>';
+    html += '<div style="font-size:24px;font-weight:600;margin:8px 0">' + (mlStats.feedback_total || 0) + '</div>';
+    html += '<div style="font-size:11px;color:var(--text-secondary)">Total Feedback Records</div>';
+    if (mlStats.feedback_agreement > 0) {
+      html += '<div style="font-size:11px;color:' + (mlStats.feedback_agreement > 0.7 ? '#22c55e' : '#f59e0b') + '">Agreement: ' + (mlStats.feedback_agreement * 100).toFixed(0) + '%</div>';
+    }
+    html += '</div></div>';
+    
+    html += '<div class="card"><div class="card-body" style="padding:16px">';
+    html += '<div style="font-size:12px;color:var(--text-muted)">📈 Baselines Updated</div>';
+    html += '<div style="font-size:24px;font-weight:600;margin:8px 0">' + (mlStats.baselines_updated || 0) + '</div>';
+    html += '<div style="font-size:11px;color:var(--text-secondary)">Rules with Learned Baselines</div>';
+    html += '</div></div>';
+    
+    html += '<div class="card"><div class="card-body" style="padding:16px">';
+    html += '<div style="font-size:12px;color:var(--text-muted)">⏰ Temporal Patterns</div>';
+    html += '<div style="font-size:24px;font-weight:600;margin:8px 0">' + (mlStats.temporal_patterns || 0) + '</div>';
+    html += '<div style="font-size:11px;color:var(--text-secondary)">Rules with Time Patterns</div>';
+    html += '</div></div>';
+    
+    html += '</div>';
+    document.getElementById('mlSelfLearningStats').innerHTML = html;
+  });
+}
+
+function loadActiveLearningQueue() {
+  apiFetch('/api/active-learning-queue').then(function(data) {
+    if (!data || !data.queue || data.queue.length === 0) {
+      document.getElementById('activeLearningQueue').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">✅ No rules currently in the active learning queue. All classifications have high confidence.</div>';
+      return;
+    }
+    
+    var html = '<div style="overflow-x:auto">';
+    html += '<table class="rules-table">';
+    html += '<thead><tr><th>Rule Name</th><th>Classification</th><th>Confidence</th><th>Reasons</th><th>Actions</th></tr></thead><tbody>';
+    
+    data.queue.forEach(function(item) {
+      var confPercent = (item.confidence * 100).toFixed(0) + '%';
+      var confClass = item.confidence < 0.4 ? 'badge-red' : item.confidence < 0.6 ? 'badge-orange' : 'badge-green';
+      var reasonsHTML = item.reasons.map(function(r) { return '<div style="font-size:11px;margin:2px 0">• ' + r + '</div>'; }).join('');
+      
+      html += '<tr>'
+        + '<td style="font-family:monospace;font-size:11px">' + escapeHTML(item.rule_name) + '</td>'
+        + '<td><span class="badge-' + item.classification.toLowerCase() + '">' + item.classification + '</span></td>'
+        + '<td><span class="confidence-' + confClass + '">' + confPercent + '</span></td>'
+        + '<td>' + reasonsHTML + '</td>'
+        + '<td style="padding:8px 12px">'
+        + '<button onclick="provideFeedback(\'' + escapeHTML(item.rule_name) + '\', true, this)" style="padding:4px 8px;border:1px solid var(--success);border-radius:4px;background:var(--success);color:white;cursor:pointer;font-size:11px;margin-right:4px">✓ Correct</button>'
+        + '<button onclick="provideFeedback(\'' + escapeHTML(item.rule_name) + '\', false, this)" style="padding:4px 8px;border:1px solid var(--danger);border-radius:4px;background:var(--danger);color:white;cursor:pointer;font-size:11px">✗ Incorrect</button>'
+        + '</td>'
+        + '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    html += '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">💡 Review uncertain rules and provide feedback to improve classification accuracy</div>';
+    html += '</div>';
+    
+    document.getElementById('activeLearningQueue').innerHTML = html;
+  });
+}
+
+function provideFeedback(ruleName, isCorrect, btn) {
+  var label = isCorrect ? 'correct' : 'incorrect';
+  var reason = isCorrect ? 'User confirmed classification is correct' : 'User marked classification as incorrect';
+  
+  fetch(API_BASE + '/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      rule_name: ruleName,
+      label: label,
+      reason: reason,
+      user_id: 'web_ui'
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.success) {
+      btn.textContent = '✓ Saved';
+      btn.disabled = true;
+      btn.style.background = '#22c55e';
+      btn.style.borderColor = '#22c55e';
+      alert('Feedback saved! This will improve future classifications.');
+      // Refresh the queue
+      loadActiveLearningQueue();
+    } else {
+      alert('Error saving feedback: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(function(e) {
+    alert('Error saving feedback: ' + e.message);
   });
 }
 
