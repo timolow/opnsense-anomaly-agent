@@ -8,6 +8,7 @@ to the specified DNS server.
 
 import time
 import logging
+import ipaddress
 from typing import Optional, Dict
 
 import dns.resolver
@@ -173,6 +174,13 @@ class ReverseDNSResolver:
         DNS server instead of relying on the system resolver.
         """
         if not self.enabled or not ip:
+            return None
+
+        # Validate IP format before attempting resolution
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            logger.debug("Skipping DNS lookup for non-IP value: %s", ip)
             return None
 
         # 1. Check static hostname map (internal IPs)
