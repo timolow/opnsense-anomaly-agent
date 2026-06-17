@@ -444,7 +444,12 @@ tr:hover { background: var(--bg-tertiary); }
   <!-- Rules Tab -->
   <div class="tab-content" id="tab-rules">
     <div class="card">
-      <div class="card-header">Firewall Rules</div>
+      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Firewall Rules</span>
+        <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+          🔄 Refresh Rules
+        </button>
+      </div>
       <div class="card-body">
         <div class="table-wrap" id="rulesTable">
           <div class="loading"><div class="loading-spinner"></div>Loading...</div>
@@ -518,7 +523,12 @@ tr:hover { background: var(--bg-tertiary); }
   <!-- Rules ML Tab -->
   <div class="tab-content" id="tab-rules-classified">
     <div class="card">
-      <div class="card-header">🤖 ML Firewall Rule Classification Engine</div>
+      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>🤖 ML Firewall Rule Classification Engine</span>
+        <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+          🔄 Refresh ML Classification
+        </button>
+      </div>
       <div class="card-body">
         <p style="color:var(--text-muted);margin-bottom:16px">
           The ML engine analyzes traffic patterns to classify each firewall rule into one of 3 categories:
