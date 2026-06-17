@@ -304,8 +304,8 @@ tr:hover { background: var(--bg-tertiary); }
     <div class="nav-inner" id="navTabs">
       <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 Overview</button>
       <button class="tab-btn" data-tab="heatmap" onclick="switchTab('heatmap')">🔥 Heatmap</button>
-      <button class="tab-btn" data-tab="flows" onclick="switchTab('flows')">🌐 Flows</button>
-      <button class="tab-btn" data-tab="ipflow" onclick="switchTab('ipflow')">🌐 IP Flow</button>
+      <button class="tab-btn" data-tab="flows" onclick="switchTab('flows')">🔄 Flows</button>
+      <button class="tab-btn" data-tab="ipflow" onclick="switchTab('ipflow')">🔗 IP Flow</button>
       <button class="tab-btn" data-tab="alerts" onclick="switchTab('alerts')">🚨 Alerts</button>
       <button class="tab-btn" data-tab="mutes" onclick="switchTab('mutes')">🔇 Mutes</button>
       <button class="tab-btn" data-tab="geo" onclick="switchTab('geo')">🌍 Geo</button>
@@ -367,6 +367,10 @@ tr:hover { background: var(--bg-tertiary); }
           Loading flows...
         </div>
         <canvas id="flowsSankey" width="1200" height="600" style="display:none;width:100%;border-radius:4px;background:var(--bg-primary)"></canvas>
+        <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:var(--text-muted)">
+          <span>← Top Talkers (Source) →    Traffic Flows ←    Top Talkers (Destination) → &nbsp;|&nbsp; Auto-refresh: 30s</span>
+          <span id="flowsControls"></span>
+        </div>
         <div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap" id="flowsSummary"></div>
       </div>
     </div>
@@ -524,6 +528,12 @@ tr:hover { background: var(--bg-tertiary); }
           Traffic with no rule falls into <strong style="color:#8b5cf6">Default Deny</strong>.
         </p>
         <div class="grid" id="rulesMLSummary"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">🔍 Understanding Classifications</div>
+      <div class="card-body" id="rulesMLExplanation">
+        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
       </div>
     </div>
     <div class="card">
@@ -1666,24 +1676,12 @@ function drawSankey() {
   }
 
   ctx.restore();
-
-  // Legend and controls
-  ctx.fillStyle = mutedColor;
-  ctx.font = '11px -apple-system, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('← Top Talkers (Source) →    Traffic Flows ←    Top Talkers (Destination) →', 10, canvas.height - 8);
-
-  // Zoom controls
-  ctx.fillStyle = isDark ? '#f0f6fc' : '#212529';
-  ctx.font = '11px -apple-system, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('Zoom: ' + Math.round(flowsScale * 100) + '% | Scroll to zoom, drag to pan, hover to highlight', canvas.width - 10, canvas.height - 8);
   
-  // Refresh indicator
-  ctx.fillStyle = mutedColor;
-  ctx.font = '10px -apple-system, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('Auto-refresh: 30s', 10, canvas.height - 8);
+  // Update controls text in HTML element (outside canvas to avoid overlap)
+  var controlsEl = document.getElementById('flowsControls');
+  if (controlsEl) {
+    controlsEl.textContent = 'Zoom: ' + Math.round(flowsScale * 100) + '% | Scroll to zoom, drag to pan | Auto-refresh: 30s';
+  }
 }
 
 function initFlowsEvents() {
@@ -2005,12 +2003,12 @@ function buildRulesTable(rules, color, header) {
       + '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>'
       + '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>'
       + '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>'
-      + '<td style="color:var(--text-muted);font-size:0.85em">' + (description || '(no description)') + '</td>'
+      + '<td style="color:var(--text-muted);font-size:0.85em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHTML(description || '') + '">' + (description || '(none)') + '</td>'
       + '<td style="padding:8px 12px"><button onclick="event.stopPropagation();openRuleDrillDown(this.closest(\'tr\').__ruleData, this.closest(\'tr\').parentElement)" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>'
       + '</tr>';
   }
   
-  var html = '<table class="rules-table"><thead><tr><th>Rule Name</th><th>Classification</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan Score</th><th>Confidence</th><th>Goodness</th><th>Description</th><th style="width:100px">Action</th></tr></thead><tbody>';
+  var html = '<table class="rules-table"><thead><tr><th>Rule Name</th><th>Class</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan</th><th>Conf</th><th>Goodness</th><th style="max-width:120px">Desc</th><th style="width:90px">Action</th></tr></thead><tbody>';
   
   rules.forEach(function(r) {
     var row = makeRow(r);
@@ -2030,7 +2028,7 @@ function buildRulesTable2(rules, color, header) {
     return '<div style="color:var(--text-muted);padding:20px;text-align:center">' + header + '</div>';
   }
   
-  var html = '<table class="rules-table"><thead><tr><th>Rule Name</th><th>Classification</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan Score</th><th>Confidence</th><th>Goodness</th><th>Description</th><th style="width:100px">Action</th></tr></thead><tbody>';
+  var html = '<table class="rules-table"><thead><tr><th>Rule Name</th><th>Class</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan</th><th>Conf</th><th>Goodness</th><th style="max-width:120px">Desc</th><th style="width:90px">Action</th></tr></thead><tbody>';
   
   rules.forEach(function(r) {
     var scanScore = ((r.port_scan_score || 0) + (r.dest_scan_score || 0)) / 2;
@@ -2052,7 +2050,7 @@ function buildRulesTable2(rules, color, header) {
       + '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>'
       + '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>'
       + '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>'
-      + '<td style="color:var(--text-muted);font-size:0.85em">' + (description || '(no description)') + '</td>'
+      + '<td style="color:var(--text-muted);font-size:0.85em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHTML(description || '') + '">' + (description || '(none)') + '</td>'
       + '<td style="padding:8px 12px"><button onclick="event.stopPropagation();var idx=' + rules.indexOf(r) + ';openRuleDrillDown(rules[idx], this.closest(\'tr\').parentElement)" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>'
       + '</tr>';
   });
@@ -2098,11 +2096,9 @@ function loadRulesML() {
 
     document.getElementById('rulesMLSummary').innerHTML = summaryHTML;
 
-    // Explanation section for SUSPICIOUS
-    var suspiciousExplainHTML = ''
-      + '<div class="card"><div class="card-body" style="padding:20px">'
-      + '<h4 style="margin:0 0 12px 0;font-size:15px">🔍 Understanding Classifications</h4>'
-      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px">'
+    // Classification explanation cards
+    var explanationHTML = ''
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">'
       // ABUSIVE
       + '<div style="border-left:3px solid #ef4444;padding-left:12px">'
       + '<div style="font-weight:600;color:#ef4444;margin-bottom:4px">⚠️ ABUSIVE Rules</div>'
@@ -2123,20 +2119,25 @@ function loadRulesML() {
       + '<div style="font-weight:600;color:#22c55e;margin-bottom:4px">✅ GOOD Rules</div>'
       + '<div style="font-size:12px;color:var(--text-secondary)">Normal, legitimate traffic patterns. Low scan scores, normal volume, high pass ratio. These are well-functioning firewall rules allowing appropriate traffic.</div>'
       + '</div>'
-      + '</div></div></div>';
+      + '</div>';
     
-    document.getElementById('rulesMLOther').innerHTML = suspiciousExplainHTML;
+    document.getElementById('rulesMLExplanation').innerHTML = explanationHTML;
+
+    // Abusive rules table
     document.getElementById('rulesMLABUSIVE').innerHTML = buildRulesTable2(
       rules.filter(function(r) { return r.classification === 'ABUSIVE'; }),
       'abusive',
       'No abusive rules detected in the sample window.'
     );
+
+    // Good rules table
     document.getElementById('rulesMLGOOD').innerHTML = buildRulesTable2(
       rules.filter(function(r) { return r.classification === 'GOOD'; }),
       'good',
       'No good rules detected in the sample window.'
     );
     
+    // Default deny + Suspicious/Uncertain rules
     var otherRules = rules.filter(function(r) {
       return r.classification === 'SUSPICIOUS' || r.classification === 'UNCERTAIN';
     });
