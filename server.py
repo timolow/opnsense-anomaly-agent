@@ -20,6 +20,36 @@ except ImportError:
     HAS_PSYCOPG = False
     print("WARNING: psycopg2 not installed - falling back to state file")
 
+try:
+    import redis as redis_lib
+    HAS_REDIS = True
+except ImportError:
+    HAS_REDIS = False
+    print("WARNING: redis not installed - caching disabled")
+    redis_lib = None  # type: ignore
+
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+_CACHE_TTL = 60  # seconds
+
+# Global Redis connection pool
+_redis_pool = None
+
+def get_redis():
+    """Get Redis connection (singleton)."""
+    global _redis_pool
+    if not HAS_REDIS or _redis_pool:
+        return _redis_pool
+    try:
+        if redis_lib is None:
+            return None
+        _redis_pool = redis_lib.from_url(REDIS_URL, socket_timeout=2, decode_responses=True)
+        _redis_pool.ping()
+        logger.info("Redis cache connected: %s", REDIS_URL)
+        return _redis_pool
+    except Exception as e:
+        logger.warning("Redis connection failed, caching disabled: %s", e)
+        return None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "agent_data", "state.json")
 MUTES_PATH = os.path.join(BASE_DIR, "agent_data", "mutes.json")
@@ -998,7 +1028,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "anomalies_detected": counters.get("anomaly_count", 0),
             })
         elif path == "/api/rules-classified":
-            self._send_json(query_rules_classified())
+            # Check Redis cache first
+            cache_key = "rules-classified"
+            redis_client = get_redis()
+            if redis_client:
+                cached = redis_client.get(cache_key)
+                if cached:
+                    self._send_json(json.loads(cached))
+                    return
+            
+            # Query and cache
+            result = query_rules_classified()
+            
+            # Store in Redis cache
+            if redis_client:
+                try:
+                    redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                except Exception:
+                    pass  # Cache miss on write is fine
+            
+            self._send_json(result)
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
             # Only counts firewall events (action IN ('PASS','BLOCK'))

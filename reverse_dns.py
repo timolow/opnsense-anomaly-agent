@@ -1,8 +1,9 @@
 """
 Reverse DNS lookup for OPNsense anomaly detection agent.
 
-Provides IP-to-hostname resolution with caching and configurable DNS server.
-Uses dnspython for direct queries to the specified DNS server.
+Provides IP-to-hostname resolution with persistent Redis caching
+and configurable DNS server. Uses dnspython for direct queries
+to the specified DNS server.
 """
 
 import time
@@ -22,44 +23,111 @@ class ReverseDNSResolver:
         dns_server: str = "192.168.1.1",
         enabled: bool = False,
         cache_ttl: int = 3600,
+        redis_url: str = "redis://redis:6379/0",
     ):
         """
         Args:
             dns_server: DNS server IP address (e.g. "192.168.1.1")
             enabled: Whether reverse DNS resolution is active
             cache_ttl: Cache TTL in seconds (default 1 hour)
+            redis_url: Redis connection URL for persistent caching
         """
         self.dns_server = dns_server
         self.enabled = enabled
         self.cache_ttl = cache_ttl
-        self._cache: Dict[str, tuple[str, float]] = {}
+        self.redis_url = redis_url
+
+        # Redis cache (persistent across restarts)
+        self._redis = None
+        self._redis_available = False
+        self._cache: Dict[str, tuple] = {}  # In-memory fallback
         self._resolve_count = 0
         self._miss_count = 0
         self._error_count = 0
+        self._redis_hits = 0
 
-        # Build a nameserver list that dnspython can use
-        # We create a Resolver instance with our custom nameserver
+        # Always initialize resolver (used when lookups happen)
         self._resolver = dns.resolver.Resolver()
         self._resolver.nameservers = [dns_server]
         self._resolver.timeout = 2  # 2 second timeout per query
         self._resolver.lifetime = 4  # 4 second total lifetime
 
-        if self.enabled:
-            logger.info(
-                "Reverse DNS resolver enabled (server=%s, ttl=%ds)",
-                dns_server, cache_ttl,
-            )
+        # Try to connect to Redis
+        if enabled:
+            self._init_redis()
         else:
             logger.info(
                 "Reverse DNS resolver disabled "
                 "(set REVERSE_DNS_ENABLED=true to enable)"
             )
 
+    def _init_redis(self):
+        """Initialize Redis connection for caching."""
+        try:
+            import redis
+
+            self._redis = redis.from_url(
+                self.redis_url,
+                socket_timeout=2,
+                socket_connect_timeout=2,
+                decode_responses=True,
+            )
+            # Test connection
+            self._redis.ping()
+            self._redis_available = True
+            logger.info(
+                "Redis cache connected (%s, ttl=%ds)",
+                self.redis_url, self.cache_ttl,
+            )
+        except Exception as e:
+            logger.warning(
+                "Redis connection failed (%s), using in-memory cache: %s",
+                self.redis_url, e,
+            )
+            self._redis_available = False
+
+    def _get_from_redis(self, ip: str) -> Optional[str]:
+        """Get hostname from Redis cache."""
+        if not self._redis_available or not self._redis:
+            return None
+        try:
+            hostname = self._redis.get(f"dns:{ip}")
+            if hostname:
+                self._redis_hits += 1
+                return hostname
+        except Exception as e:
+            logger.debug("Redis GET failed for %s: %s", ip, e)
+        return None
+
+    def _set_redis(self, ip: str, hostname: str):
+        """Store hostname in Redis cache."""
+        if not self._redis_available or not self._redis:
+            return
+        try:
+            self._redis.setex(f"dns:{ip}", self.cache_ttl, hostname)
+        except Exception as e:
+            logger.debug("Redis SET failed for %s: %s", ip, e)
+
+    def _get_from_memory(self, ip: str) -> Optional[str]:
+        """Get hostname from in-memory cache (fallback)."""
+        if ip in self._cache:
+            hostname, cached_at = self._cache[ip]
+            if time.time() - float(cached_at) < self.cache_ttl:
+                return hostname
+            else:
+                del self._cache[ip]
+        return None
+
+    def _set_memory(self, ip: str, hostname: str):
+        """Store hostname in in-memory cache."""
+        self._cache[ip] = (hostname, time.time())
+
     def lookup(self, ip: str) -> Optional[str]:
         """Resolve an IP address to hostname.
 
         Returns the hostname string if found, None if not available or
-        resolution fails. Uses cache to avoid repeated lookups.
+        resolution fails. Uses Redis cache for persistent caching,
+        with in-memory fallback.
 
         Uses dnspython to send PTR queries directly to the configured
         DNS server instead of relying on the system resolver.
@@ -67,18 +135,18 @@ class ReverseDNSResolver:
         if not self.enabled or not ip:
             return None
 
-        # Check cache
-        if ip in self._cache:
-            hostname, cached_at = self._cache[ip]
-            if time.time() - float(cached_at) < self.cache_ttl:
-                return hostname
-            else:
-                del self._cache[ip]
+        # Check Redis cache first (persistent)
+        hostname = self._get_from_redis(ip)
+        if hostname:
+            return hostname
+
+        # Check in-memory cache (fallback)
+        hostname = self._get_from_memory(ip)
+        if hostname:
+            return hostname
 
         # Attempt resolution via dnspython
         try:
-            # Build the reverse DNS query name for the IP
-            # e.g. 1.168.192.in-addr.arpa for 192.168.1.1
             import ipaddress
 
             addr = ipaddress.ip_address(ip)
@@ -91,7 +159,9 @@ class ReverseDNSResolver:
             if answers:
                 # Return the first answer, strip trailing dot
                 hostname = str(answers[0].target).rstrip(".")
-                self._cache[ip] = (hostname, time.time())
+                # Store in both Redis and memory
+                self._set_redis(ip, hostname)
+                self._set_memory(ip, hostname)
                 self._resolve_count += 1
                 logger.debug("Resolved %s -> %s via %s", ip, hostname, self.dns_server)
                 return hostname
@@ -138,6 +208,7 @@ class ReverseDNSResolver:
             "enabled": self.enabled,
             "dns_server": self.dns_server,
             "cache_size": len(self._cache),
+            "redis_hits": self._redis_hits,
             "resolve_count": self._resolve_count,
             "miss_count": self._miss_count,
             "error_count": self._error_count,

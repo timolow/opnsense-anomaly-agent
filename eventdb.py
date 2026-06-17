@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS events (
     timestamp TIMESTAMPTZ NOT NULL,
     src_ip TEXT,
     dst_ip TEXT,
+    src_hostname TEXT,
+    dst_hostname TEXT,
     src_port INTEGER,
     dst_port INTEGER,
     proto TEXT,
@@ -143,6 +145,32 @@ class EventDatabase:
         self._initialized = True
         logger.info("Database tables ensured")
     
+    def ensure_hostnames_migration(self):
+        """Add src_hostname/dst_hostname columns if they don't exist (migration)."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            # Check if columns exist
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'events' AND column_name IN ('src_hostname', 'dst_hostname')
+            """)
+            existing = {row[0] for row in cur.fetchall()}
+            
+            added = []
+            for col in ('src_hostname', 'dst_hostname'):
+                if col not in existing:
+                    cur.execute(f"ALTER TABLE events ADD COLUMN {col} TEXT")
+                    added.append(col)
+                    logger.info("Added column: %s to events table", col)
+            
+            if added:
+                logger.info("Migration complete: added columns %s", ", ".join(added))
+            else:
+                logger.debug("Hostname columns already present in events table")
+        finally:
+            cur.close()
+    
     def ensure_indexes(self):
         """Ensure database indexes exist.
         
@@ -169,18 +197,21 @@ class EventDatabase:
         try:
             cur.execute(
                 """INSERT INTO events
-                   (timestamp, src_ip, dst_ip, src_port, dst_port,
-                    proto, action, interface, direction, version,
-                    ip_ttl, ip_total_length, tcp_flags, tcp_seq,
-                    tcp_ack, tcp_window, tcp_options,
+                   (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
+                    src_port, dst_port, proto, action, interface,
+                    direction, version, ip_ttl, ip_total_length, tcp_flags,
+                    tcp_seq, tcp_ack, tcp_window, tcp_options,
                     udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s, %s)
                    RETURNING id""",
                 (
                     event_data.get('timestamp'),
                     event_data.get('src_ip'),
                     event_data.get('dst_ip'),
+                    event_data.get('src_hostname'),
+                    event_data.get('dst_hostname'),
                     event_data.get('sport'),
                     event_data.get('dport'),
                     event_data.get('proto'),
@@ -221,10 +252,10 @@ class EventDatabase:
             psycopg2.extras.execute_values(
                 cur,
                 """INSERT INTO events
-                   (timestamp, src_ip, dst_ip, src_port, dst_port,
-                    proto, action, interface, direction, version,
-                    ip_ttl, ip_total_length, tcp_flags, tcp_seq,
-                    tcp_ack, tcp_window, tcp_options,
+                   (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
+                    src_port, dst_port, proto, action, interface,
+                    direction, version, ip_ttl, ip_total_length, tcp_flags,
+                    tcp_seq, tcp_ack, tcp_window, tcp_options,
                     udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
                    VALUES %s""",
                 events,

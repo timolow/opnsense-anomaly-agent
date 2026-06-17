@@ -28,6 +28,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       # OPNsense API (used for status lookups, not event polling)
       - OPN_HOST=${OPN_HOST:-192.168.1.1}
@@ -52,9 +54,11 @@ services:
       - DB_NAME=${DB_NAME:-opnsense}
       - DB_USER=${DB_USER:-opnsense}
       - DB_PASSWORD=${DB_PASSWORD:-opnsense}
+      # Reverse DNS (persistent cache via Redis)
       - REVERSE_DNS_ENABLED=${REVERSE_DNS_ENABLED:-false}
       - REVERSE_DNS_SERVER=${REVERSE_DNS_SERVER:-192.168.1.1}
       - REVERSE_DNS_CACHE_TTL=${REVERSE_DNS_CACHE_TTL:-3600}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       # Network classification (WAN/LAN/VPN detection)
       - OWN_WAN_IPS=${OWN_WAN_IPS:-}
       - LAN_IPS=${LAN_IPS:-}
@@ -111,6 +115,20 @@ services:
       retries: 10
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    container_name: anomaly-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 50mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
 # vllm:
 #   # Optional: vLLM inference server for LLM-based anomaly analysis
 #   # Uncomment and configure if you want to run vLLM locally
@@ -139,4 +157,5 @@ services:
 
 volumes:
   pgdata:
+  redis_data:
 #   vllm-cache:
