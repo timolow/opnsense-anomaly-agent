@@ -11,6 +11,11 @@ from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
+import sys
+sys.path.insert(0, '/app')
+
+from eventdb import EventDatabase
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -1669,9 +1674,11 @@ def query_rules_classified():
 def api_save_feedback(rule_name, label, reason=None, user_id=None):
     """Save user feedback for a rule classification (Week 1)."""
     try:
-        db = get_db()
-        if db:
-            db.save_feedback(rule_name, label, reason, user_id)
+        db = EventDatabase()
+        db.connect()
+        db.save_feedback(rule_name, label, reason or "", user_id or "")
+        if db._connection:
+            db._connection.close()
         return {'success': True}
     except Exception as e:
         logger.error("save_feedback failed: %s", e)
@@ -1681,11 +1688,11 @@ def api_save_feedback(rule_name, label, reason=None, user_id=None):
 def api_ml_summary():
     """Get ML summary statistics (Weeks 1-5)."""
     try:
-        db = get_db()
-        if db:
-            ml_stats = db.get_ml_summary_stats()
-        else:
-            ml_stats = {'feedback_total': 0, 'feedback_correct': 0, 'feedback_agreement': 1.0, 'baselines_updated': 0, 'temporal_patterns': 0}
+        db = EventDatabase()
+        db.connect()
+        ml_stats = db.get_ml_summary_stats()
+        if db._connection:
+            db._connection.close()
         
         # Get rules classification summary
         summary = query_rules_classified()
@@ -1702,19 +1709,22 @@ def api_ml_summary():
 def api_active_learning_queue():
     """Get active learning queue (Week 4)."""
     try:
-        import sys
-        sys.path.insert(0, '/app')
         from ml_learning import SelfLearningClassifier
         
+        db = EventDatabase()
+        db.connect()
+        
         # Load classifier state
-        classifier = SelfLearningClassifier(get_db())
+        classifier = SelfLearningClassifier(db)
         if not classifier.load_state():
+            if db._connection:
+                db._connection.close()
             return {'queue': [], 'message': 'No classification state available'}
         
         # Get active learning queue
         queue = classifier.get_active_learning_queue()
         
-        return {
+        result = {
             'queue': [
                 {
                     'rule_name': item.rule_name,
@@ -1726,6 +1736,10 @@ def api_active_learning_queue():
             ],
             'count': len(queue),
         }
+        
+        if db._connection:
+            db._connection.close()
+        return result
     except Exception as e:
         logger.error("active_learning_queue failed: %s", e)
         return {'error': str(e), 'queue': []}
