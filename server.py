@@ -1071,10 +1071,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({'error': str(e)}, 500)
         elif path == "/api/rules-classified":
-            # Check Redis cache first
+            # Parse query parameters
+            query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+            force_refresh = query.get("refresh", [False])[0] == "true"
+            
+            # Check Redis cache first (unless forced refresh)
             cache_key = "rules-classified"
             redis_client = get_redis()
-            if redis_client:
+            if redis_client and not force_refresh:
                 cached = redis_client.get(cache_key)
                 if cached:
                     self._send_json(json.loads(cached))
