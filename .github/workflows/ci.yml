@@ -1,4 +1,4 @@
-name: CI - Tests
+name: CI - Full Test Suite
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -18,19 +19,59 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run unit tests (attack_detectors)
+      - name: Show installed packages
+        run: pip list | head -20
+
+      - name: Lint with flake8
         run: |
-          python -m pytest tests/test_attack_detectors.py -v --tb=short
+          pip install flake8
+          flake8 tests/ --max-line-length=120 --ignore=E501,W503 --exclude=__pycache__
+
+      - name: Run unit tests (adaptive_parser)
+        run: |
+          python -m pytest tests/test_adaptive_parser.py -v --tb=short
+
+      - name: Run unit tests (reverse_dns)
+        run: |
+          python -m pytest tests/test_reverse_dns.py -v --tb=short
+
+      - name: Run unit tests (ml_learning)
+        run: |
+          python -m pytest tests/test_ml_learning.py -v --tb=short
+
+      - name: Run unit tests (rule_classify)
+        run: |
+          python -m pytest tests/test_rule_classify.py -v --tb=short
+
+      - name: Run unit tests (statistical_model)
+        run: |
+          python -m pytest tests/test_statistical_model.py -v --tb=short
 
       - name: Run integration tests (full pipeline + embeds)
         run: |
           python -m pytest tests/test_integration.py -v --tb=short
 
+      - name: Run all tests combined (coverage)
+        run: |
+          python -m pytest tests/ -v --tb=short --co -q | tail -1
+          python -m pytest tests/ -v --tb=short
+
       - name: Summary
-        run: echo "✅ All tests passed"
+        if: always()
+        run: |
+          echo "✅ All tests completed"
+          echo "Tests run on $(date -u)"

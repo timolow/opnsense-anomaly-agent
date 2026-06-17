@@ -217,9 +217,11 @@ class AdaptiveParser:
             ip_version = parts[8].lower() if len(parts) > 8 else ''
             
             if ip_version == '4':
-                # IPv4: proto at [15]=proto_num, [16]=proto_name
-                proto_num = parts[15] if len(parts) > 15 else ''
-                proto_name = parts[16].lower() if len(parts) > 16 else ''
+                # IPv4: proto fields vary by protocol length
+                # TCP (29 parts): proto at [13]=num, [14]=name
+                # UDP (22 parts): proto at [13]=num, [14]=name
+                proto_num = parts[13] if len(parts) > 13 else ''
+                proto_name = parts[14].lower() if len(parts) > 14 else ''
                 
                 # Determine protocol from proto_num or proto_name
                 if proto_num in ('6',) or proto_name == 'tcp':
@@ -230,25 +232,31 @@ class AdaptiveParser:
                     features['proto'] = 'ICMP'
                 
                 # IPs and ports at fixed positions for IPv4
-                if len(parts) > 21:
-                    features['src_ip'] = parts[18] if len(parts) > 18 else None
-                    features['dst_ip'] = parts[19] if len(parts) > 19 else None
+                if proto_name == 'udp' and len(parts) > 18:
+                    # UDP: [16]=src_ip, [17]=dst_ip, [18]=sport, [19]=dport
+                    features['src_ip'] = parts[16] if len(parts) > 16 else None
+                    features['dst_ip'] = parts[17] if len(parts) > 17 else None
                     try:
-                        features['sport'] = int(parts[20]) if parts[20].isdigit() else None
+                        features['sport'] = int(parts[18]) if parts[18].isdigit() else None
                     except (ValueError, IndexError):
                         features['sport'] = None
                     try:
-                        features['dport'] = int(parts[21]) if parts[21].isdigit() else None
+                        features['dport'] = int(parts[19]) if parts[19].isdigit() else None
                     except (ValueError, IndexError):
-                        features['dport'] = None
-                    # ICMP has type/code at [20]/[21], not ports — clear after setting
-                    if proto_num in ('1',) or proto_name == 'icmp':
-                        features['sport'] = None
                         features['dport'] = None
                 elif len(parts) > 19:
-                    # UDP/ICMP with fewer parts
-                    features['src_ip'] = parts[18] if len(parts) > 18 else None
-                    features['dst_ip'] = parts[19] if len(parts) > 19 else None
+                    # TCP with enough parts: [16]=src_ip, [17]=dst_ip, [18]=sport, [19]=dport
+                    features['src_ip'] = parts[16] if len(parts) > 16 else None
+                    features['dst_ip'] = parts[17] if len(parts) > 17 else None
+                    try:
+                        features['sport'] = int(parts[18]) if parts[18].isdigit() else None
+                    except (ValueError, IndexError):
+                        features['sport'] = None
+                    try:
+                        features['dport'] = int(parts[19]) if parts[19].isdigit() else None
+                    except (ValueError, IndexError):
+                        features['dport'] = None
+                    # TCP options at [20+]
             elif ip_version == '6':
                 # IPv6: src/dst IPs at positions 15/16 (different from IPv4!)
                 if len(parts) > 16:

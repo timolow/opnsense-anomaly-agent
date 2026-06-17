@@ -148,6 +148,11 @@ class RuleClassifierML:
         
         # Compute derived features
         for rule_name, features in self.features_map.items():
+            # Set unique counts from counter lengths
+            features.unique_ports = len(features.dst_port_distribution)
+            features.unique_src_ips = len(features.src_ip_counts)
+            features.unique_dst_ips = len(features.dst_ip_counts)
+            
             self._compute_port_scan_score(features, src_dst_ports)
             self._compute_dest_scan_score(features, src_dst_ips)
             self._compute_action_score(features)
