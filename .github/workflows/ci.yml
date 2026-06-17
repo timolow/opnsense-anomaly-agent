@@ -39,7 +39,8 @@ jobs:
       - name: Lint with flake8
         run: |
           pip install flake8
-          flake8 tests/ --max-line-length=120 --ignore=E501,W503 --exclude=__pycache__
+          find tests/ -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+          flake8 tests/ --max-line-length=120 --ignore=E501,W503
 
       - name: Run unit tests (adaptive_parser)
         run: |
