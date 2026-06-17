@@ -2109,7 +2109,7 @@ function showRuleDrillDown(rowEl) {
 
 function showRuleDetailModal(ruleName, data) {
   // Merge basic stats with drill-down data
-  var totalEvents = data.events || 0;
+  var totalEvents = data.total_events || 0;
   var actions = data.actions || {};
   var passCount = actions['PASS'] || 0;
   var blockCount = actions['BLOCK'] || 0;
