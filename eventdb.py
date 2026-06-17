@@ -23,7 +23,7 @@ DEFAULT_PG_HOST = os.environ.get("DB_HOST", "postgres")
 DEFAULT_PG_PORT = int(os.environ.get("DB_PORT", "5432"))
 DEFAULT_PG_DB = os.environ.get("DB_NAME", "anomaly_agent")
 DEFAULT_PG_USER = os.environ.get("DB_USER", "anomaly_agent")
-DEFAULT_PG_PASS = os.environ.get("DB_PASS", "anomaly_agent_secret")
+DEFAULT_PG_PASS = os.environ.get("DB_PASSWORD") or os.environ.get("DB_PASS", "anomaly_agent_secret")
 
 
 # SQL schema definition
