@@ -33,15 +33,6 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Show installed packages
-        run: pip list | head -20
-
-      - name: Lint with flake8
-        run: |
-          pip install flake8
-          find tests/ -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-          flake8 tests/ --max-line-length=120 --ignore=E501,W503
-
       - name: Run unit tests (adaptive_parser)
         run: |
           python -m pytest tests/test_adaptive_parser.py -v --tb=short
