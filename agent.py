@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 from threading import Thread, Event, Condition, Lock
+from typing import Dict, Any, Optional, List
 
 import requests
 
@@ -133,8 +134,13 @@ class Config:
         self.vpn_ips_str = os.getenv("VPN_IPS", "")
         # Custom interface-to-class mapping: "iface=class,iface2=class2"
         self.custom_interfaces_str = os.getenv("CUSTOM_INTERFACES", "")
-        # Auto-discover interfaces from log data
+        self.custom_interfaces_str = os.getenv("CUSTOM_INTERFACES", "")
         self.network_auto_discover = os.getenv("NETWORK_AUTO_DISCOVER", "true").lower() == "true"
+        
+        # WAN flap detection
+        from wan_flap_detector import WANFlapDetector
+        self.wan_flap_detector = WANFlapDetector()
+        self.last_gateway_states: Dict[str, str] = {}
 
 
 # ── vLLM client (optional) ─────────────────────────────────────────────
@@ -378,6 +384,7 @@ class OPNsenseAgent:
         self.last_learn = time.time()
         self.last_status = time.time()
         self.last_syslog_anomaly_check = time.time()
+        self.last_wan_flap_check = time.time()
         self._adapt_cycle = 0
 
         # Shutdown
@@ -508,6 +515,75 @@ class OPNsenseAgent:
             self.anomaly_count += 1
             logger.info("Service anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             self.discord_bot.send_alert(anomaly)
+    
+    def _check_wan_flaps(self):
+        """Check OPNsense gateway states for flapping and send alerts."""
+        import urllib.request
+        import ssl
+        import json
+        import base64
+        
+        # Fetch gateway states from OPNsense API
+        try:
+            host = os.getenv("OPN_HOST", "192.168.1.1")
+            port = int(os.getenv("OPN_PORT", "6666"))
+            opn_url = f"https://{host}:{port}"
+            
+            key = os.getenv("OPN_API_KEY", "")
+            secret = os.getenv("OPN_API_SECRET", "")
+            if not key or not secret:
+                return
+            
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+            auth_string = f"{key}:{secret}"
+            auth_b64 = base64.b64encode(auth_string.encode()).decode()
+            auth_header = f"Basic {auth_b64}"
+            
+            # Fetch gateway settings
+            req = urllib.request.Request(
+                f"{opn_url}/api/routing/settings/searchGateway",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                gw_data = json.loads(resp.read().decode())
+            
+            rows = gw_data.get("rows", gw_data.get("gateways", []))
+            
+            for gw in rows:
+                if gw.get("disabled"):
+                    continue
+                name = gw.get("name", gw.get("id", "unknown"))
+                interface = gw.get("if", gw.get("interface", ""))
+                state = gw.get("state", gw.get("status", "unknown"))
+                
+                # Determine if this is a WAN gateway
+                is_wan = gw.get("upstream", False) or (not gw.get("vpn_gateway", False) and interface)
+                if not is_wan:
+                    continue
+                
+                # Normalize state
+                if state.lower() in ("up", "online", "active", "running"):
+                    new_state = "up"
+                elif state.lower() in ("down", "offline", "inactive", "disconnected"):
+                    new_state = "down"
+                else:
+                    continue
+                
+                old_state = self.last_gateway_states.get(name)
+                if old_state is not None:
+                    alert = self.wan_flap_detector.check_gateway_state(name, old_state, new_state)
+                    if alert:
+                        self.anomaly_count += 1
+                        logger.warning("WAN flap detected: %s — %s", name, alert['description'])
+                        self.discord_bot.send_alert(alert)
+                
+                self.last_gateway_states[name] = new_state
+                
+        except Exception as e:
+            logger.error("WAN flap check failed: %s", e)
 
     def _send_status(self):
         """Log periodic status."""
@@ -607,6 +683,14 @@ class OPNsenseAgent:
 
                     # Detect anomalies on all events
                     self._process_batch(events)
+                    
+                    # Check WAN flap detection periodically
+                    if now - self.last_wan_flap_check >= self.config.learn_interval:
+                        self.last_wan_flap_check = now
+                        try:
+                            self._check_wan_flaps()
+                        except Exception as e:
+                            logger.warning("WAN flap check failed: %s", e)
 
                     # Save state periodically (every learn_interval, alongside baseline save)
                     if now - self.last_save >= self.config.learn_interval:

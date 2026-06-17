@@ -1093,8 +1093,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
                 except Exception:
                     pass  # Cache miss on write is fine
-            
             self._send_json(result)
+            
+        # WAN flap monitoring endpoints
+        elif path == "/api/wan-flap-status":
+            # Get current flap detection status
+            try:
+                import importlib
+                wan_detector = importlib.import_module("wan_flap_detector")
+                detector = wan_detector.WANFlapDetector()
+                status = detector.get_flap_status()
+                self._send_json({"flap_status": status})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+                
+        elif path == "/api/wan-flap-history":
+            # Get recent flap events
+            try:
+                import importlib
+                wan_detector = importlib.import_module("wan_flap_detector")
+                detector = wan_detector.WANFlapDetector()
+                flaps = detector.get_recent_flaps(hours=24)
+                self._send_json({"recent_flaps": flaps})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+                
         elif path.startswith("/api/rule-detail/"):
             # Drill-down endpoint for a specific rule
             rule_name = urllib.parse.unquote(path.split("/api/rule-detail/")[-1])
