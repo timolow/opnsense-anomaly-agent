@@ -201,8 +201,6 @@ class ReverseDNSResolver:
 
         # Attempt resolution via dnspython
         try:
-            import ipaddress
-
             addr = ipaddress.ip_address(ip)
             # in-addr.arpa for IPv4
             reverse_name = addr.reverse_pointer
