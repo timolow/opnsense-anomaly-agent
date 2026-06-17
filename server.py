@@ -1139,9 +1139,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     rules[rule_name]['events'] += count
                     rules[rule_name]['actions'][action] = count
                 
+                # Enrich with OPNsense rule descriptions
+                try:
+                    opnsense_rules = query_opnsense_firewall_rules()
+                except Exception:
+                    opnsense_rules = {}
+                
                 # Build response
                 rules_list = []
                 for name, info in sorted(rules.items(), key=lambda x: -x[1]['events'])[:50]:
+                    # Enrich with OPNsense description
+                    display_name = name
+                    # Try exact match first, then short ID (first 8 chars)
+                    meta = opnsense_rules.get(name, {})
+                    if not meta:
+                        short_id = name[:8] if name else ''
+                        meta = opnsense_rules.get(short_id, {})
+                    if meta and meta.get('description'):
+                        display_name = meta['description']
+                    
                     # Classify rule: if mostly BLOCK = DENY, mostly PASS = PERMIT
                     total = info['events']
                     block_count = info['actions'].get('BLOCK', 0)
@@ -1155,10 +1171,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         rule_type = 'MIXED'
                     
                     rules_list.append({
-                        'name': name,
+                        'name': display_name,
+                        'rule_hash': name,
                         'events': total,
                         'actions': info['actions'],
                         'type': rule_type,
+                        'enabled': meta.get('enabled', '1') == '1',
                     })
                 
                 # Count rules by type
@@ -1540,8 +1558,12 @@ def query_rule_detail(rule_name):
             short_id = rule_name[:8] if rule_name else ''
             meta = opnsense_rules.get(short_id, {})
         
+        display_name = meta.get('description', rule_name) if meta else rule_name
+        
         response = {
             "rule_name": rule_name,
+            "rule_hash": rule_name,
+            "display_name": display_name,
             "total_events": total_events,
             "actions": actions,
             "top_src_ips": top_src_ips,
