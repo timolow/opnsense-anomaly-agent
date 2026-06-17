@@ -114,9 +114,11 @@ class Config:
         # Dedup
         self.dedup_seconds = int(os.getenv("DEDUP_SECONDS", "300"))
         # Reverse DNS
+        # Reverse DNS (persistent cache via Redis)
         self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "false").lower() == "true"
         self.reverse_dns_server = os.getenv("REVERSE_DNS_SERVER", "192.168.1.1")
         self.reverse_dns_cache_ttl = int(os.getenv("REVERSE_DNS_CACHE_TTL", "3600"))
+        self.redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
         # Polling
         self.poll_interval = int(os.getenv("POLL_INTERVAL", "2"))
         self.batch_size = int(os.getenv("BATCH_SIZE", "50"))
@@ -303,6 +305,7 @@ class OPNsenseAgent:
                 )
                 self.db.ensure_tables()
                 self.db.ensure_indexes()
+                self.db.ensure_hostnames_migration()
                 logger.info("Connected to PostgreSQL %s:%s (%s)", self.config.db_host, self.config.db_port, self.config.db_name)
                 break
             except Exception as e:
@@ -353,11 +356,12 @@ class OPNsenseAgent:
         # Adaptive parser instance
         self.adaptive_parser = AdaptiveParser()
         
-        # Reverse DNS resolver
+        # Reverse DNS resolver (persistent cache via Redis)
         self.reverse_dns = ReverseDNSResolver(
             dns_server=self.config.reverse_dns_server,
             enabled=self.config.reverse_dns_enabled,
             cache_ttl=self.config.reverse_dns_cache_ttl,
+            redis_url=self.config.redis_url,
         )
 
         # Network classification (WAN/LAN/VPN detection) — per-IP auto-discovery
