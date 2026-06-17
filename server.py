@@ -1141,8 +1141,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 
                 # Enrich with OPNsense rule descriptions
                 try:
+                    import logging
+                    logging.info("Enriching rules with OPNsense descriptions...")
                     opnsense_rules = query_opnsense_firewall_rules()
-                except Exception:
+                    logging.info(f"OPNsense rules loaded: {len(opnsense_rules)} keys")
+                except Exception as e:
+                    import logging
+                    logging.error(f"Failed to enrich rules with OPNsense: {e}")
                     opnsense_rules = {}
                 
                 # Build response
