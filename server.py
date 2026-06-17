@@ -4,6 +4,7 @@
 import json
 import os
 import time
+import urllib.parse
 import logging
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -1048,6 +1049,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     pass  # Cache miss on write is fine
             
             self._send_json(result)
+        elif path.startswith("/api/rule-detail/"):
+            # Drill-down endpoint for a specific rule
+            rule_name = urllib.parse.unquote(path.split("/api/rule-detail/")[-1])
+            if rule_name:
+                self._send_json(query_rule_detail(rule_name))
+            else:
+                self._send_json({"error": "No rule name specified"}, 400)
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
             # Only counts firewall events (action IN ('PASS','BLOCK'))
@@ -1347,6 +1355,173 @@ def query_opnsense_firewall_rules():
         import traceback
         traceback.print_exc()
         return {}
+
+
+def query_rule_detail(rule_name):
+    """Drill-down detail for a specific firewall rule."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        
+        # Basic rule stats
+        cur.execute("""
+            SELECT action, COUNT(*)
+            FROM events
+            WHERE rule_name = %s
+            GROUP BY action
+        """, (rule_name,))
+        actions = dict(cur.fetchall())
+        
+        # Top source IPs
+        cur.execute("""
+            SELECT src_ip, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND src_ip IS NOT NULL AND src_ip != ''
+            GROUP BY src_ip ORDER BY cnt DESC LIMIT 20
+        """, (rule_name,))
+        top_src_ips = [{"ip": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Top destination IPs
+        cur.execute("""
+            SELECT dst_ip, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND dst_ip IS NOT NULL AND dst_ip != ''
+            GROUP BY dst_ip ORDER BY cnt DESC LIMIT 20
+        """, (rule_name,))
+        top_dst_ips = [{"ip": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Top destination ports
+        cur.execute("""
+            SELECT dst_port, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND dst_port IS NOT NULL
+            GROUP BY dst_port ORDER BY cnt DESC LIMIT 20
+        """, (rule_name,))
+        top_ports = [{"port": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Top source ports
+        cur.execute("""
+            SELECT src_port, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND src_port IS NOT NULL
+            GROUP BY src_port ORDER BY cnt DESC LIMIT 20
+        """, (rule_name,))
+        top_src_ports = [{"port": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Protocol distribution
+        cur.execute("""
+            SELECT proto, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND proto IS NOT NULL AND proto != ''
+            GROUP BY proto ORDER BY cnt DESC
+        """, (rule_name,))
+        protocols = [{"proto": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Interface distribution
+        cur.execute("""
+            SELECT interface, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND interface IS NOT NULL AND interface != ''
+            GROUP BY interface ORDER BY cnt DESC
+        """, (rule_name,))
+        interfaces = [{"interface": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Direction distribution
+        cur.execute("""
+            SELECT direction, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s AND direction IS NOT NULL AND direction != ''
+            GROUP BY direction ORDER BY cnt DESC
+        """, (rule_name,))
+        directions = [{"direction": r[0], "count": r[1]} for r in cur.fetchall()]
+        
+        # Time distribution (by hour of day)
+        cur.execute("""
+            SELECT EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s
+            GROUP BY hour ORDER BY hour
+        """, (rule_name,))
+        time_dist = {str(int(r[0])): r[1] for r in cur.fetchall()}
+        
+        # Daily count (last 7 days)
+        cur.execute("""
+            SELECT DATE(timestamp) as day, COUNT(*) as cnt
+            FROM events
+            WHERE rule_name = %s
+            GROUP BY day ORDER BY day DESC LIMIT 7
+        """, (rule_name,))
+        daily = [{"day": str(r[0]), "count": r[1]} for r in cur.fetchall()]
+        
+        # Top 10 recent events
+        cur.execute("""
+            SELECT timestamp, src_ip, dst_ip, dst_port, src_port, action
+            FROM events
+            WHERE rule_name = %s
+            ORDER BY timestamp DESC LIMIT 10
+        """, (rule_name,))
+        recent_events = []
+        for r in cur.fetchall():
+            recent_events.append({
+                "timestamp": r[0].isoformat() if r[0] else None,
+                "src_ip": r[1],
+                "dst_ip": r[2],
+                "dst_port": r[3],
+                "src_port": r[4],
+                "action": r[5],
+            })
+        
+        # Unique IPs count
+        cur.execute("""
+            SELECT COUNT(DISTINCT src_ip) FROM events
+            WHERE rule_name = %s AND src_ip IS NOT NULL AND src_ip != ''
+        """, (rule_name,))
+        unique_src = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COUNT(DISTINCT dst_ip) FROM events
+            WHERE rule_name = %s AND dst_ip IS NOT NULL AND dst_ip != ''
+        """, (rule_name,))
+        unique_dst = cur.fetchone()[0]
+        
+        cur.close()
+        
+        total_events = sum(actions.values())
+        
+        # Enrich with OPNsense metadata
+        opnsense_rules = query_opnsense_firewall_rules()
+        meta = opnsense_rules.get(rule_name, {})
+        if not meta:
+            short_id = rule_name[:8] if rule_name else ''
+            meta = opnsense_rules.get(short_id, {})
+        
+        response = {
+            "rule_name": rule_name,
+            "total_events": total_events,
+            "actions": actions,
+            "top_src_ips": top_src_ips,
+            "top_dst_ips": top_dst_ips,
+            "top_ports": top_ports,
+            "top_src_ports": top_src_ports,
+            "protocols": protocols,
+            "interfaces": interfaces,
+            "directions": directions,
+            "time_distribution": time_dist,
+            "daily": daily,
+            "recent_events": recent_events,
+            "unique_src_ips": unique_src,
+            "unique_dst_ips": unique_dst,
+            "human_readable_name": meta.get("description", ""),
+            "rule_description": meta.get("description", ""),
+            "rule_action": meta.get("action", ""),
+            "rule_protocol": meta.get("protocol", ""),
+            "rule_interface": meta.get("interface", ""),
+            "source_address": meta.get("source_net", ""),
+            "destination_address": meta.get("destination_net", ""),
+        }
+        return response
+    except Exception as e:
+        logger.error("query_rule_detail %s failed: %s", rule_name, e)
+        return {"error": str(e), "rule_name": rule_name}
 
 
 def query_rules_classified():
