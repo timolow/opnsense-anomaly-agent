@@ -2047,8 +2047,9 @@ function buildRulesTable2(rules, color, header) {
     var humanName = escapeHTML(r.human_readable_name || '?');
     var description = escapeHTML(r.rule_description || '');
     var classification = escapeHTML(r.classification || '?');
+    var ruleNameAttr = escapeHTML(r.rule_name || r.rule_name || '?');
     
-    html += '<tr class="rule-row-' + color + '" style="cursor:pointer" onclick="var idx=' + rules.indexOf(r) + ';openRuleDrillDown(rules[idx], this.parentElement)">'
+    html += '<tr class="rule-row-' + color + '" style="cursor:pointer" data-rule-name="' + ruleNameAttr + '" onclick="showRuleDrillDown(this)">'
       + '<td style="font-weight:bold">' + humanName + '</td>'
       + '<td><span class="badge-' + color + '">' + classification + '</span></td>'
       + '<td>' + (r.total_events || 0).toLocaleString() + '</td>'
@@ -2058,13 +2059,211 @@ function buildRulesTable2(rules, color, header) {
       + '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>'
       + '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>'
       + '<td style="color:var(--text-muted);font-size:0.85em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHTML(description || '') + '">' + (description || '(none)') + '</td>'
-      + '<td style="padding:8px 12px"><button onclick="event.stopPropagation();var idx=' + rules.indexOf(r) + ';openRuleDrillDown(rules[idx], this.closest(\'tr\').parentElement)" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>'
+      + '<td style="padding:8px 12px"><button onclick="event.stopPropagation();showRuleDrillDown(this.closest(\'tr\'))" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>'
       + '</tr>';
   });
   
   html += '</tbody></table>';
   html += '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">💡 Click 🔍 or a row to see detailed breakdown</div>';
   return html;
+}
+
+function showRuleDrillDown(rowEl) {
+  var ruleName = rowEl.getAttribute('data-rule-name');
+  if (!ruleName) return;
+  
+  // Close any existing modal
+  var existing = document.getElementById('ruleDrillModal');
+  if (existing) existing.remove();
+  
+  // Show loading
+  var html = '<div id="ruleDrillModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">'
+    + '<div style="background:var(--bg-secondary);border-radius:12px;padding:30px;text-align:center">'
+    + '<div class="loading-spinner" style="margin:0 auto 10px"></div>'
+    + '<div style="font-size:14px;color:var(--text-muted)">Loading details...</div>'
+    + '</div></div>';
+  
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('ruleDrillModal').addEventListener('click', function(e) {
+    if (e.target === this) this.remove();
+  });
+  
+  // Fetch full drill-down data
+  fetch(API_BASE + '/api/rule-detail/' + encodeURIComponent(ruleName))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      // Remove loading modal
+      var modal = document.getElementById('ruleDrillModal');
+      if (modal) modal.remove();
+      
+      // Show detail modal with fetched data
+      showRuleDetailModal(ruleName, data);
+    })
+    .catch(function(e) {
+      var modal = document.getElementById('ruleDrillModal');
+      if (modal) {
+        modal.innerHTML = '<div style="background:var(--bg-secondary);border-radius:12px;padding:30px;text-align:center"><div style="color:#ef4444;font-size:14px">Failed to load rule details: ' + escapeHTML(e.message) + '</div><div style="margin-top:12px"><button onclick="this.closest(\'#ruleDrillModal\').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:13px">Close</button></div></div>';
+      }
+    });
+}
+
+function showRuleDetailModal(ruleName, data) {
+  // Merge basic stats with drill-down data
+  var totalEvents = data.events || 0;
+  var actions = data.actions || {};
+  var passCount = actions['PASS'] || 0;
+  var blockCount = actions['BLOCK'] || 0;
+  var topSrcIps = data.top_src_ips || [];
+  var topDstIps = data.top_dst_ips || [];
+  var topPorts = data.top_ports || [];
+  var topSrcPorts = data.top_src_ports || [];
+  var protocols = data.protocols || [];
+  var interfaces = data.interfaces || [];
+  var directions = data.directions || [];
+  var timeDist = data.time_distribution || {};
+  var dailyCounts = data.daily_counts || [];
+  var recentEvents = data.recent_events || [];
+  
+  // Classification reasoning
+  var blockRatio = totalEvents > 0 ? blockCount / totalEvents : 0;
+  var passRatio = totalEvents > 0 ? passCount / totalEvents : 1;
+  var uniqueSrcIps = topSrcIps.length;
+  var uniqueDstIps = topDstIps.length;
+  var uniquePorts = topPorts.length;
+  
+  // Feature scores (recompute from data)
+  var portScanScore = uniquePorts > 5 ? Math.min(uniquePorts / 20, 1.0) : uniquePorts / 5;
+  var destScanScore = uniqueDstIps > 10 ? Math.min(uniqueDstIps / 50, 1.0) : uniqueDstIps / 10;
+  var actionRatio = blockCount > 0 && passCount > 0 ? passCount / (passCount + blockCount) : (passCount > 0 ? 1.0 : 0.0);
+  var volumeScore = totalEvents > 100 ? 0.8 : totalEvents > 10 ? 0.5 : 0.2;
+  var protocolScore = protocols.length <= 3 ? 1.0 : protocols.length <= 5 ? 0.6 : 0.3;
+  var goodnessScore = (1 - portScanScore) * 0.2 + (1 - destScanScore) * 0.2 + actionRatio * 0.2 + volumeScore * 0.1 + protocolScore * 0.1 + (1 - blockRatio) * 0.2;
+  
+  var classification = blockRatio > 0.8 ? 'ABUSIVE' : blockRatio > 0.5 ? 'SUSPICIOUS' : 'GOOD';
+  var isSuspicious = classification === 'SUSPICIOUS' || classification === 'ABUSIVE';
+  var isUncertain = totalEvents < 20;
+  
+  var html = '<div id="ruleDrillModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">'
+    + '<div style="background:var(--bg-secondary);border-radius:12px;max-width:900px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">';
+  
+  // Header
+  html += '<div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start">';
+  html += '<div><h3 style="margin:0;font-size:18px">🔍 Rule Detail</h3>';
+  html += '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;font-family:monospace">' + escapeHTML(ruleName) + '</div>';
+  html += '</div>';
+  html += '<div><span class="badge-' + (isUncertain ? 'warning' : classification === 'ABUSIVE' ? 'block' : classification === 'SUSPICIOUS' ? 'warning' : 'pass') + '" style="font-size:13px">' + classification + (isUncertain ? ' (UNCERTAIN - limited data)' : '') + '</span> <button onclick="document.getElementById(\'ruleDrillModal\').remove()" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:12px">Close</button></div>';
+  html += '</div>';
+  
+  // Quick stats
+  html += '<div style="padding:16px 24px;display:flex;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--border)">';
+  html += statTile('Total Events', totalEvents.toLocaleString(), 'var(--accent)');
+  html += statTile('Pass', passCount.toLocaleString(), '#22c55e');
+  html += statTile('Block', blockCount.toLocaleString(), '#ef4444');
+  html += statTile('Unique Sources', uniqueSrcIps, 'var(--text-secondary)');
+  html += statTile('Unique Destinations', uniqueDstIps, 'var(--text-secondary)');
+  html += statTile('Unique Ports', uniquePorts, 'var(--text-secondary)');
+  html += '</div>';
+  
+  // Classification reasoning
+  html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
+  html += '<h4 style="margin:0 0 12px 0;font-size:14px;color:var(--text-secondary)">Classification Reasoning</h4>';
+  
+  if (isSuspicious) {
+    html += '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px;margin-bottom:12px">';
+    html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">⚠️ Suspicious Patterns Detected</div>';
+    var reasons = [];
+    if (portScanScore > 0.5) reasons.push('High port diversity: ' + uniquePorts + ' unique ports (possible port scan)');
+    if (destScanScore > 0.5) reasons.push('High destination diversity: ' + uniqueDstIps + ' unique destinations (possible dest scan)');
+    if (blockRatio > 0.5) reasons.push('High block ratio: ' + (blockRatio * 100).toFixed(0) + '% of traffic blocked');
+    if (reasons.length === 0) reasons.push('Traffic pattern suggests anomalous behavior');
+    html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + reasons.join('<br>') + '</div>';
+    html += '</div>';
+  } else if (isUncertain) {
+    html += '<div style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:8px;padding:12px;margin-bottom:12px">';
+    html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">🔍 Inconclusive — Limited Data</div>';
+    html += '<div style="font-size:12px;color:var(--text-secondary)">Only ' + totalEvents + ' events recorded. The system needs more data to make a confident classification. Continue monitoring.</div>';
+    html += '</div>';
+  }
+  
+  // Feature scores
+  html += '<div style="margin-bottom:8px"><strong style="font-size:12px;color:var(--text-muted)">Feature Scores</strong></div>';
+  html += featureBar('Port Diversity (scanning)', portScanScore, portScanScore > 0.5 ? '#ef4444' : portScanScore > 0.2 ? '#f59e0b' : '#22c55e');
+  html += featureBar('Destination Diversity (scanning)', destScanScore, destScanScore > 0.5 ? '#ef4444' : destScanScore > 0.2 ? '#f59e0b' : '#22c55e');
+  html += featureBar('Pass/Block Ratio', actionRatio, actionRatio > 0.7 ? '#22c55e' : actionRatio > 0.4 ? '#f59e0b' : '#ef4444');
+  html += featureBar('Volume Normality', volumeScore, volumeScore > 0.7 ? '#22c55e' : volumeScore > 0.4 ? '#f59e0b' : '#ef4444');
+  html += featureBar('Protocol Normality', protocolScore, protocolScore > 0.7 ? '#22c55e' : protocolScore > 0.4 ? '#f59e0b' : '#ef4444');
+  html += featureBar('Overall Goodness Score', goodnessScore, goodnessScore > 0.65 ? '#22c55e' : goodnessScore > 0.35 ? '#f59e0b' : '#ef4444');
+  html += '</div>';
+  
+  // Top IPs and ports
+  html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">';
+  
+  if (topSrcIps.length > 0) {
+    html += '<div><strong style="font-size:12px;color:var(--text-muted)">Top Source IPs</strong><div style="margin-top:8px">';
+    topSrcIps.slice(0, 5).forEach(function(item) {
+      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHTML(item.ip) + '</span><span>' + item.count.toLocaleString() + '</span></div>';
+    });
+    html += '</div></div>';
+  }
+  
+  if (topPorts.length > 0) {
+    html += '<div><strong style="font-size:12px;color:var(--text-muted)">Top Destination Ports</strong><div style="margin-top:8px">';
+    topPorts.slice(0, 5).forEach(function(item) {
+      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHTML(String(item.port)) + '</span><span>' + item.count.toLocaleString() + '</span></div>';
+    });
+    html += '</div></div>';
+  }
+  
+  if (protocols.length > 0) {
+    html += '<div><strong style="font-size:12px;color:var(--text-muted)">Protocols</strong><div style="margin-top:8px">';
+    protocols.forEach(function(item) {
+      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHTML(item.proto || '-') + '</span><span>' + item.count.toLocaleString() + '</span></div>';
+    });
+    html += '</div></div>';
+  }
+  
+  html += '</div>';
+  
+  // Recent events
+  if (recentEvents.length > 0) {
+    html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
+    html += '<strong style="font-size:12px;color:var(--text-muted)">Recent Events</strong><table style="width:100%;font-size:11px;margin-top:8px"><thead><tr><th>Time</th><th>Src IP</th><th>Dst Port</th><th>Action</th></tr></thead><tbody>';
+    recentEvents.slice(0, 20).forEach(function(e) {
+      html += '<tr><td style="color:var(--text-muted)">' + (e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '-') + '</td><td>' + escapeHTML(e.src_ip || '-') + '</td><td>' + escapeHTML(String(e.dst_port || '-')) + '</td><td><span class="badge-' + (e.action === 'PASS' ? 'pass' : 'block') + '">' + e.action + '</span></td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  
+  // Time distribution
+  if (Object.keys(timeDist).length > 0) {
+    html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
+    html += '<strong style="font-size:12px;color:var(--text-muted)">Traffic by Hour</strong>';
+    html += '<div style="display:flex;align-items:flex-end;gap:2px;height:80px;margin-top:8px">';
+    var maxCount = Math.max.apply(null, Object.values(timeDist)) || 1;
+    for (var h = 0; h < 24; h++) {
+      var count = timeDist[h] || 0;
+      var pct = (count / maxCount) * 100;
+      html += '<div style="flex:1;max-width:20px;height:' + Math.max(pct, 2) + '%;background:var(--accent);border-radius:2px;position:relative;cursor:pointer" title="Hour ' + h + ': ' + count + ' events"><span style="position:absolute;bottom:-16px;left:50%;transform:translateX(-50%);font-size:8px;color:var(--text-muted)">' + h + '</span></div>';
+    }
+    html += '</div></div>';
+  }
+  
+  // Close
+  html += '<div style="padding:12px 24px;text-align:right;border-top:1px solid var(--border)"><button onclick="this.closest(\'#ruleDrillModal\').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:13px">Close</button></div>'
+    + '</div></div>';
+  
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('ruleDrillModal').addEventListener('click', function(e) {
+    if (e.target === this) this.remove();
+  });
+}
+
+function statTile(label, value, color) {
+  return '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:' + color + '">' + value + '</div><div style="font-size:11px;color:var(--text-muted)">' + label + '</div></div>';
+}
+
+function featureBar(label, score, color) {
+  return '<div style="margin:6px 0"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>' + label + '</span><span style="color:' + color + '">' + (score * 100).toFixed(0) + '%</span></div><div style="background:var(--bg-primary);border-radius:4px;height:6px"><div style="width:' + (score * 100).toFixed(0) + '%;background:' + color + ';height:100%;border-radius:4px"></div></div></div>';
 }
 
 function loadRulesML() {
