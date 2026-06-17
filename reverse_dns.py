@@ -24,6 +24,7 @@ class ReverseDNSResolver:
         enabled: bool = False,
         cache_ttl: int = 3600,
         redis_url: str = "redis://redis:6379/0",
+        static_map_file: Optional[str] = None,
     ):
         """
         Args:
@@ -36,6 +37,20 @@ class ReverseDNSResolver:
         self.enabled = enabled
         self.cache_ttl = cache_ttl
         self.redis_url = redis_url
+        self.static_map: Dict[str, str] = {}  # ip -> hostname
+        self.static_map_file = static_map_file
+
+        # Load static hostname map if file provided
+        if static_map_file:
+            self._load_static_map(static_map_file)
+        else:
+            # Default internal IP map
+            self.static_map = {
+                "192.168.1.1": "opnsense",
+                "192.168.1.19": "hassio",
+                "192.168.1.50": "anomaly-agent",
+            }
+            logger.info("Loaded default static hostname map (%d entries)", len(self.static_map))
 
         # Redis cache (persistent across restarts)
         self._redis = None
@@ -86,6 +101,32 @@ class ReverseDNSResolver:
             )
             self._redis_available = False
 
+    def _load_static_map(self, file_path: str):
+        """Load static hostname mapping from file."""
+        try:
+            import os
+            if os.path.isfile(file_path):
+                with open(file_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        parts = line.split("=")
+                        if len(parts) == 2:
+                            ip, hostname = parts[0].strip(), parts[1].strip()
+                            self.static_map[ip] = hostname
+                logger.info("Loaded static hostname map from %s (%d entries)", file_path, len(self.static_map))
+            else:
+                logger.warning("Static map file %s not found, using defaults", file_path)
+        except Exception as e:
+            logger.warning("Failed to load static map from %s: %s", file_path, e)
+
+    def _check_static_map(self, ip: str) -> Optional[str]:
+        """Check static hostname map first."""
+        if ip in self.static_map:
+            return self.static_map[ip]
+        return None
+
     def _get_from_redis(self, ip: str) -> Optional[str]:
         """Get hostname from Redis cache."""
         if not self._redis_available or not self._redis:
@@ -135,7 +176,13 @@ class ReverseDNSResolver:
         if not self.enabled or not ip:
             return None
 
-        # Check Redis cache first (persistent)
+        # 1. Check static hostname map (internal IPs)
+        hostname = self._check_static_map(ip)
+        if hostname:
+            logger.debug("Static map: %s -> %s", ip, hostname)
+            return hostname
+
+        # 2. Check Redis cache (persistent)
         hostname = self._get_from_redis(ip)
         if hostname:
             return hostname

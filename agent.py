@@ -118,6 +118,7 @@ class Config:
         self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "false").lower() == "true"
         self.reverse_dns_server = os.getenv("REVERSE_DNS_SERVER", "192.168.1.1")
         self.reverse_dns_cache_ttl = int(os.getenv("REVERSE_DNS_CACHE_TTL", "3600"))
+        self.reverse_dns_static_map = os.getenv("REVERSE_DNS_STATIC_MAP", "")
         self.redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
         # Polling
         self.poll_interval = int(os.getenv("POLL_INTERVAL", "2"))
@@ -356,12 +357,13 @@ class OPNsenseAgent:
         # Adaptive parser instance
         self.adaptive_parser = AdaptiveParser()
         
-        # Reverse DNS resolver (persistent cache via Redis)
+        # Reverse DNS resolver (persistent cache via Redis + static map)
         self.reverse_dns = ReverseDNSResolver(
             dns_server=self.config.reverse_dns_server,
             enabled=self.config.reverse_dns_enabled,
             cache_ttl=self.config.reverse_dns_cache_ttl,
             redis_url=self.config.redis_url,
+            static_map_file=self.config.reverse_dns_static_map or None,
         )
 
         # Network classification (WAN/LAN/VPN detection) — per-IP auto-discovery
