@@ -310,6 +310,7 @@ tr:hover { background: var(--bg-tertiary); }
       <button class="tab-btn" data-tab="mutes" onclick="switchTab('mutes')">🔇 Mutes</button>
       <button class="tab-btn" data-tab="geo" onclick="switchTab('geo')">🌍 Geo</button>
       <button class="tab-btn" data-tab="opnsense" onclick="switchTab('opnsense')">🔌 OPNsense</button>
+      <button class="tab-btn" data-tab="wan-flap" onclick="switchTab('wan-flap')">🌊 WAN Flaps</button>
       <button class="tab-btn" data-tab="rules" onclick="switchTab('rules')">🛡️ Rules</button>
       <button class="tab-btn" data-tab="syslogs" onclick="switchTab('syslogs')">📋 System Logs</button>
       <button class="tab-btn" data-tab="services" onclick="switchTab('services')">🔧 Services</button>
@@ -520,6 +521,30 @@ tr:hover { background: var(--bg-tertiary); }
     </div>
   </div>
 
+  <!-- WAN Flap Monitoring Tab -->
+  <div class="tab-content" id="tab-wan-flap">
+    <div class="grid">
+      <div class="card">
+        <div class="card-header">🌊 WAN Flap Status <button class="btn-sm" onclick="loadWanFlapStatus()">🔄 Refresh</button></div>
+        <div class="card-body" id="wanFlapStatus">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">📋 Recent WAN Flaps (24h)</div>
+        <div class="card-body" id="wanFlapHistory">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">📊 Flap Statistics</div>
+      <div class="card-body" id="wanFlapStats">
+        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Rules ML Tab -->
   <div class="tab-content" id="tab-rules-classified">
     <div class="card">
@@ -645,6 +670,7 @@ function loadTabData(tabId) {
     case 'rules': loadRules(); break;
     case 'syslogs': loadSysLogs(); break;
     case 'services': loadServices(); break;
+    case 'wan-flap': loadWanFlapStatus(); loadWanFlapHistory(); break;
     case 'rules-classified': loadRulesML(); break;
   }
 }
@@ -2522,6 +2548,68 @@ window.addEventListener('DOMContentLoaded', function() {
   loadServices();
   setInterval(loadServices, 30000);
 });
+
+// WAN Flap Monitoring
+function loadWanFlapStatus() {
+    apiFetch('/api/wan-flap-status' + CACHE_BUST).then(function(data) {
+        renderWanFlapStatus(data);
+    }).catch(function() {
+        showApiError();
+    });
+}
+
+function renderWanFlapStatus(data) {
+    var status = data.flap_status || {};
+    var html = '';
+    if (Object.keys(status).length === 0) {
+        html = '<p style="color:var(--text-muted)">No WAN flaps detected yet.</p>';
+    } else {
+        html = '<table class="data-table"><thead><tr><th>Gateway</th><th>Status</th><th>Flaps (1h)</th><th>Last Change</th></tr></thead><tbody>';
+        for (var gw in status) {
+            var s = status[gw];
+            var stateColor = s.current_state === 'up' ? 'green' : 'red';
+            html += '<tr>';
+            html += '<td>' + escapeHtml(gw) + '</td>';
+            html += '<td><span style="color:' + stateColor + '">' + s.current_state.toUpperCase() + '</span></td>';
+            html += '<td>' + (s.flaps_1h || 0) + '</td>';
+            html += '<td>' + formatTime(s.last_change) + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+    }
+    document.getElementById('wanFlapStatus').innerHTML = html;
+}
+
+function loadWanFlapHistory() {
+    apiFetch('/api/wan-flap-history' + CACHE_BUST).then(function(data) {
+        renderWanFlapHistory(data);
+    }).catch(function() {
+        showApiError();
+    });
+}
+
+function renderWanFlapHistory(data) {
+    var flaps = data.recent_flaps || [];
+    var html = '';
+    if (flaps.length === 0) {
+        html = '<p style="color:var(--text-muted)">No recent flaps.</p>';
+    } else {
+        html = '<table class="data-table"><thead><tr><th>Time</th><th>Gateway</th><th>From</th><th>To</th></tr></thead><tbody>';
+        for (var i = 0; i < flaps.length; i++) {
+            var f = flaps[i];
+            var stateFrom = f.old_state === 'up' ? '🟢 UP' : '🔴 DOWN';
+            var stateTo = f.new_state === 'up' ? '🟢 UP' : '🔴 DOWN';
+            html += '<tr>';
+            html += '<td>' + formatTime(f.time) + '</td>';
+            html += '<td>' + escapeHtml(f.gateway) + '</td>';
+            html += '<td>' + stateFrom + '</td>';
+            html += '<td>' + stateTo + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+    }
+    document.getElementById('wanFlapHistory').innerHTML = html;
+}
 </script>
 
 </body>
