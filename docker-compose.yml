@@ -20,6 +20,10 @@ version: "3.8"
 
 services:
   agent:
+    # To use a pre-built image from GHCR, set AGENT_IMAGE in .env:
+    #   AGENT_IMAGE=ghcr.io/timolow/opnsense-anomaly-agent:latest
+    # Otherwise docker-compose will build from the Dockerfile
+    image: ${AGENT_IMAGE:-}
     build:
       context: .
       dockerfile: Dockerfile
