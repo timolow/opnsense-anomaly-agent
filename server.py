@@ -1139,29 +1139,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     rules[rule_name]['events'] += count
                     rules[rule_name]['actions'][action] = count
                 
-                # Enrich with OPNsense rule descriptions
-                try:
-                    import logging
-                    logging.info("Enriching rules with OPNsense descriptions...")
-                    opnsense_rules = query_opnsense_firewall_rules()
-                    logging.info(f"OPNsense rules loaded: {len(opnsense_rules)} keys")
-                except Exception as e:
-                    import logging
-                    logging.error(f"Failed to enrich rules with OPNsense: {e}")
-                    opnsense_rules = {}
+                # Enrich with cached OPNsense rule descriptions
+                # Uses background cache that refreshes every 5 minutes
+                opnsense_rules = get_cached_opnsense_rules()
+                if not opnsense_rules:
+                    print("[Rules] OPNsense cache empty, fetching directly...")
+                    try:
+                        opnsense_rules = query_opnsense_firewall_rules()
+                    except Exception as e:
+                        print(f"[Rules] Failed to fetch OPNsense rules: {e}")
+                        opnsense_rules = {}
                 
                 # Build response
                 rules_list = []
-                for name, info in sorted(rules.items(), key=lambda x: -x[1]['events'])[:50]:
-                    # Enrich with OPNsense description
-                    display_name = name
-                    # Try exact match first, then short ID (first 8 chars)
-                    meta = opnsense_rules.get(name, {})
+                for rule_hash, info in sorted(rules.items(), key=lambda x: -x[1]['events'])[:50]:
+                    # Enrich with OPNsense description or generated name
+                    display_name = None
+                    enabled = True
+                    
+                    # Try exact match first (full UUID or hash)
+                    meta = opnsense_rules.get(rule_hash, {})
                     if not meta:
-                        short_id = name[:8] if name else ''
+                        short_id = rule_hash[:8] if rule_hash else ''
                         meta = opnsense_rules.get(short_id, {})
-                    if meta and meta.get('description'):
-                        display_name = meta['description']
+                    
+                    if meta:
+                        if meta.get('description'):
+                            # Use OPNsense description
+                            display_name = meta['description']
+                        else:
+                            # Generate name from rule attributes
+                            generated = generate_rule_name(meta)
+                            if generated:
+                                display_name = generated
+                        enabled = meta.get('enabled', '1') == '1'
+                    
+                    if not display_name:
+                        display_name = rule_hash  # fallback
                     
                     # Classify rule: if mostly BLOCK = DENY, mostly PASS = PERMIT
                     total = info['events']
@@ -1177,11 +1191,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     
                     rules_list.append({
                         'name': display_name,
-                        'rule_hash': name,
+                        'rule_hash': rule_hash,
                         'events': total,
                         'actions': info['actions'],
                         'type': rule_type,
-                        'enabled': meta.get('enabled', '1') == '1',
+                        'enabled': enabled,
                     })
                 
                 # Count rules by type
@@ -1355,6 +1369,100 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass  # Suppress HTTP request logging to reduce log noise
 
 
+# ═══════════════════════════════════════════
+# Module-level cache for OPNsense firewall rules
+# Refreshes every 5 minutes to keep names up to date
+# ═══════════════════════════════════════════
+import threading
+import time
+
+_opnsense_cache = {
+    "data": {},
+    "last_refresh": 0,
+    "lock": threading.Lock(),
+    "_refresh_interval": 300,  # 5 minutes
+}
+
+
+def _cache_opnsense_rules():
+    """Background cache refresh for OPNsense rules."""
+    try:
+        data = query_opnsense_firewall_rules()
+        with _opnsense_cache["lock"]:
+            _opnsense_cache["data"] = data
+            _opnsense_cache["last_refresh"] = time.time()
+    except Exception as e:
+        print(f"[Cache] Failed to refresh OPNsense rules: {e}")
+
+
+# Start cache refresh thread
+def _start_cache_thread():
+    """Start background cache refresh thread."""
+    def refresh_loop():
+        while True:
+            _cache_opnsense_rules()
+            time.sleep(_opnsense_cache["_refresh_interval"])
+
+    t = threading.Thread(target=refresh_loop, daemon=True)
+    t.start()
+    # Do initial fetch immediately
+    _cache_opnsense_rules()
+    print("[Cache] OPNsense rules cache thread started")
+
+
+def get_cached_opnsense_rules():
+    """Get OPNsense rules from cache, refreshing if stale."""
+    with _opnsense_cache["lock"]:
+        if _opnsense_cache["last_refresh"] == 0 or (time.time() - _opnsense_cache["last_refresh"]) > _opnsense_cache["_refresh_interval"]:
+            # Need to refresh
+            pass  # Will be refreshed in next iteration
+        return _opnsense_cache["data"]
+
+
+def generate_rule_name(rule_data):
+    """Generate a human-readable rule name from OPNsense rule attributes when description is empty."""
+    if not rule_data:
+        return None
+
+    protocol = rule_data.get("protocol", "").upper()
+    src_port = rule_data.get("source_port", "")
+    dst_port = rule_data.get("destination_port", "")
+    src_net = rule_data.get("source_net", "")
+    dst_net = rule_data.get("destination_net", "")
+    action = rule_data.get("action", "").upper()
+    interface = rule_data.get("interface", "")
+
+    parts = []
+
+    # Protocol + ports
+    if protocol:
+        if dst_port:
+            parts.append(f"{protocol}:{dst_port}")
+        else:
+            parts.append(protocol)
+    else:
+        if dst_port:
+            parts.append(f"port:{dst_port}")
+
+    # Network info
+    if dst_net and dst_net != "any":
+        parts.append(f"to:{dst_net}")
+    elif src_net and src_net != "any":
+        parts.append(f"from:{src_net}")
+
+    # Interface
+    if interface:
+        parts.append(f"[{interface}]")
+
+    # Action indicator
+    if action:
+        parts.append(f"({action})")
+
+    if parts:
+        return " ".join(parts)
+    return None
+
+
 def query_opnsense_firewall_rules():
     """Fetch actual firewall rules from OPNsense with descriptions."""
     opn_url, opn_key, opn_secret, verify_ssl = _read_opn_config()
@@ -1424,6 +1532,10 @@ def query_opnsense_firewall_rules():
         import traceback
         traceback.print_exc()
         return {}
+
+
+# Start background cache refresh thread (after query_opnsense_firewall_rules is defined)
+_start_cache_thread()
 
 
 def query_rule_detail(rule_name):
