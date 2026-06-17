@@ -31,6 +31,7 @@ COPY rule_classify.py .
 COPY service_monitor.py .
 COPY server.py .
 COPY app.html .
+COPY ml_learning.py .
 
 # Create data directory
 RUN mkdir -p /app/agent_data
