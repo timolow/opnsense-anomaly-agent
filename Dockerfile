@@ -32,6 +32,7 @@ COPY service_monitor.py .
 COPY server.py .
 COPY app.html .
 COPY ml_learning.py .
+COPY wan_flap_detector.py .
 
 # Create data directory
 RUN mkdir -p /app/agent_data
