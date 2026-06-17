@@ -90,10 +90,10 @@ class WindowedCounter:
         self._timestamps[compound_key].append(ts)
         
         # Cleanup old buckets
-        cutoff_str = ts.strftime('%Y-%m-%d %H:%M')
+        cutoff_dt = ts - timedelta(minutes=self.window_minutes)
         for k in list(self._buckets.keys()):
             bk = k[1]
-            if bk and bk < cutoff_str:
+            if bk and bk < cutoff_dt:
                 del self._buckets[k]
                 self._timestamps.pop(k, None)
     
@@ -338,6 +338,15 @@ class StatisticalModel:
 
         Args:
             events: List of parsed syslog events to record for baseline learning.
+
+        Returns:
+            Dict with learning summary.
         """
         for event in events:
             self.record_event(event)
+        
+        return {
+            'events_learned': len(events),
+            'baselines_count': len(self._baselines),
+            'summary': self.get_baseline_summary(),
+        }
