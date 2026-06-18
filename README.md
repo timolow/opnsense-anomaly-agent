@@ -155,7 +155,7 @@ The agent runs an HTTP server on port 8765 for chat commands. Send commands from
 | `!topblocked` | Show top blocked source IPs |
 | `!help` | Show all available commands |
 
-### Web Dashboard
+## Web Dashboard
 
 A comprehensive responsive web UI is served at `http://<server>:8766/` with a collapsible sidebar organized into categories:
 
