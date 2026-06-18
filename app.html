@@ -721,8 +721,8 @@ window.addEventListener('DOMContentLoaded', function() {
   console.log('[TAB] Found', tabButtons.length, 'tab buttons');
   for (var i = 0; i < tabButtons.length; i++) {
     tabButtons[i].onclick = function() {
-      console.log('[TAB] Click on:', this.getAttribute('data-tab'));
       var tabId = this.getAttribute('data-tab');
+      console.log('[TAB] Click on:', tabId);
       switchTab(tabId);
       return false;
     };
