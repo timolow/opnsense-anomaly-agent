@@ -10,9 +10,14 @@
   --bg-primary: #f8f9fa;
   --bg-secondary: #ffffff;
   --bg-tertiary: #e9ecef;
+  --bg-sidebar: #1e293b;
+  --bg-sidebar-hover: #334155;
+  --bg-sidebar-active: #3b82f6;
   --text-primary: #212529;
   --text-secondary: #6c757d;
   --text-muted: #adb5bd;
+  --text-sidebar: #cbd5e1;
+  --text-sidebar-active: #ffffff;
   --border: #dee2e6;
   --accent: #4361ee;
   --accent-hover: #3a56d4;
@@ -23,14 +28,22 @@
   --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
   --radius: 8px;
   --radius-sm: 4px;
+  --sidebar-width: 260px;
+  --sidebar-collapsed: 56px;
+  --header-height: 56px;
 }
 [data-theme="dark"] {
   --bg-primary: #0d1117;
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;
+  --bg-sidebar: #0d1117;
+  --bg-sidebar-hover: #161b22;
+  --bg-sidebar-active: #3b82f6;
   --text-primary: #f0f6fc;
   --text-secondary: #8b949e;
   --text-muted: #484f58;
+  --text-sidebar: #8b949e;
+  --text-sidebar-active: #ffffff;
   --border: #30363d;
   --accent: #58a6ff;
   --accent-hover: #79c0ff;
@@ -46,93 +59,240 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
+  display: flex;
+  min-height: 100vh;
 }
-.container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
-/* Header */
-header {
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  padding: 16px 0;
-  box-shadow: var(--shadow);
-  position: sticky;
+
+/* ═══════════════════════════════════════
+   Sidebar Navigation
+   ═══════════════════════════════════════ */
+.sidebar {
+  width: var(--sidebar-width);
+  min-height: 100vh;
+  background: var(--bg-sidebar);
+  color: var(--text-sidebar);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.25s ease;
+  position: fixed;
+  left: 0;
   top: 0;
-  z-index: 100;
+  bottom: 0;
+  z-index: 1000;
+  overflow: hidden;
 }
-.header-inner {
+.sidebar.collapsed { width: var(--sidebar-collapsed); }
+.sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  padding: 12px 16px;
+  height: var(--header-height);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  gap: 12px;
+  flex-shrink: 0;
 }
-.logo { display: flex; align-items: center; gap: 12px; }
-.logo-icon {
-  width: 40px; height: 40px;
+.sidebar-logo {
+  width: 32px; height: 32px;
   background: linear-gradient(135deg, #4361ee, #3a0ca3);
-  border-radius: 8px;
+  border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  color: white; font-weight: 700; font-size: 16px;
+  color: white; font-weight: 700; font-size: 14px;
+  flex-shrink: 0;
 }
-.logo-text { font-size: 20px; font-weight: 700; color: var(--text-primary); }
-.header-actions { display: flex; align-items: center; gap: 16px; }
-.status-badge {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 12px;
-  background: var(--bg-tertiary);
-  border-radius: 20px;
-  font-size: 13px;
-  color: var(--text-secondary);
+.sidebar-brand {
+  font-size: 16px; font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 0.2s;
+}
+.sidebar.collapsed .sidebar-brand { opacity: 0; width: 0; }
+.sidebar-toggle {
+  position: absolute;
+  right: -14px;
+  top: 12px;
+  width: 28px; height: 28px;
+  background: var(--accent);
+  border: 2px solid var(--bg-primary);
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+  z-index: 1001;
+}
+.sidebar.collapsed .sidebar-toggle { right: -14px; }
+
+/* Sidebar groups */
+.sidebar-nav { flex: 1; overflow-y: auto; padding: 8px 0; }
+.nav-group { margin-bottom: 4px; }
+.nav-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+.nav-group-header:hover { color: var(--text-sidebar); }
+.nav-group-header .chevron {
+  margin-left: auto;
+  transition: transform 0.2s;
+  font-size: 10px;
+}
+.nav-group.collapsed .chevron { transform: rotate(-90deg); }
+.sidebar.collapsed .nav-group-header { padding: 10px 16px; justify-content: center; }
+.sidebar.collapsed .nav-group-header span { display: none; }
+.sidebar.collapsed .nav-group-header .chevron { display: none; }
+
+.nav-items { overflow: hidden; transition: max-height 0.25s ease; }
+.nav-group.collapsed .nav-items { max-height: 0 !important; }
+.sidebar.collapsed .nav-items { max-height: 0 !important; }
+
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px 8px 24px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-sidebar);
+  transition: all 0.15s;
+  white-space: nowrap;
+  border-left: 3px solid transparent;
+}
+.nav-item:hover { background: var(--bg-sidebar-hover); color: var(--text-sidebar-active); }
+.nav-item.active {
+  background: rgba(59,130,246,0.15);
+  color: var(--text-sidebar-active);
+  border-left-color: var(--accent);
+}
+.nav-item .nav-icon { font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }
+.nav-item .nav-label { overflow: hidden; transition: opacity 0.2s; }
+.sidebar.collapsed .nav-item { padding: 10px 16px; justify-content: center; }
+.sidebar.collapsed .nav-item .nav-label { display: none; }
+.sidebar.collapsed .nav-item { border-left: none; border-radius: 6px; }
+.sidebar.collapsed .nav-item:hover { background: var(--bg-sidebar-hover); }
+.sidebar.collapsed .nav-item.active { background: var(--bg-sidebar-active); }
+
+/* System Health Panel in sidebar */
+.sidebar-health {
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 12px 16px;
+  flex-shrink: 0;
+}
+.health-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-muted); margin-bottom: 8px;
+}
+.sidebar.collapsed .health-title { display: none; }
+.health-items { display: flex; gap: 8px; flex-wrap: wrap; }
+.health-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 10px;
+  font-size: 11px; background: rgba(255,255,255,0.06);
+}
+.health-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.health-dot.ok { background: #3fb950; }
+.health-dot.warn { background: #f0883e; }
+.health-dot.err { background: #f85149; }
+.sidebar.collapsed .health-items { display: none; }
+
+/* Sidebar status */
+.sidebar-status {
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+.status-row {
+  display: flex; align-items: center; gap: 8px;
 }
 .status-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--success);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #3fb950;
   animation: pulse 2s infinite;
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-.theme-toggle {
-  width: 36px; height: 36px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--bg-tertiary);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
-  transition: all 0.2s;
+.status-text { font-size: 12px; color: var(--text-muted); }
+.sidebar.collapsed .sidebar-status { display: none; }
+
+/* ═══════════════════════════════════════
+   Main Content Area
+   ═══════════════════════════════════════ */
+.main-area {
+  margin-left: var(--sidebar-width);
+  flex: 1;
+  transition: margin-left 0.25s ease;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
-.theme-toggle:hover { background: var(--accent); color: white; }
-/* Navigation */
-nav {
+.sidebar.collapsed ~ .main-area { margin-left: var(--sidebar-collapsed); }
+
+/* Header */
+.top-header {
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+  padding: 0 24px;
+  height: var(--header-height);
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: var(--shadow);
 }
-.nav-inner {
-  display: flex;
-  gap: 0;
-  padding: 0 20px;
+.top-header-left { display: flex; align-items: center; gap: 16px; }
+.top-header-right { display: flex; align-items: center; gap: 12px; }
+.header-title { font-size: 18px; font-weight: 700; }
+
+/* Quick Filters Bar */
+.filters-bar {
+  padding: 8px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
 }
-.tab-btn {
-  padding: 12px 20px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--text-secondary);
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-  white-space: nowrap;
-  display: flex; align-items: center; gap: 6px;
+.filters-bar input, .filters-bar select {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
 }
-.tab-btn:hover { color: var(--accent); }
-.tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
+.filters-bar input { width: 220px; }
+.filters-bar input:focus, .filters-bar select:focus { outline: none; border-color: var(--accent); }
+.filters-bar .filter-label { font-size: 12px; color: var(--text-muted); }
+.btn {
+  padding: 6px 14px; border: none; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: all 0.15s;
 }
-/* Main Content */
-main { padding: 24px 0; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-danger { background: var(--danger); color: white; }
+.btn-danger:hover { opacity: 0.9; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--bg-tertiary); }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--bg-tertiary);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 15px; transition: all 0.2s;
+}
+.theme-toggle:hover { background: var(--accent); color: white; }
+
+/* Main content */
+.main-content { padding: 24px; flex: 1; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
-/* Cards */
+
+/* ═══════════════════════════════════════
+   Cards & Components
+   ═══════════════════════════════════════ */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -147,14 +307,14 @@ main { padding: 24px 0; }
   overflow: hidden;
 }
 .card-header {
-  padding: 16px 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
-  font-weight: 600;
-  font-size: 15px;
+  font-weight: 600; font-size: 15px;
   color: var(--text-primary);
   display: flex; align-items: center; justify-content: space-between;
 }
 .card-body { padding: 20px; }
+
 /* Stats Grid */
 .stats-grid {
   display: grid;
@@ -167,12 +327,42 @@ main { padding: 24px 0; }
   border-radius: var(--radius);
   padding: 20px;
   box-shadow: var(--shadow);
+  transition: transform 0.15s, box-shadow 0.15s;
 }
+.stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .stat-value { font-size: 28px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
 .stat-label { font-size: 13px; color: var(--text-secondary); }
 .stat-change { font-size: 12px; margin-top: 4px; }
 .stat-change.positive { color: var(--success); }
 .stat-change.negative { color: var(--danger); }
+
+/* Threat Summary Widget */
+.threat-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.threat-card {
+  padding: 16px;
+  border-radius: var(--radius);
+  border-left: 4px solid;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.threat-card:hover { transform: scale(1.02); }
+.threat-card.critical { background: #fef2f2; border-color: #ef4444; }
+.threat-card.high { background: #fff7ed; border-color: #f97316; }
+.threat-card.medium { background: #fffbeb; border-color: #eab308; }
+.threat-card.low { background: #f0fdf4; border-color: #22c55e; }
+[data-theme="dark"] .threat-card.critical { background: #2d1215; }
+[data-theme="dark"] .threat-card.high { background: #2d1f0e; }
+[data-theme="dark"] .threat-card.medium { background: #2d2a0e; }
+[data-theme="dark"] .threat-card.low { background: #0e2d1a; }
+.threat-count { font-size: 24px; font-weight: 700; }
+.threat-label { font-size: 11px; text-transform: uppercase; color: var(--text-secondary); margin-top: 2px; }
+
 /* Tables */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
@@ -180,17 +370,36 @@ th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--bo
 th { background: var(--bg-tertiary); font-weight: 600; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
 tr:hover { background: var(--bg-tertiary); }
 .badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
+  display: inline-block; padding: 2px 8px; border-radius: 12px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
 }
 .badge-pass { background: #d4edda; color: #155724; }
 .badge-block { background: #f8d7da; color: #721c24; }
+.badge-warning { background: #fff3cd; color: #856404; }
 [data-theme="dark"] .badge-pass { background: #1a3a2a; color: #3fb950; }
 [data-theme="dark"] .badge-block { background: #3a1a1a; color: #f85149; }
+[data-theme="dark"] .badge-warning { background: #3a3a1a; color: #f0883e; }
+
+/* Incident Timeline */
+.timeline { position: relative; padding-left: 24px; }
+.timeline::before {
+  content: ''; position: absolute; left: 8px; top: 0; bottom: 0;
+  width: 2px; background: var(--border);
+}
+.timeline-item { position: relative; padding-bottom: 16px; }
+.timeline-item::before {
+  content: ''; position: absolute; left: -20px; top: 4px;
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--bg-primary);
+}
+.timeline-item.critical::before { background: #ef4444; border-color: #ef4444; }
+.timeline-item.high::before { background: #f97316; border-color: #f97316; }
+.timeline-item.medium::before { background: #eab308; border-color: #eab308; }
+.timeline-item.low::before { background: #22c55e; border-color: #22c55e; }
+.timeline-time { font-size: 11px; color: var(--text-muted); }
+.timeline-title { font-weight: 600; font-size: 14px; margin-top: 2px; }
+.timeline-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
 /* Charts */
 .chart-container { position: relative; padding: 20px 0; }
 .bar-chart { display: flex; flex-direction: column; gap: 8px; }
@@ -199,73 +408,43 @@ tr:hover { background: var(--bg-tertiary); }
 .bar-track { flex: 1; height: 24px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.5s ease; }
 .bar-value { width: 80px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+
 /* Loading */
 .loading { text-align: center; padding: 40px; color: var(--text-muted); }
-.loading-spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 12px; }
+.loading-spinner {
+  display: inline-block; width: 32px; height: 32px;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 1s linear infinite;
+  margin-bottom: 12px;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
+
 /* Error */
 .error-msg { background: var(--danger); color: white; padding: 16px; border-radius: var(--radius); margin: 16px 0; }
+
 /* Lists */
 .list-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .list-item:last-child { border-bottom: none; }
 .list-title { font-weight: 600; color: var(--text-primary); }
 .list-meta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
 /* Geo Map */
 .geo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
 .geo-item {
   display: flex; align-items: center; gap: 12px;
-  padding: 12px;
-  background: var(--bg-tertiary);
+  padding: 12px; background: var(--bg-tertiary);
   border-radius: var(--radius-sm);
 }
 .geo-flag { font-size: 24px; }
 .geo-info { flex: 1; }
 .geo-name { font-weight: 600; font-size: 14px; }
 .geo-count { font-size: 12px; color: var(--text-secondary); }
-/* Responsive */
-@media (max-width: 768px) {
-  .grid { grid-template-columns: 1fr; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .bar-label { width: 80px !important; }
-}
-/* Heatmap */
-.heatmap-grid { display: flex; flex-direction: column; gap: 1px; }
-.heatmap-cell { width: 18px; height: 16px; border-radius: 1px; cursor: pointer; flex-shrink: 0; }
-.heatmap-cell:hover { transform: scale(2); z-index: 10; position: relative; }
-.heatmap-row { display: flex; align-items: center; }
-.heatmap-row-label { width: 50px; font-size: 10px; color: var(--text-muted); text-align: right; padding-right: 6px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.heatmap-labels { display: flex; margin-top: 8px; }
-/* Mutes */
-.mute-form { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.mute-form input, .mute-form select {
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 14px;
-}
-.mute-form input:focus, .mute-form select:focus { outline: none; border-color: var(--accent); }
-.btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-.btn-primary { background: var(--accent); color: white; }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-danger { background: var(--danger); color: white; }
-.btn-danger:hover { opacity: 0.9; }
-.btn-sm { padding: 4px 10px; font-size: 12px; }
-/* OPNsense */
+
+/* OPNsense Status */
 .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
 .status-item {
   display: flex; align-items: center; gap: 12px;
-  padding: 16px;
-  background: var(--bg-tertiary);
+  padding: 16px; background: var(--bg-tertiary);
   border-radius: var(--radius);
 }
 .status-icon { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; }
@@ -277,379 +456,579 @@ tr:hover { background: var(--bg-tertiary); }
 [data-theme="dark"] .status-icon.err { background: #3a1a1a; color: #f85149; }
 .status-text { font-weight: 600; }
 .status-detail { font-size: 12px; color: var(--text-secondary); }
+
+/* Mutes */
+.mute-form { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.mute-form input, .mute-form select {
+  padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary); color: var(--text-primary);
+  font-size: 14px;
+}
+.mute-form input:focus, .mute-form select:focus { outline: none; border-color: var(--accent); }
+
+/* Heatmap */
+.heatmap-grid { display: flex; flex-direction: column; gap: 1px; }
+.heatmap-cell { width: 18px; height: 16px; border-radius: 1px; cursor: pointer; flex-shrink: 0; }
+.heatmap-cell:hover { transform: scale(2); z-index: 10; position: relative; }
+.heatmap-row { display: flex; align-items: center; }
+.heatmap-row-label { width: 50px; font-size: 10px; color: var(--text-muted); text-align: right; padding-right: 6px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heatmap-labels { display: flex; margin-top: 8px; }
+
+/* Metric block helper */
+.metric-card {
+  background: var(--bg-secondary); padding: 16px; border-radius: 6px;
+  border: 1px solid var(--border); text-align: center;
+}
+.metric-value { font-size: 22px; font-weight: 700; color: var(--accent); }
+.metric-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar { width: var(--sidebar-collapsed); }
+  .sidebar .sidebar-brand, .sidebar .nav-label, .sidebar .chevron,
+  .sidebar .health-title, .sidebar .health-items, .sidebar .sidebar-status { display: none; }
+  .sidebar .nav-group-header { justify-content: center; }
+  .sidebar .nav-item { justify-content: center; padding: 10px 16px; }
+  .main-area { margin-left: var(--sidebar-collapsed); }
+  .grid { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .bar-label { width: 80px !important; }
+  .threat-summary { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Scrollbar for sidebar */
+.sidebar-nav::-webkit-scrollbar { width: 4px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="container">
-    <div class="header-inner">
-      <div class="logo">
-        <div class="logo-icon">FW</div>
-        <div class="logo-text">Firewall Dashboard</div>
-      </div>
-      <div class="header-actions">
-        <div class="status-badge">
-          <span class="status-dot" id="statusDot"></span>
-          <span id="statusText">Connecting...</span>
-        </div>
-        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">🌓</button>
-      </div>
-    </div>
+<!-- ═══════════════════════════════════════
+     Sidebar Navigation
+     ═══════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-logo">FW</div>
+    <div class="sidebar-brand">Firewall Dashboard</div>
   </div>
-</header>
+  <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">◀</button>
 
-<nav>
-  <div class="container">
-    <div class="nav-inner" id="navTabs">
-      <button class="tab-btn active" data-tab="overview">📊 Overview</button>
-      <button class="tab-btn" data-tab="heatmap">🔥 Heatmap</button>
-      <button class="tab-btn" data-tab="flows">🔄 Flows</button>
-      <button class="tab-btn" data-tab="ipflow">🔗 IP Flow</button>
-      <button class="tab-btn" data-tab="alerts">🚨 Alerts</button>
-      <button class="tab-btn" data-tab="mutes">🔇 Mutes</button>
-      <button class="tab-btn" data-tab="geo">🌍 Geo</button>
-      <button class="tab-btn" data-tab="opnsense">🔌 OPNsense</button>
-      <button class="tab-btn" data-tab="wan-flap">🌊 WAN Flaps</button>
-      <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
-      <button class="tab-btn" data-tab="logs">📋 Log Search</button>
-      <button class="tab-btn" data-tab="network">🌐 Network Map</button>
-      <button class="tab-btn" data-tab="rules">🛡️ Rules</button>
-      <button class="tab-btn" data-tab="syslogs">📋 System Logs</button>
-      <button class="tab-btn" data-tab="services">🔧 Services</button>
-      <button class="tab-btn" data-tab="rules-classified">🤖 Rules ML</button>
-    </div>
-  </div>
-</nav>
-
-<main class="container">
-  <!-- Overview Tab -->
-  <div class="tab-content active" id="tab-overview">
-    <div class="grid" id="statsCards"></div>
-    <div class="grid">
-      <div class="card">
-        <div class="card-header">Recent Activity</div>
-        <div class="card-body" id="recentActivity">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
+  <nav class="sidebar-nav" id="sidebarNav">
+    <!-- Dashboard Group -->
+    <div class="nav-group" data-group="dashboard">
+      <div class="nav-group-header" onclick="toggleGroup('dashboard')">
+        <span>📊 Dashboard</span><span class="chevron">▼</span>
       </div>
-      <div class="card">
-        <div class="card-header">Top Countries</div>
-        <div class="card-body" id="topCountries">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      <div class="nav-items">
+        <div class="nav-item active" data-tab="overview" onclick="switchTab('overview')">
+          <span class="nav-icon">📊</span><span class="nav-label">Overview</span>
+        </div>
+        <div class="nav-item" data-tab="heatmap" onclick="switchTab('heatmap')">
+          <span class="nav-icon">🔥</span><span class="nav-label">Heatmap</span>
+        </div>
+        <div class="nav-item" data-tab="flows" onclick="switchTab('flows')">
+          <span class="nav-icon">🔄</span><span class="nav-label">Traffic Flows</span>
+        </div>
+        <div class="nav-item" data-tab="ipflow" onclick="switchTab('ipflow')">
+          <span class="nav-icon">🔗</span><span class="nav-label">IP Flow</span>
         </div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-header">Traffic by Severity</div>
-      <div class="card-body">
-        <div class="bar-chart" id="severityChart"></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Heatmap Tab -->
-  <div class="tab-content" id="tab-heatmap">
-    <div class="card">
-      <div class="card-header">24-Hour Event Heatmap — ntopng style</div>
-      <div class="card-body">
-        <canvas id="heatmapGrid" width="1200" height="500" style="width:100%;border-radius:4px;background:var(--bg-primary);cursor:grab"></canvas>
-        <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-muted)">
-          <span>Viridis color scale | Scroll to zoom | Drag to pan | Auto-refresh: 30s</span>
+    <!-- Threats Group -->
+    <div class="nav-group" data-group="threats">
+      <div class="nav-group-header" onclick="toggleGroup('threats')">
+        <span>🚨 Threats</span><span class="chevron">▼</span>
+      </div>
+      <div class="nav-items">
+        <div class="nav-item" data-tab="alerts" onclick="switchTab('alerts')">
+          <span class="nav-icon">🚨</span><span class="nav-label">Alerts</span>
+        </div>
+        <div class="nav-item" data-tab="rules-classified" onclick="switchTab('rules-classified')">
+          <span class="nav-icon">🤖</span><span class="nav-label">Rules ML</span>
+        </div>
+        <div class="nav-item" data-tab="mutes" onclick="switchTab('mutes')">
+          <span class="nav-icon">🔇</span><span class="nav-label">Mutes</span>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Flows Tab (ntopng-style Sankey) -->
-  <div class="tab-content" id="tab-flows">
-    <div class="card">
-      <div class="card-header">Traffic Flows — Top Talkers Sankey Diagram</div>
-      <div class="card-body">
-        <div style="text-align:center;color:var(--text-muted);padding:40px" id="flowsLoading">
-          <div class="loading-spinner" style="margin:0 auto 12px"></div>
-          Loading flows...
-        </div>
-        <canvas id="flowsSankey" width="1200" height="600" style="display:none;width:100%;border-radius:4px;background:var(--bg-primary)"></canvas>
-        <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:var(--text-muted)">
-          <span>← Top Talkers (Source) →    Traffic Flows ←    Top Talkers (Destination) → &nbsp;|&nbsp; Auto-refresh: 30s</span>
-          <span id="flowsControls"></span>
-        </div>
-        <div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap" id="flowsSummary"></div>
+    <!-- Network Group -->
+    <div class="nav-group" data-group="network">
+      <div class="nav-group-header" onclick="toggleGroup('network')">
+        <span>🌐 Network</span><span class="chevron">▼</span>
       </div>
-    </div>
-  </div>
-
-  <!-- IP Flow Tab -->
-  <div class="tab-content" id="tab-ipflow">
-    <div class="card">
-      <div class="card-header">Top Source IPs</div>
-      <div class="card-body">
-        <div class="table-wrap" id="ipFlowTable">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      <div class="nav-items">
+        <div class="nav-item" data-tab="geo" onclick="switchTab('geo')">
+          <span class="nav-icon">🌍</span><span class="nav-label">Geo</span>
+        </div>
+        <div class="nav-item" data-tab="opnsense" onclick="switchTab('opnsense')">
+          <span class="nav-icon">🔌</span><span class="nav-label">OPNsense</span>
+        </div>
+        <div class="nav-item" data-tab="wan-flap" onclick="switchTab('wan-flap')">
+          <span class="nav-icon">🌊</span><span class="nav-label">WAN Flaps</span>
+        </div>
+        <div class="nav-item" data-tab="network" onclick="switchTab('network')">
+          <span class="nav-icon">🌐</span><span class="nav-label">Network Map</span>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Alerts Tab -->
-  <div class="tab-content" id="tab-alerts">
-    <div class="card">
-      <div class="card-header">Recent Alerts</div>
-      <div class="card-body" id="alertsList">
-        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+    <!-- Services Group -->
+    <div class="nav-group" data-group="services">
+      <div class="nav-group-header" onclick="toggleGroup('services')">
+        <span>🔧 Services</span><span class="chevron">▼</span>
       </div>
+      <div class="nav-items">
+        <div class="nav-item" data-tab="services" onclick="switchTab('services')">
+          <span class="nav-icon">🔧</span><span class="nav-label">Services</span>
+        </div>
+        <div class="nav-item" data-tab="rules" onclick="switchTab('rules')">
+          <span class="nav-icon">🛡️</span><span class="nav-label">Firewall Rules</span>
+        </div>
+        <div class="nav-item" data-tab="syslogs" onclick="switchTab('syslogs')">
+          <span class="nav-icon">📋</span><span class="nav-label">System Logs</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics Group -->
+    <div class="nav-group" data-group="analytics">
+      <div class="nav-group-header" onclick="toggleGroup('analytics')">
+        <span>📈 Analytics</span><span class="chevron">▼</span>
+      </div>
+      <div class="nav-items">
+        <div class="nav-item" data-tab="logs" onclick="switchTab('logs')">
+          <span class="nav-icon">📋</span><span class="nav-label">Log Search</span>
+        </div>
+        <div class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+          <span class="nav-icon">⚙️</span><span class="nav-label">Settings</span>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- System Health Panel -->
+  <div class="sidebar-health">
+    <div class="health-title">System Health</div>
+    <div class="health-items" id="sidebarHealth">
+      <div class="health-chip"><span class="health-dot ok" id="healthPostgres"></span> Postgres</div>
+      <div class="health-chip"><span class="health-dot ok" id="healthRedis"></span> Redis</div>
+      <div class="health-chip"><span class="health-dot ok" id="healthOpnsense"></span> OPNsense</div>
     </div>
   </div>
 
-  <!-- Mutes Tab -->
-  <div class="tab-content" id="tab-mutes">
-    <div class="card">
-      <div class="card-header">Manage Mutes</div>
-      <div class="card-body">
-        <div class="mute-form">
-          <input type="text" id="muteIP" placeholder="IP Address">
-          <input type="text" id="muteDuration" placeholder="Duration (e.g., 1h, 24h)" value="1h">
-          <select id="muteReason">
-            <option>False Positive</option>
-            <option>Trusted Source</option>
-            <option>Testing</option>
-            <option>Other</option>
-          </select>
-          <button class="btn btn-primary" onclick="addMute()">Add Mute</button>
-        </div>
-        <div id="mutesList">
-          <div class="loading"><div class="loading-spinner"></div>Loading mutes...</div>
-        </div>
-      </div>
+  <!-- Status -->
+  <div class="sidebar-status">
+    <div class="status-row">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Connecting...</span>
     </div>
   </div>
+</aside>
 
-  <!-- Geo Tab -->
-  <div class="tab-content" id="tab-geo">
-    <div class="card">
-      <div class="card-header">Traffic by Country</div>
-      <div class="card-body">
-        <div class="geo-grid" id="geoGrid"></div>
-      </div>
+<!-- ═══════════════════════════════════════
+     Main Content Area
+     ═══════════════════════════════════════ -->
+<div class="main-area">
+  <!-- Top Header -->
+  <header class="top-header">
+    <div class="top-header-left">
+      <h1 class="header-title" id="headerTitle">Overview</h1>
     </div>
+    <div class="top-header-right">
+      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">🌓</button>
+    </div>
+  </header>
+
+  <!-- Quick Filters Bar -->
+  <div class="filters-bar">
+    <span class="filter-label">🔍 Filter:</span>
+    <input type="text" id="quickFilter" placeholder="Search IP, rule, keyword..." onkeydown="if(event.key==='Enter')applyQuickFilter()">
+    <select id="quickFilterType">
+      <option value="all">All</option>
+      <option value="ip">IP Address</option>
+      <option value="rule">Rule</option>
+      <option value="severity">Severity</option>
+    </select>
+    <button class="btn btn-primary btn-sm" onclick="applyQuickFilter()">Apply</button>
+    <button class="btn btn-ghost btn-sm" onclick="clearQuickFilter()">Clear</button>
+    <span style="flex:1"></span>
+    <span id="filterHint" style="font-size:12px;color:var(--text-muted)"></span>
   </div>
 
-  <!-- OPNsense Tab -->
-  <div class="tab-content" id="tab-opnsense">
-    <div class="card">
-      <div class="card-header">OPNsense Connection Status</div>
-      <div class="card-body">
-        <div class="status-grid" id="opnsenseStatus"></div>
-      </div>
-    </div>
-  </div>
+  <!-- Main Content -->
+  <div class="main-content">
 
-  <!-- Rules Tab -->
-  <div class="tab-content" id="tab-rules">
-    <div class="card">
-      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-        <span>Firewall Rules</span>
-        <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
-          🔄 Refresh Rules
-        </button>
-      </div>
-      <div class="card-body">
-        <div class="table-wrap" id="rulesTable">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+    <!-- Overview Tab -->
+    <div class="tab-content active" id="tab-overview">
+      <!-- Threat Summary Widget (NEW FEATURE) -->
+      <div class="threat-summary" id="threatSummary">
+        <div class="threat-card critical" onclick="switchTab('alerts')">
+          <div class="threat-count" id="threatCritical">0</div>
+          <div class="threat-label">Critical</div>
+        </div>
+        <div class="threat-card high" onclick="switchTab('alerts')">
+          <div class="threat-count" id="threatHigh">0</div>
+          <div class="threat-label">High</div>
+        </div>
+        <div class="threat-card medium" onclick="switchTab('alerts')">
+          <div class="threat-count" id="threatMedium">0</div>
+          <div class="threat-label">Medium</div>
+        </div>
+        <div class="threat-card low" onclick="switchTab('alerts')">
+          <div class="threat-count" id="threatLow">0</div>
+          <div class="threat-label">Low</div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- System Logs Tab -->
-  <div class="tab-content" id="tab-syslogs">
-    <div class="card">
-      <div class="card-header">System Logs</div>
-      <div class="card-body">
-        <div class="table-wrap" id="syslogsTable">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-    </div>
-  </div>
+      <!-- Stats Grid -->
+      <div class="stats-grid" id="statsCards"></div>
 
-  <!-- Services Tab -->
-  <div class="tab-content" id="tab-services">
-    <div class="grid">
-      <div class="card">
-        <div class="card-header">📊 Service Overview</div>
-        <div class="card-body" id="servicesOverview">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">🚨 Active Alerts</div>
-        <div class="card-body" id="serviceAlerts">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-    </div>
-    <div class="grid">
-      <div class="card">
-        <div class="card-header">🔵 DHCP — Lease Management</div>
-        <div class="card-body" id="dhcpStatus">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">🔵 Unbound — DNS Resolver</div>
-        <div class="card-body" id="unboundStatus">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">🔵 NTP — Time Sync</div>
-        <div class="card-body" id="ntpStatus">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">🔵 OpenVPN — Virtual Private Network</div>
-        <div class="card-body" id="openvpnStatus">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">🔵 WireGuard — Modern VPN</div>
-        <div class="card-body" id="wireguardStatus">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Settings Tab -->
-  <div class="tab-content" id="tab-settings">
-    <div class="card">
-      <div class="card-header">⚙️ Alert Sensitivity & Thresholds</div>
-      <div class="card-body" id="settingsContent">
-        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Log Search Tab -->
-  <div class="tab-content" id="tab-logs">
-    <div class="card">
-      <div class="card-header">📋 Log Search & Filter</div>
-      <div class="card-body">
-        <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-          <div>
-            <label>Source IP</label>
-            <input type="text" id="logSrcIp" placeholder="e.g. 192.168.1.100" class="form-input">
+      <div class="grid" style="margin-top:20px">
+        <!-- Incident Timeline (NEW FEATURE) -->
+        <div class="card">
+          <div class="card-header">
+            <span>⚡ Incident Timeline</span>
+            <span style="font-size:12px;color:var(--text-muted)" id="timelineCount">Loading...</span>
           </div>
-          <div>
-            <label>Days</label>
-            <input type="number" id="logDays" value="7" min="1" max="90" class="form-input">
+          <div class="card-body">
+            <div class="timeline" id="incidentTimeline">
+              <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+            </div>
           </div>
         </div>
-        <button class="btn btn-primary" onclick="searchLogs()">🔍 Search Logs</button>
-        <div id="logResults" style="margin-top: 15px; max-height: 500px; overflow-y: auto;">
-          <p style="color:var(--text-muted)">Enter search criteria and click Search</p>
+
+        <!-- Traffic by Severity -->
+        <div class="card">
+          <div class="card-header">Traffic by Severity</div>
+          <div class="card-body">
+            <div class="bar-chart" id="severityChart"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <div class="card-header">Top Countries</div>
+          <div class="card-body" id="topCountries">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">Recent Activity</div>
+          <div class="card-body" id="recentActivity">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- Network Map Tab -->
-  <div class="tab-content" id="tab-network">
-    <div class="card">
-      <div class="card-header">🌐 Network Topology Map</div>
-      <div class="card-body" id="networkMapContent">
-        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+    <!-- Heatmap Tab -->
+    <div class="tab-content" id="tab-heatmap">
+      <div class="card">
+        <div class="card-header">24-Hour Event Heatmap — ntopng style</div>
+        <div class="card-body">
+          <canvas id="heatmapGrid" width="1200" height="500" style="width:100%;border-radius:4px;background:var(--bg-primary);cursor:grab"></canvas>
+          <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-muted)">
+            <span>Viridis color scale | Scroll to zoom | Drag to pan | Auto-refresh: 30s</span>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- WAN Flap Monitoring Tab -->
-  <div class="tab-content" id="tab-wan-flap">
-    <div class="grid">
+    <!-- Flows Tab -->
+    <div class="tab-content" id="tab-flows">
       <div class="card">
-        <div class="card-header">🌊 WAN Flap Status <button class="btn-sm" onclick="loadWanFlapStatus()">🔄 Refresh</button></div>
-        <div class="card-body" id="wanFlapStatus">
+        <div class="card-header">Traffic Flows — Top Talkers Sankey Diagram</div>
+        <div class="card-body">
+          <div style="text-align:center;color:var(--text-muted);padding:40px" id="flowsLoading">
+            <div class="loading-spinner" style="margin:0 auto 12px"></div>
+            Loading flows...
+          </div>
+          <canvas id="flowsSankey" width="1200" height="600" style="display:none;width:100%;border-radius:4px;background:var(--bg-primary)"></canvas>
+          <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:var(--text-muted)">
+            <span>← Top Talkers (Source) →    Traffic Flows ←    Top Talkers (Destination) →</span>
+            <span id="flowsControls"></span>
+          </div>
+          <div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap" id="flowsSummary"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IP Flow Tab -->
+    <div class="tab-content" id="tab-ipflow">
+      <div class="card">
+        <div class="card-header">Top Source IPs</div>
+        <div class="card-body">
+          <div class="table-wrap" id="ipFlowTable">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alerts Tab -->
+    <div class="tab-content" id="tab-alerts">
+      <div class="card">
+        <div class="card-header">Recent Alerts</div>
+        <div class="card-body" id="alertsList">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mutes Tab -->
+    <div class="tab-content" id="tab-mutes">
+      <div class="card">
+        <div class="card-header">Manage Mutes</div>
+        <div class="card-body">
+          <div class="mute-form">
+            <input type="text" id="muteIP" placeholder="IP Address">
+            <input type="text" id="muteDuration" placeholder="Duration (e.g., 1h, 24h)" value="1h">
+            <select id="muteReason">
+              <option>False Positive</option>
+              <option>Trusted Source</option>
+              <option>Testing</option>
+              <option>Other</option>
+            </select>
+            <button class="btn btn-primary" onclick="addMute()">Add Mute</button>
+          </div>
+          <div id="mutesList">
+            <div class="loading"><div class="loading-spinner"></div>Loading mutes...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Geo Tab -->
+    <div class="tab-content" id="tab-geo">
+      <div class="card">
+        <div class="card-header">Traffic by Country</div>
+        <div class="card-body">
+          <div class="geo-grid" id="geoGrid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPNsense Tab -->
+    <div class="tab-content" id="tab-opnsense">
+      <div class="card">
+        <div class="card-header">OPNsense Connection Status</div>
+        <div class="card-body">
+          <div class="status-grid" id="opnsenseStatus"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rules Tab -->
+    <div class="tab-content" id="tab-rules">
+      <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Firewall Rules</span>
+          <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+            🔄 Refresh Rules
+          </button>
+        </div>
+        <div class="card-body">
+          <div class="table-wrap" id="rulesTable">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- System Logs Tab -->
+    <div class="tab-content" id="tab-syslogs">
+      <div class="card">
+        <div class="card-header">System Logs</div>
+        <div class="card-body">
+          <div class="table-wrap" id="syslogsTable">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Services Tab -->
+    <div class="tab-content" id="tab-services">
+      <div class="grid">
+        <div class="card">
+          <div class="card-header">📊 Service Overview</div>
+          <div class="card-body" id="servicesOverview">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">🚨 Active Alerts</div>
+          <div class="card-body" id="serviceAlerts">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <div class="card-header">🔵 DHCP — Lease Management</div>
+          <div class="card-body" id="dhcpStatus">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">🔵 Unbound — DNS Resolver</div>
+          <div class="card-body" id="unboundStatus">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">🔵 NTP — Time Sync</div>
+          <div class="card-body" id="ntpStatus">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">🔵 OpenVPN — Virtual Private Network</div>
+          <div class="card-body" id="openvpnStatus">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">🔵 WireGuard — Modern VPN</div>
+          <div class="card-body" id="wireguardStatus">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-content" id="tab-settings">
+      <div class="card">
+        <div class="card-header">⚙️ Alert Sensitivity &amp; Thresholds</div>
+        <div class="card-body" id="settingsContent">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log Search Tab -->
+    <div class="tab-content" id="tab-logs">
+      <div class="card">
+        <div class="card-header">📋 Log Search &amp; Filter</div>
+        <div class="card-body">
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+            <div>
+              <label>Source IP</label>
+              <input type="text" id="logSrcIp" placeholder="e.g. 192.168.1.100" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary);color:var(--text-primary);font-size:14px">
+            </div>
+            <div>
+              <label>Days</label>
+              <input type="number" id="logDays" value="7" min="1" max="90" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary);color:var(--text-primary);font-size:14px">
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="searchLogs()">🔍 Search Logs</button>
+          <div id="logResults" style="margin-top: 15px; max-height: 500px; overflow-y: auto;">
+            <p style="color:var(--text-muted)">Enter search criteria and click Search</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Network Map Tab -->
+    <div class="tab-content" id="tab-network">
+      <div class="card">
+        <div class="card-header">🌐 Network Topology Map</div>
+        <div class="card-body" id="networkMapContent">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WAN Flap Monitoring Tab -->
+    <div class="tab-content" id="tab-wan-flap">
+      <div class="grid">
+        <div class="card">
+          <div class="card-header">🌊 WAN Flap Status <button class="btn-sm" onclick="loadWanFlapStatus()">🔄 Refresh</button></div>
+          <div class="card-body" id="wanFlapStatus">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">📋 Recent WAN Flaps (24h)</div>
+          <div class="card-body" id="wanFlapHistory">
+            <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">📊 Flap Statistics</div>
+        <div class="card-body" id="wanFlapStats">
+          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rules ML Tab -->
+    <div class="tab-content" id="tab-rules-classified">
+      <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>🤖 ML Firewall Rule Classification Engine</span>
+          <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+            🔄 Refresh ML Classification
+          </button>
+        </div>
+        <div class="card-body">
+          <p style="color:var(--text-muted);margin-bottom:16px">
+            The ML engine analyzes traffic patterns to classify each firewall rule into one of 3 categories:
+            <strong style="color:#22c55e">Good (legitimate traffic)</strong>,
+            <strong style="color:#ef4444">Abusive (scanning, brute force)</strong>, or
+            <strong style="color:#f59e0b">SUSPICIOUS</strong>.
+            Traffic with no rule falls into <strong style="color:#8b5cf6">Default Deny</strong>.
+          </p>
+          <div class="grid" id="rulesMLSummary"></div>
+          <div id="mlSelfLearningStats" style="margin-top:20px"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🔍 Understanding Classifications</div>
+        <div class="card-body" id="rulesMLExplanation">
           <div class="loading"><div class="loading-spinner"></div>Loading...</div>
         </div>
       </div>
       <div class="card">
-        <div class="card-header">📋 Recent WAN Flaps (24h)</div>
-        <div class="card-body" id="wanFlapHistory">
+        <div class="card-header">📋 Active Learning Queue — Rules Needing Review</div>
+        <div class="card-body" id="activeLearningQueue">
           <div class="loading"><div class="loading-spinner"></div>Loading...</div>
         </div>
       </div>
-    </div>
-    <div class="card">
-      <div class="card-header">📊 Flap Statistics</div>
-      <div class="card-body" id="wanFlapStats">
-        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      <div class="card">
+        <div class="card-header">⚠️ Abusive Rules — Scanning, Brute Force, Suspicious Patterns</div>
+        <div class="card-body" id="rulesMLABUSIVE">
+          <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">✅ Good Rules — Normal, Legitimate Traffic Patterns</div>
+        <div class="card-body" id="rulesMLGOOD">
+          <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">📊 Default Deny — Events Caught Without Any Rule</div>
+        <div class="card-body" id="rulesMLOther">
+          <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Rules ML Tab -->
-  <div class="tab-content" id="tab-rules-classified">
-    <div class="card">
-      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-        <span>🤖 ML Firewall Rule Classification Engine</span>
-        <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
-          🔄 Refresh ML Classification
-        </button>
-      </div>
-      <div class="card-body">
-        <p style="color:var(--text-muted);margin-bottom:16px">
-          The ML engine analyzes traffic patterns to classify each firewall rule into one of 3 categories:
-          <strong style="color:#22c55e">Good (legitimate traffic)</strong>,
-          <strong style="color:#ef4444">Abusive (scanning, brute force)</strong>, or
-          <strong style="color:#f59e0b">SUSPICIOUS</strong>.
-          Traffic with no rule falls into <strong style="color:#8b5cf6">Default Deny</strong>.
-        </p>
-        <div class="grid" id="rulesMLSummary"></div>
-        <div id="mlSelfLearningStats" style="margin-top:20px"></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">🔍 Understanding Classifications</div>
-      <div class="card-body" id="rulesMLExplanation">
-        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">📋 Active Learning Queue — Rules Needing Review</div>
-      <div class="card-body" id="activeLearningQueue">
-        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">⚠️ Abusive Rules — Scanning, Brute Force, Suspicious Patterns</div>
-      <div class="card-body" id="rulesMLABUSIVE">
-        <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">✅ Good Rules — Normal, Legitimate Traffic Patterns</div>
-      <div class="card-body" id="rulesMLGOOD">
-        <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header">📊 Default Deny — Events Caught Without Any Rule</div>
-      <div class="card-body" id="rulesMLOther">
-        <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
-      </div>
-    </div>
-  </div>
-</main>
+  </div><!-- end main-content -->
+</div><!-- end main-area -->
 
 <script>
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
 // Core Functions
-// ═══════════════════════════════════════════
-
+// ═══════════════════════════════════════
 var API_BASE = '';
 var CACHE_BUST = '?v=' + Date.now();
 
@@ -662,79 +1041,80 @@ function apiFetch(path) {
     });
 }
 
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
 // Theme
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
 
 function toggleTheme() {
   var html = document.documentElement;
   var current = html.getAttribute('data-theme');
   html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+  try { localStorage.setItem('fw-theme', html.getAttribute('data-theme')); } catch(e) {}
 }
 
-// ═══════════════════════════════════════════
+// Auto-detect system theme (NEW FEATURE #5)
+function initTheme() {
+  try {
+    var saved = localStorage.getItem('fw-theme');
+    if (saved) {
+      document.documentElement.setAttribute('data-theme', saved);
+    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════
+// Sidebar
+// ═══════════════════════════════════════
+
+function toggleSidebar() {
+  var sb = document.getElementById('sidebar');
+  var tog = document.getElementById('sidebarToggle');
+  sb.classList.toggle('collapsed');
+  tog.textContent = sb.classList.contains('collapsed') ? '▶' : '◀';
+}
+
+function toggleGroup(groupName) {
+  var group = document.querySelector('.nav-group[data-group="' + groupName + '"]');
+  if (group) group.classList.toggle('collapsed');
+}
+
+// ═══════════════════════════════════════
 // Tab Switching
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
 
 function switchTab(tabId) {
-  // DEBUG: Log tab switch attempt
-  console.log('[TAB] switchTab called with:', tabId);
-  
-  // Update nav buttons
-  var btns = document.querySelectorAll('.tab-btn');
-  for (var i = 0; i < btns.length; i++) {
-    var btn = btns[i];
-    var dataTab = btn.getAttribute('data-tab');
-    if (dataTab === tabId) {
-      btn.style.color = '#3b82f6';
-      btn.style.borderBottom = '2px solid #3b82f6';
-      btn.style.fontWeight = '600';
-    } else {
-      btn.style.color = '';
-      btn.style.borderBottom = '';
-      btn.style.fontWeight = '';
+  // Update nav items
+  var items = document.querySelectorAll('.nav-item[data-tab]');
+  for (var i = 0; i < items.length; i++) {
+    items[i].classList.remove('active');
+    if (items[i].getAttribute('data-tab') === tabId) {
+      items[i].classList.add('active');
     }
   }
   // Show content
   var allContent = document.querySelectorAll('.tab-content');
   for (var i = 0; i < allContent.length; i++) {
-    var contentDiv = allContent[i];
-    if (contentDiv.id === 'tab-' + tabId) {
-      contentDiv.style.display = 'block';
-    } else {
-      contentDiv.style.display = 'none';
+    allContent[i].classList.remove('active');
+    if (allContent[i].id === 'tab-' + tabId) {
+      allContent[i].classList.add('active');
     }
   }
+  // Update header title
+  var titleMap = {
+    'overview': 'Overview', 'heatmap': 'Heatmap', 'flows': 'Traffic Flows',
+    'ipflow': 'IP Flow', 'alerts': 'Alerts', 'mutes': 'Mutes',
+    'geo': 'Geo Distribution', 'opnsense': 'OPNsense', 'wan-flap': 'WAN Flaps',
+    'settings': 'Settings', 'logs': 'Log Search', 'network': 'Network Map',
+    'rules': 'Firewall Rules', 'syslogs': 'System Logs',
+    'services': 'Services', 'rules-classified': 'Rules ML'
+  };
+  document.getElementById('headerTitle').textContent = titleMap[tabId] || tabId;
+
   // Load tab data
-  try {
-    loadTabData(tabId);
-    console.log('[TAB] loadTabData succeeded for:', tabId);
-  } catch(e) {
-    console.error('[TAB] loadTabData failed for', tabId, ':', e);
-  }
+  loadTabData(tabId);
 }
-
-// Register event listeners for tab buttons
-window.addEventListener('DOMContentLoaded', function() {
-  console.log('[TAB] Registering click handlers...');
-  var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
-  console.log('[TAB] Found', tabButtons.length, 'tab buttons');
-  for (var i = 0; i < tabButtons.length; i++) {
-    (function(btn) {
-      btn.onclick = function() {
-        var tabId = btn.getAttribute('data-tab');
-        console.log('[TAB] Click on:', tabId);
-        switchTab(tabId);
-        return false;
-      };
-    })(tabButtons[i]);
-  }
-  console.log('[TAB] Done registering click handlers');
-});
-
-// ═══════════════════════════════════════════
-// Tab Data Loaders
-// ═══════════════════════════════════════════
 
 function loadTabData(tabId) {
   switch (tabId) {
@@ -757,19 +1137,71 @@ function loadTabData(tabId) {
   }
 }
 
+// ═══════════════════════════════════════
+// Quick Filters (NEW FEATURE #3)
+// ═══════════════════════════════════════
+
+function applyQuickFilter() {
+  var val = document.getElementById('quickFilter').value.trim();
+  var type = document.getElementById('quickFilterType').value;
+  if (!val) { clearQuickFilter(); return; }
+  
+  var hint = 'Filter: ' + (type !== 'all' ? type + ' → ' : '') + val;
+  document.getElementById('filterHint').textContent = hint;
+  
+  // Apply to current tab's content
+  var activeTab = document.querySelector('.tab-content.active');
+  if (activeTab) {
+    filterContent(activeTab, val, type);
+  }
+}
+
+function clearQuickFilter() {
+  document.getElementById('quickFilter').value = '';
+  document.getElementById('filterHint').textContent = '';
+  var activeTab = document.querySelector('.tab-content.active');
+  if (activeTab) {
+    var rows = activeTab.querySelectorAll('tr');
+    for (var i = 0; i < rows.length; i++) rows[i].style.display = '';
+  }
+}
+
+function filterContent(container, query, type) {
+  query = query.toLowerCase();
+  var rows = container.querySelectorAll('tr, .timeline-item, .geo-item, .status-item');
+  for (var i = 0; i < rows.length; i++) {
+    var text = rows[i].textContent.toLowerCase();
+    var match = text.indexOf(query) !== -1;
+    if (type !== 'all') {
+      // More specific matching for type
+      if (type === 'ip') match = /\b(\d{1,3}\.){3}\d{1,3}\b/.test(text) && text.indexOf(query) !== -1;
+      if (type === 'severity') match = /critical|high|medium|low/i.test(text) && text.indexOf(query) !== -1;
+      if (type === 'rule') match = /rule|uuid|pass|block/i.test(text) && text.indexOf(query) !== -1;
+    }
+    rows[i].style.display = match || query === '' ? '' : 'none';
+  }
+}
+
+// ═══════════════════════════════════════
+// Tab Data Loaders
+// ═══════════════════════════════════════
+
 // Overview
 function loadOverview() {
   Promise.all([
     apiFetch('/api/stats'),
-    apiFetch('/api/health')
+    apiFetch('/api/health'),
+    apiFetch('/api/alerts')
   ]).then(function(results) {
     var stats = results[0];
     var health = results[1];
+    var alerts = results[2];
     if (!stats && !health) {
       updateStatus('error', 'API Error');
       return;
     }
     updateStatus('ok', 'Healthy');
+    
     // Stats cards
     var html = '';
     if (stats) {
@@ -779,6 +1211,7 @@ function loadOverview() {
       html += statCard('Active Mutes', stats.active_mutes || 0);
     }
     document.getElementById('statsCards').innerHTML = html;
+    
     // Severity chart
     if (stats && stats.by_severity) {
       var max = Math.max.apply(null, Object.values(stats.by_severity));
@@ -790,6 +1223,7 @@ function loadOverview() {
       }
       document.getElementById('severityChart').innerHTML = chartHtml;
     }
+    
     // Countries
     if (stats && stats.top_countries) {
       var countriesHtml = '<div class="geo-grid">';
@@ -801,8 +1235,23 @@ function loadOverview() {
       countriesHtml += '</div>';
       document.getElementById('topCountries').innerHTML = countriesHtml;
     }
+    
     // Recent activity
     document.getElementById('recentActivity').innerHTML = '<div class="list-item"><div class="list-title">Dashboard loaded successfully</div><div class="list-meta">' + new Date().toLocaleString() + '</div></div>';
+    
+    // Threat Summary Widget (NEW FEATURE #2)
+    if (stats && stats.by_severity) {
+      document.getElementById('threatCritical').textContent = stats.by_severity['CRITICAL'] || 0;
+      document.getElementById('threatHigh').textContent = stats.by_severity['HIGH'] || 0;
+      document.getElementById('threatMedium').textContent = stats.by_severity['MEDIUM'] || 0;
+      document.getElementById('threatLow').textContent = stats.by_severity['LOW'] || 0;
+    }
+    
+    // Incident Timeline (NEW FEATURE #1)
+    renderIncidentTimeline(alerts || []);
+    
+    // Update sidebar health (NEW FEATURE #4)
+    updateSidebarHealth(health || {});
   });
 }
 
@@ -814,12 +1263,46 @@ function barItem(label, value, pct, color) {
   return '<div class="bar-item"><div class="bar-label">' + label + '</div><div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div><div class="bar-value">' + value + '</div></div>';
 }
 
-// Heatmap — Canvas-based ntopng style
+// Incident Timeline (NEW FEATURE #1)
+function renderIncidentTimeline(alerts) {
+  if (!alerts || alerts.length === 0) {
+    document.getElementById('incidentTimeline').innerHTML = '<p style="color:var(--text-muted);padding:12px 0">No recent incidents</p>';
+    document.getElementById('timelineCount').textContent = '0 incidents';
+    return;
+  }
+  
+  var html = '';
+  var count = 0;
+  for (var i = 0; i < Math.min(alerts.length, 20); i++) {
+    var a = alerts[i];
+    var sev = (a.severity || 'medium').toLowerCase();
+    html += '<div class="timeline-item ' + sev + '">';
+    html += '<div class="timeline-time">' + (a.timestamp ? new Date(a.timestamp).toLocaleString() : 'N/A') + '</div>';
+    html += '<div class="timeline-title">' + escapeHtml(a.attack_type || 'Unknown') + '</div>';
+    html += '<div class="timeline-desc">' + escapeHtml(a.ip || 'N/A') + ' — ' + (a.count || 0) + ' events • ' + escapeHtml(a.interface || '') + '</div>';
+    html += '</div>';
+    count++;
+  }
+  document.getElementById('incidentTimeline').innerHTML = html;
+  document.getElementById('timelineCount').textContent = count + ' incidents';
+}
+
+// Update sidebar health (NEW FEATURE #4)
+function updateSidebarHealth(health) {
+  if (health.services) {
+    var pg = health.services.postgres || {};
+    var rd = health.services.redis || {};
+    document.getElementById('healthPostgres').className = 'health-dot ' + (pg.status === 'ok' ? 'ok' : pg.status === 'warn' ? 'warn' : 'err');
+    document.getElementById('healthRedis').className = 'health-dot ' + (rd.status === 'ok' ? 'ok' : rd.status === 'warn' ? 'warn' : 'err');
+  }
+}
+
+// Heatmap
 var heatmapData = null;
 var heatmapCanvas = null;
 var heatmapCtx = null;
-var heatmapScale = 1; // zoom
-var heatmapOffX = 0; // pan offset
+var heatmapScale = 1;
+var heatmapOffX = 0;
 var heatmapOffY = 0;
 var heatmapDragging = false;
 var heatmapDragStartX = 0;
@@ -844,14 +1327,12 @@ function loadHeatmap() {
     heatmapOffX = 0;
     heatmapOffY = 0;
     drawHeatmap();
-    // Auto-refresh every 30s
     if (heatmapTimer) clearInterval(heatmapTimer);
     heatmapTimer = setInterval(loadHeatmap, 30000);
   });
 }
 
 function viridisColor(t) {
-  // Viridis-like color scale: dark→blue→purple→yellow
   t = Math.max(0, Math.min(1, t));
   var r, g, b;
   if (t < 0.1116) { r = 68; g = 1; b = 84; }
@@ -878,14 +1359,12 @@ function drawHeatmap() {
   var legendH = 30;
   var gridW = cols * cellW;
   var gridH = rows * cellH;
-  var totalW = labelW + gridW + 120; // + legend
+  var totalW = labelW + gridW + 120;
   var totalH = gridH + timeLabelsH + legendH + 40;
 
-  // Handle zoom/pan
   var offsetX = labelW + heatmapOffX;
   var offsetY = timeLabelsH + legendH + 20 + heatmapOffY;
 
-  // Scale canvas to fit viewport
   canvas.width = Math.max(totalW, canvas.offsetWidth || 1200);
   canvas.height = Math.max(totalH, canvas.offsetHeight || 500);
 
@@ -897,7 +1376,6 @@ function drawHeatmap() {
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Find max value for color scale
   var maxVal = 0;
   for (var r = 0; r < data.length; r++) {
     for (var c = 0; c < data[r].length; c++) {
@@ -910,37 +1388,24 @@ function drawHeatmap() {
   ctx.translate(offsetX * heatmapScale, offsetY * heatmapScale);
   ctx.scale(heatmapScale, heatmapScale);
 
-  // Draw grid lines
   ctx.strokeStyle = isDark ? '#30363d' : '#dee2e6';
   ctx.lineWidth = 0.5;
   for (var c = 0; c <= cols; c++) {
-    ctx.beginPath();
-    ctx.moveTo(c * cellW, 0);
-    ctx.lineTo(c * cellW, gridH);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(c * cellW, 0); ctx.lineTo(c * cellW, gridH); ctx.stroke();
   }
   for (var r = 0; r <= rows; r++) {
-    ctx.beginPath();
-    ctx.moveTo(0, r * cellH);
-    ctx.lineTo(gridW, r * cellH);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, r * cellH); ctx.lineTo(gridW, r * cellH); ctx.stroke();
   }
 
-  // Draw cells
   for (var r = 0; r < rows; r++) {
     for (var c = 0; c < cols; c++) {
       var val = data[r][c] || 0;
       var intensity = Math.min(1, val / maxVal);
-      if (intensity > 0) {
-        ctx.fillStyle = viridisColor(intensity);
-      } else {
-        ctx.fillStyle = isDark ? '#161b22' : '#e9ecef';
-      }
+      ctx.fillStyle = intensity > 0 ? viridisColor(intensity) : (isDark ? '#161b22' : '#e9ecef');
       ctx.fillRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
     }
   }
 
-  // Draw IP labels on left
   ctx.fillStyle = mutedColor;
   ctx.font = '9px -apple-system, sans-serif';
   ctx.textAlign = 'right';
@@ -949,7 +1414,6 @@ function drawHeatmap() {
     ctx.fillText(label.substring(0, 12), labelW - 4, r * cellH + cellH / 2 + 3);
   }
 
-  // Draw time labels at bottom
   ctx.fillStyle = mutedColor;
   ctx.font = '9px -apple-system, sans-serif';
   ctx.textAlign = 'center';
@@ -959,14 +1423,12 @@ function drawHeatmap() {
     ctx.fillText(timeLabels[i], colIdx * cellW + cellW / 2, gridH + 14);
   }
 
-  // Draw legend on right
   var legendX = gridW + 8;
   ctx.fillStyle = mutedColor;
   ctx.font = '9px -apple-system, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText('Events', legendX, 10);
 
-  // Color bar
   var barW = 12;
   var barH = 120;
   for (var i = 0; i < barH; i++) {
@@ -975,20 +1437,17 @@ function drawHeatmap() {
     ctx.fillRect(legendX, 16 + i, barW, 1.5);
   }
 
-  // Legend labels
   ctx.fillStyle = mutedColor;
   ctx.font = '8px -apple-system, sans-serif';
   ctx.fillText(maxVal.toLocaleString(), legendX + barW + 4, 22);
   ctx.fillText('0', legendX + barW + 4, 16 + barH);
 
-  // Highlight hovered cell
   if (heatmapHoverCell) {
     var h = heatmapHoverCell;
     ctx.strokeStyle = isDark ? '#58a6ff' : '#4361ee';
     ctx.lineWidth = 2;
     ctx.strokeRect(h.col * cellW + 0.5, h.row * cellH + 0.5, cellW - 1, cellH - 1);
 
-    // Tooltip
     var tooltipX = h.col * cellW + cellW / 2;
     var tooltipY = h.row * cellH - 8;
     ctx.fillStyle = isDark ? '#1c2128' : '#fff';
@@ -996,8 +1455,7 @@ function drawHeatmap() {
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.rect(tooltipX - 60, tooltipY - 30, 120, 28);
-    ctx.fill();
-    ctx.stroke();
+    ctx.fill(); ctx.stroke();
     ctx.fillStyle = textColor;
     ctx.font = '10px -apple-system, sans-serif';
     ctx.textAlign = 'center';
@@ -1008,14 +1466,12 @@ function drawHeatmap() {
 
   ctx.restore();
 
-  // Draw zoom indicator
   ctx.fillStyle = mutedColor;
   ctx.font = '10px -apple-system, sans-serif';
   ctx.textAlign = 'right';
   ctx.fillText('Zoom: ' + Math.round(heatmapScale * 100) + '% | Scroll to zoom, drag to pan', canvas.width - 10, canvas.height - 10);
 }
 
-// Heatmap mouse events for pan/zoom
 function initHeatmapEvents() {
   var canvas = heatmapCanvas;
   if (!canvas) return;
@@ -1034,7 +1490,6 @@ function initHeatmapEvents() {
       drawHeatmap();
       return;
     }
-    // Calculate cell hover
     if (!heatmapData || heatmapScale <= 0.5) return;
     var rect = canvas.getBoundingClientRect();
     var mx = e.clientX - rect.left;
@@ -1056,10 +1511,7 @@ function initHeatmapEvents() {
         drawHeatmap();
       }
     } else {
-      if (heatmapHoverCell) {
-        heatmapHoverCell = null;
-        drawHeatmap();
-      }
+      if (heatmapHoverCell) { heatmapHoverCell = null; drawHeatmap(); }
     }
   });
 
@@ -1084,7 +1536,6 @@ function initHeatmapEvents() {
   canvas.style.cursor = 'grab';
 }
 
-// Init heatmap on DOMContentLoaded
 function initAppHeatmap() {
   loadHeatmap();
   setTimeout(function(){ initHeatmapEvents(); }, 500);
@@ -1181,7 +1632,6 @@ function loadOPNsense() {
       return;
     }
     var html = '';
-    // Build status cards from actual API response
     var statusColor = data.status === 'connected' || data.status === 'active' ? 'ok' : 'err';
     html += '<div class="status-item"><div class="status-icon ' + statusColor + '">🔗</div><div><div class="status-text">API Connection</div><div class="status-detail">' + escapeHtml(data.status || 'Unknown') + '</div></div></div>';
     html += '<div class="status-item"><div class="status-icon ok">⚙️</div><div><div class="status-text">OPNsense Version</div><div class="status-detail">' + escapeHtml(data.opnsense_version || 'Unknown') + '</div></div></div>';
@@ -1226,14 +1676,12 @@ function loadSysLogs() {
       return;
     }
     var html = '';
-    // Summary stats cards
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">';
     html += '<div class="metric-card"><div class="metric-value">' + (data.services_tracked || 0) + '</div><div class="metric-label">Services Tracked</div></div>';
     html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.system_log_events || 0) + '</div><div class="metric-label">System Log Events</div></div>';
     html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.firewall_events || 0) + '</div><div class="metric-label">Firewall Events</div></div>';
     html += '<div class="metric-card"><div class="metric-value">' + formatNum(data.total_events_classified || 0) + '</div><div class="metric-label">Events Classified</div></div>';
     html += '</div>';
-    // Services by volume
     if (data.services_by_volume) {
       html += '<h3 style="font-size:15px;margin-bottom:8px;color:var(--text-secondary)">Services by Volume</h3>';
       html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">';
@@ -1244,7 +1692,6 @@ function loadSysLogs() {
       }
       html += '</div>';
     }
-    // Recent log entries table
     if (data.recent_logs && data.recent_logs.length > 0) {
       html += '<h3 style="font-size:15px;margin-bottom:8px;color:var(--text-secondary)">Recent Log Entries</h3>';
       html += '<table><thead><tr><th>Timestamp</th><th>Type</th><th>Source IP</th><th>Interface</th><th>Message</th></tr></thead><tbody>';
@@ -1260,9 +1707,9 @@ function loadSysLogs() {
   });
 }
 
-// ═══════════════════════════════════════════
-// Services Tab — DHCP, Unbound, NTP, OpenVPN, WireGuard
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
+// Services
+// ═══════════════════════════════════════
 
 function loadServices() {
   apiFetch('/api/service-status').then(function(data) {
@@ -1289,9 +1736,7 @@ function renderServicesOverview(data) {
     html += '<div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">' + name.toUpperCase() + '</div>';
     html += '<div style="font-size:20px;font-weight:600;">' + formatNum(svc.total_events) + ' events</div>';
     html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">';
-    if (svc.last_seen) {
-      html += 'Last: ' + new Date(svc.last_seen).toLocaleTimeString();
-    }
+    if (svc.last_seen) { html += 'Last: ' + new Date(svc.last_seen).toLocaleTimeString(); }
     html += '</div></div>';
   }
   html += '</div>';
@@ -1369,7 +1814,6 @@ function renderNTPStatus(data) {
   
   var svc = data.services.ntp;
   var metrics = svc.metrics || {};
-  var driftSamples = metrics.drift_samples || [];
   var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">';
   html += metricBlock('Total Events', formatNum(svc.total_events));
   html += metricBlock('Sync Attempts', formatNum(metrics.sync_attempts || 0));
@@ -1378,7 +1822,6 @@ function renderNTPStatus(data) {
   html += metricBlock('Avg Drift', (metrics.avg_drift || 0).toFixed(4) + 's');
   html += '</div>';
   
-  // Add drift indicator
   var currentDrift = metrics.current_drift || 0;
   var driftColor = 'var(--success)';
   var driftText = 'Normal';
@@ -1427,13 +1870,13 @@ function metricBlock(label, value) {
     + '</div>';
 }
 
-// ═══════════════════════════════════════════
-// Flows Tab — Modern Refined Sankey Diagram
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
+// Flows — Sankey Diagram
+// ═══════════════════════════════════════
 
 var flowsData = null;
 var flowsScale = 1;
-var flowsTargetScale = 1; // For smooth zoom animation
+var flowsTargetScale = 1;
 var flowsOffX = 0;
 var flowsOffY = 0;
 var flowsTargetOffX = 0;
@@ -1447,66 +1890,44 @@ var flowsHoverLink = null;
 var flowsHoverNode = null;
 var flowsTimer = null;
 var flowsLastDraw = 0;
-var flowsMinDrawInterval = 100; // throttle redraws
+var flowsMinDrawInterval = 100;
 var flowsAutoRefresh = null;
 
-// Smooth easing function
-function easeOutCubic(t) {
-  return 1 - Math.pow(1 - t, 3);
-}
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
-// Animation loop for smooth zoom/pan
 function animateFlows() {
   var now = performance.now();
-  var speed = 0.2; // animation speed factor
+  var speed = 0.2;
   
-  // Interpolate scale
   var scaleDiff = flowsTargetScale - flowsScale;
-  if (Math.abs(scaleDiff) > 0.001) {
-    flowsScale += scaleDiff * speed;
-    flowsAnimating = true;
-  } else {
-    flowsScale = flowsTargetScale;
-  }
+  if (Math.abs(scaleDiff) > 0.001) { flowsScale += scaleDiff * speed; flowsAnimating = true; }
+  else { flowsScale = flowsTargetScale; }
   
-  // Interpolate offset
   var offXDiff = flowsTargetOffX - flowsOffX;
   var offYDiff = flowsTargetOffY - flowsOffY;
   if (Math.abs(offXDiff) > 0.5 || Math.abs(offYDiff) > 0.5) {
-    flowsOffX += offXDiff * speed;
-    flowsOffY += offYDiff * speed;
-    flowsAnimating = true;
-  } else {
-    flowsOffX = flowsTargetOffX;
-    flowsOffY = flowsTargetOffY;
-  }
+    flowsOffX += offXDiff * speed; flowsOffY += offYDiff * speed; flowsAnimating = true;
+  } else { flowsOffX = flowsTargetOffX; flowsOffY = flowsTargetOffY; }
   
   if (flowsAnimating || (now - flowsLastDraw > flowsMinDrawInterval)) {
     flowsLastDraw = now;
     if (flowsData) drawSankey();
   }
   
-  if (flowsAnimating) {
-    requestAnimationFrame(animateFlows);
-  }
+  if (flowsAnimating) { requestAnimationFrame(animateFlows); }
 }
 
 function startFlowsAnimation() {
-  if (!flowsAnimating) {
-    flowsAnimating = true;
-    requestAnimationFrame(animateFlows);
-  }
+  if (!flowsAnimating) { flowsAnimating = true; requestAnimationFrame(animateFlows); }
 }
 
 function triggerFlowsZoom(delta) {
-  var oldScale = flowsScale;
   flowsTargetScale = Math.max(0.5, Math.min(4, flowsTargetScale * delta));
   startFlowsAnimation();
 }
 
 function triggerFlowsPan(deltaX, deltaY) {
-  flowsTargetOffX += deltaX;
-  flowsTargetOffY += deltaY;
+  flowsTargetOffX += deltaX; flowsTargetOffY += deltaY;
   startFlowsAnimation();
 }
 
@@ -1530,16 +1951,11 @@ function loadFlows() {
     loadEl.style.display = 'none';
     canvas.style.display = 'block';
     
-    // Reset view
-    flowsTargetScale = 1;
-    flowsScale = 1;
-    flowsTargetOffX = 0;
-    flowsOffX = 0;
-    flowsTargetOffY = 0;
-    flowsOffY = 0;
+    flowsTargetScale = 1; flowsScale = 1;
+    flowsTargetOffX = 0; flowsOffX = 0;
+    flowsTargetOffY = 0; flowsOffY = 0;
     flowsAnimating = false;
     
-    // Summary cards
     var html = '<div style="display:flex;gap:12px;flex-wrap:wrap">';
     html += '<div class="metric-card"><div class="metric-value">' + data.total_flows + '</div><div class="metric-label">Total Flows</div></div>';
     if (data.protocols) {
@@ -1554,13 +1970,11 @@ function loadFlows() {
     
     drawSankey();
     
-    // Auto-refresh every 30s with fade-in effect
     if (flowsAutoRefresh) clearInterval(flowsAutoRefresh);
     flowsAutoRefresh = setInterval(function() {
       apiFetch('/api/flows').then(function(newData) {
         if (newData && newData.flows && newData.flows.length > 0) {
           flowsData = newData;
-          // Fade effect
           canvas.style.opacity = '0.5';
           drawSankey();
           setTimeout(function() { canvas.style.opacity = '1'; }, 300);
@@ -1579,17 +1993,14 @@ function drawSankey() {
   var data = flowsData.flows;
   if (data.length === 0) return;
 
-  // Rebuild Sankey data
   var ipSet = {};
   var srcNodes = {};
   var dstNodes = {};
   for (var i = 0; i < data.length; i++) {
     var f = data[i];
     var src = f.src_ip, dst = f.dst_ip, cnt = f.events;
-    if (!ipSet[src]) { ipSet[src] = 0; }
-    if (!ipSet[dst]) { ipSet[dst] = 0; }
-    ipSet[src] += cnt;
-    ipSet[dst] += cnt;
+    ipSet[src] = (ipSet[src] || 0) + cnt;
+    ipSet[dst] = (ipSet[dst] || 0) + cnt;
     srcNodes[src] = (srcNodes[src] || 0) + cnt;
     dstNodes[dst] = (dstNodes[dst] || 0) + cnt;
   }
@@ -1601,20 +2012,14 @@ function drawSankey() {
     var dstPct = dstNodes[ip] || 0;
     var total = srcPct + dstPct;
     if (total === 0) continue;
-    var ratio = srcPct / total;
-    if (ratio > 0.5) {
-      leftNodes.push({ip: ip, total: total, ratio: ratio});
-    } else {
-      rightNodes.push({ip: ip, total: total, ratio: ratio});
-    }
+    if ((srcPct / total) > 0.5) leftNodes.push({ip: ip, total: total});
+    else rightNodes.push({ip: ip, total: total});
   }
 
   leftNodes.sort(function(a, b){return b.total - a.total});
   rightNodes.sort(function(a, b){return b.total - a.total});
-  var maxNodes = 20;
-  leftNodes = leftNodes.slice(0, maxNodes);
-  rightNodes = rightNodes.slice(0, maxNodes);
-
+  leftNodes = leftNodes.slice(0, 20);
+  rightNodes = rightNodes.slice(0, 20);
   if (leftNodes.length === 0 || rightNodes.length === 0) return;
 
   var leftSet = {}, rightSet = {};
@@ -1624,14 +2029,10 @@ function drawSankey() {
   var filteredFlows = [];
   for (var i = 0; i < data.length; i++) {
     var f = data[i];
-    if (leftSet[f.src_ip] && rightSet[f.dst_ip]) {
-      filteredFlows.push(f);
-    } else if (leftSet[f.dst_ip] && rightSet[f.src_ip]) {
-      filteredFlows.push({src_ip: f.dst_ip, dst_ip: f.src_ip, events: f.events});
-    }
+    if (leftSet[f.src_ip] && rightSet[f.dst_ip]) filteredFlows.push(f);
+    else if (leftSet[f.dst_ip] && rightSet[f.src_ip]) filteredFlows.push({src_ip: f.dst_ip, dst_ip: f.src_ip, events: f.events});
   }
 
-  // Compute layout
   var padding = 80;
   var leftX = padding;
   var rightX = canvas.width - padding;
@@ -1660,12 +2061,11 @@ function drawSankey() {
     curY += nodeH + nodeGap;
   }
 
-  // Compute links
   var linkData = {};
   for (var i = 0; i < filteredFlows.length; i++) {
     var f = filteredFlows[i];
     var key = f.src_ip + '->' + f.dst_ip;
-    if (!linkData[key]) { linkData[key] = {src: f.src_ip, dst: f.dst_ip, total: 0}; }
+    if (!linkData[key]) linkData[key] = {src: f.src_ip, dst: f.dst_ip, total: 0};
     linkData[key].total += f.events;
   }
   var maxLink = 0;
@@ -1673,24 +2073,16 @@ function drawSankey() {
     if (linkData[key].total > maxLink) maxLink = linkData[key].total;
   }
 
-  // Draw
   var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   var bgColor = isDark ? '#0d1117' : '#f8f9fa';
   var textColor = isDark ? '#f0f6fc' : '#212529';
   var mutedColor = isDark ? '#8b949e' : '#6c757d';
 
-  // Clear with smooth fade
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
-  // Background gradient
   var gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-  if (isDark) {
-    gradient.addColorStop(0, '#0d1117');
-    gradient.addColorStop(1, '#161b22');
-  } else {
-    gradient.addColorStop(0, '#f8f9fa');
-    gradient.addColorStop(1, '#e9ecef');
-  }
+  if (isDark) { gradient.addColorStop(0, '#0d1117'); gradient.addColorStop(1, '#161b22'); }
+  else { gradient.addColorStop(0, '#f8f9fa'); gradient.addColorStop(1, '#e9ecef'); }
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1698,16 +2090,11 @@ function drawSankey() {
   ctx.translate(flowsOffX, flowsOffY);
   ctx.scale(flowsScale, flowsScale);
 
-  // Draw links with glow
   for (var key in linkData) {
     var l = linkData[key];
     var srcPos = null, dstPos = null;
-    for (var i = 0; i < leftPositions.length; i++) {
-      if (leftPositions[i].ip === l.src) { srcPos = leftPositions[i]; break; }
-    }
-    for (var i = 0; i < rightPositions.length; i++) {
-      if (rightPositions[i].ip === l.dst) { dstPos = rightPositions[i]; break; }
-    }
+    for (var i = 0; i < leftPositions.length; i++) { if (leftPositions[i].ip === l.src) { srcPos = leftPositions[i]; break; } }
+    for (var i = 0; i < rightPositions.length; i++) { if (rightPositions[i].ip === l.dst) { dstPos = rightPositions[i]; break; } }
     if (!srcPos || !dstPos) continue;
 
     var linkH = Math.max(2, (l.total / maxLink) * 50);
@@ -1715,17 +2102,12 @@ function drawSankey() {
     var dstCenter = dstPos.y + dstPos.h / 2;
     var alpha = Math.max(0.15, Math.min(0.6, (l.total / maxLink) * 0.9));
 
-    // Check hover
     var isHovered = flowsHoverLink && flowsHoverLink.key === key;
     if (isHovered) {
-      // Glow effect
-      ctx.shadowColor = 'rgba(88, 166, 255, 0.5)';
-      ctx.shadowBlur = 15;
-      ctx.strokeStyle = 'rgba(88, 166, 255, 0.9)';
-      ctx.lineWidth = linkH + 4;
+      ctx.shadowColor = 'rgba(88, 166, 255, 0.5)'; ctx.shadowBlur = 15;
+      ctx.strokeStyle = 'rgba(88, 166, 255, 0.9)'; ctx.lineWidth = linkH + 4;
     } else {
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
       ctx.strokeStyle = isDark ? 'rgba(67, 97, 238, ' + alpha + ')' : 'rgba(88, 166, 255, ' + alpha + ')';
       ctx.lineWidth = linkH;
     }
@@ -1737,37 +2119,22 @@ function drawSankey() {
     ctx.stroke();
   }
   
-  // Reset shadow
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
 
-  // Draw nodes with rounded rectangles and gradients
   for (var i = 0; i < leftPositions.length; i++) {
     var np = leftPositions[i];
     var isHovered = flowsHoverNode && flowsHoverNode.ip === np.ip && flowsHoverNode.side === 'left';
-    
-    // Node gradient
     var nodeGrad = ctx.createLinearGradient(leftX - 4, np.y, leftX + 4, np.y);
     nodeGrad.addColorStop(0, isHovered ? '#79c0ff' : '#4361ee');
     nodeGrad.addColorStop(1, isHovered ? '#58a6ff' : '#3a56d4');
-    
-    // Rounded rectangle
     ctx.fillStyle = nodeGrad;
-    ctx.beginPath();
-    ctx.roundRect(leftX - 4, np.y, 8, np.h, 4);
-    ctx.fill();
-    
-    // Label with shadow
-    ctx.shadowColor = 'rgba(0,0,0,0.2)';
-    ctx.shadowBlur = 2;
+    ctx.beginPath(); ctx.roundRect(leftX - 4, np.y, 8, np.h, 4); ctx.fill();
+    ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 2;
     ctx.fillStyle = textColor;
     ctx.font = (isHovered ? 'bold ' : '') + '11px -apple-system, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(np.ip, leftX - 10, np.y + np.h / 2 + 4);
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    
-    // Count
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
     ctx.fillStyle = mutedColor;
     ctx.font = '10px -apple-system, sans-serif';
     ctx.fillText(formatNum(np.total), leftX - 10, np.y + np.h / 2 + 16);
@@ -1776,25 +2143,17 @@ function drawSankey() {
   for (var i = 0; i < rightPositions.length; i++) {
     var np = rightPositions[i];
     var isHovered = flowsHoverNode && flowsHoverNode.ip === np.ip && flowsHoverNode.side === 'right';
-    
     var nodeGrad = ctx.createLinearGradient(rightX - 4, np.y, rightX + 4, np.y);
     nodeGrad.addColorStop(0, isHovered ? '#56d364' : '#2d6a4f');
     nodeGrad.addColorStop(1, isHovered ? '#40c057' : '#1b4332');
-    
     ctx.fillStyle = nodeGrad;
-    ctx.beginPath();
-    ctx.roundRect(rightX - 4, np.y, 8, np.h, 4);
-    ctx.fill();
-    
-    ctx.shadowColor = 'rgba(0,0,0,0.2)';
-    ctx.shadowBlur = 2;
+    ctx.beginPath(); ctx.roundRect(rightX - 4, np.y, 8, np.h, 4); ctx.fill();
+    ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 2;
     ctx.fillStyle = textColor;
     ctx.font = (isHovered ? 'bold ' : '') + '11px -apple-system, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(np.ip, rightX + 10, np.y + np.h / 2 + 4);
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
     ctx.fillStyle = mutedColor;
     ctx.font = '10px -apple-system, sans-serif';
     ctx.fillText(formatNum(np.total), rightX + 10, np.y + np.h / 2 + 16);
@@ -1802,34 +2161,27 @@ function drawSankey() {
 
   ctx.restore();
   
-  // Update controls text in HTML element (outside canvas to avoid overlap)
   var controlsEl = document.getElementById('flowsControls');
-  if (controlsEl) {
-    controlsEl.textContent = 'Zoom: ' + Math.round(flowsScale * 100) + '% | Scroll to zoom, drag to pan | Auto-refresh: 30s';
-  }
+  if (controlsEl) controlsEl.textContent = 'Zoom: ' + Math.round(flowsScale * 100) + '% | Scroll to zoom, drag to pan | Auto-refresh: 30s';
 }
 
 function initFlowsEvents() {
   var canvas = document.getElementById('flowsSankey');
   if (!canvas) return;
 
-  // Drag to pan
   canvas.addEventListener('mousedown', function(e) {
     flowsDragging = true;
     flowsDragStartX = e.clientX - flowsOffX;
     flowsDragStartY = e.clientY - flowsOffY;
-    canvas.style.cursor = 'grabbing';
-    canvas.style.opacity = '0.8'; // Visual feedback
+    canvas.style.cursor = 'grabbing'; canvas.style.opacity = '0.8';
   });
 
   canvas.addEventListener('mousemove', function(e) {
     if (flowsDragging) {
       triggerFlowsPan(e.clientX - flowsDragStartX, e.clientY - flowsDragStartY);
-      flowsDragStartX = e.clientX;
-      flowsDragStartY = e.clientY;
+      flowsDragStartX = e.clientX; flowsDragStartY = e.clientY;
       return;
     }
-    // Node hover
     if (!flowsData || !flowsData.flows) return;
     var rect = canvas.getBoundingClientRect();
     var mx = (e.clientX - rect.left - flowsOffX) / flowsScale;
@@ -1839,7 +2191,6 @@ function initFlowsEvents() {
     var leftX = padding;
     var rightX = canvas.width - padding;
 
-    // Rebuild positions for hover (simplified from drawSankey)
     var data = flowsData.flows;
     var ipSet = {}, srcNodes = {}, dstNodes = {};
     for (var i = 0; i < data.length; i++) {
@@ -1867,178 +2218,122 @@ function initFlowsEvents() {
     var rightTotal = rightNodes.reduce(function(s, n){return s + n.total}, 0);
     var nodeGap = 10;
 
-    // Check left nodes
     var curY = 30;
     for (var i = 0; i < leftNodes.length; i++) {
       var nodeH = Math.max(18, (leftNodes[i].total / leftTotal) * availableH);
       if (my >= curY && my <= curY + nodeH) {
         if (!flowsHoverNode || flowsHoverNode.ip !== leftNodes[i].ip || flowsHoverNode.side !== 'left') {
-          flowsHoverNode = {ip: leftNodes[i].ip, side: 'left'};
-          drawSankey();
-        }
-        return;
+          flowsHoverNode = {ip: leftNodes[i].ip, side: 'left'}; drawSankey();
+        } return;
       }
       curY += nodeH + nodeGap;
     }
 
-    // Check right nodes
     curY = 30;
     for (var i = 0; i < rightNodes.length; i++) {
       var nodeH = Math.max(18, (rightNodes[i].total / rightTotal) * availableH);
       if (my >= curY && my <= curY + nodeH) {
         if (!flowsHoverNode || flowsHoverNode.ip !== rightNodes[i].ip || flowsHoverNode.side !== 'right') {
-          flowsHoverNode = {ip: rightNodes[i].ip, side: 'right'};
-          drawSankey();
-        }
-        return;
+          flowsHoverNode = {ip: rightNodes[i].ip, side: 'right'}; drawSankey();
+        } return;
       }
       curY += nodeH + nodeGap;
     }
 
-    if (flowsHoverNode) {
-      flowsHoverNode = null;
-      drawSankey();
-    }
+    if (flowsHoverNode) { flowsHoverNode = null; drawSankey(); }
   });
 
   canvas.addEventListener('mouseup', function() {
-    flowsDragging = false;
-    canvas.style.cursor = 'grab';
-    canvas.style.opacity = '1'; // Restore opacity
+    flowsDragging = false; canvas.style.cursor = 'grab'; canvas.style.opacity = '1';
   });
 
   canvas.addEventListener('mouseleave', function() {
-    flowsDragging = false;
-    flowsHoverNode = null;
-    canvas.style.cursor = 'grab';
-    canvas.style.opacity = '1';
+    flowsDragging = false; flowsHoverNode = null; canvas.style.cursor = 'grab'; canvas.style.opacity = '1';
   });
 
-  // Smooth zoom with easing
   canvas.addEventListener('wheel', function(e) {
     e.preventDefault();
     var rect = canvas.getBoundingClientRect();
     var mx = e.clientX - rect.left;
     var my = e.clientY - rect.top;
-
-    // Zoom toward mouse position
     var oldScale = flowsScale;
     var delta = e.deltaY > 0 ? 0.9 : 1.1;
-    
-    // Update target scale and adjust offset for zoom-to-cursor
     flowsTargetScale = Math.max(0.5, Math.min(4, flowsTargetScale * delta));
     flowsTargetOffX = mx - (mx - flowsOffX) * (flowsTargetScale / oldScale);
     flowsTargetOffY = my - (my - flowsOffY) * (flowsTargetScale / oldScale);
-    
     startFlowsAnimation();
   });
 
   canvas.style.cursor = 'grab';
 }
 
-// Init flows on DOMContentLoaded
-function initAppFlows() {
-  setTimeout(function(){ initFlowsEvents(); }, 500);
+function initAppFlows() { setTimeout(function(){ initFlowsEvents(); }, 500); }
+
+// ═══════════════════════════════════════
+// Escape HTML
+// ═══════════════════════════════════════
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ═══════════════════════════════════════════
-// Rules ML Tab — ML-Based Rule Classification
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
+// Rules ML
+// ═══════════════════════════════════════
 
-function escapeHTML(str) {
-  var div = document.createElement('div');
-  div.appendChild(document.createTextNode(str));
-  return div.innerHTML;
-}
-
-// Suspicious classification explanation template
 function getSuspiciousExplanation(rule) {
   var reasons = [];
   var details = [];
-  
-  if (rule.port_scan_score > 0.3) {
-    reasons.push('High port diversity from sources');
-    details.push(rule.unique_ports + ' unique destination ports');
-  }
-  if (rule.dest_scan_score > 0.3) {
-    reasons.push('High destination diversity');
-    details.push(rule.unique_dst_ips + ' unique destinations');
-  }
-  if (rule.action_ratio < 0.5) {
-    reasons.push('High block ratio (' + ((rule.block_count / Math.max(rule.total_events, 1)) * 100).toFixed(0) + '% blocked)');
-  }
-  if (rule.volume_score < 0.5) {
-    reasons.push('Anomalous event volume');
-  }
-  if (rule.protocol_score < 0.7) {
-    reasons.push('Unusual protocol distribution');
-  }
-  
-  if (rule.details && rule.details.note) {
-    details.push(rule.details.note);
-  }
-  
-  return {
-    reasons: reasons,
-    details: details,
-    verdict: reasons.length > 0 ? 'These patterns suggest ' + (reasons.length > 1 ? 'multiple suspicious indicators' : 'one concerning indicator') : 'Limited evidence — needs more data'
-  };
+  if (rule.port_scan_score > 0.3) { reasons.push('High port diversity from sources'); details.push(rule.unique_ports + ' unique destination ports'); }
+  if (rule.dest_scan_score > 0.3) { reasons.push('High destination diversity'); details.push(rule.unique_dst_ips + ' unique destinations'); }
+  if (rule.action_ratio < 0.5) { reasons.push('High block ratio (' + ((rule.block_count / Math.max(rule.total_events, 1)) * 100).toFixed(0) + '% blocked)'); }
+  if (rule.volume_score < 0.5) { reasons.push('Anomalous event volume'); }
+  if (rule.protocol_score < 0.7) { reasons.push('Unusual protocol distribution'); }
+  if (rule.details && rule.details.note) details.push(rule.details.note);
+  return { reasons: reasons, details: details, verdict: reasons.length > 0 ? (reasons.length > 1 ? 'multiple suspicious indicators' : 'one concerning indicator') : 'Limited evidence — needs more data' };
 }
 
-// Feature importance bar HTML
 function featureBar(label, score, color) {
   var pct = (score * 100).toFixed(0);
   return '<div style="margin:4px 0"><div style="display:flex;justify-content:space-between;font-size:12px"><span>' + label + '</span><span style="color:' + color + '">' + pct + '%</span></div><div style="height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:3px;transition:width 0.3s"></div></div></div>';
 }
-
-// Drill-down modal
-var _drillModal = null;
 
 function openRuleDrillDown(rule, containerEl) {
   var existing = document.getElementById('ruleDrillModal');
   if (existing) existing.remove();
   
   var susp = getSuspiciousExplanation(rule);
-  var scanScore = ((rule.port_scan_score || 0) + (rule.dest_scan_score || 0)) / 2;
   var ruleName = escapeHTML(rule.human_readable_name || rule.rule_name || '?');
   var classification = escapeHTML(rule.classification || '?');
   
   var html = '<div id="ruleDrillModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">'
     + '<div style="background:var(--bg-secondary);border-radius:12px;max-width:800px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">';
-  
-  // Header
   html += '<div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start">'
     + '<div><h3 style="margin:0;font-size:18px">' + ruleName + '</h3>'
     + '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Rule: ' + escapeHTML(rule.rule_name || '?') + '</div>'
     + '</div>'
     + '<div><span class="badge-' + (rule.classification === 'ABUSIVE' ? 'block' : rule.classification === 'GOOD' ? 'pass' : 'warning') + '" style="font-size:13px">' + classification + '</span></div>'
     + '</div>';
-  
-  // Quick stats
-  html += '<div style="padding:16px 24px;display:flex;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--border)">'
-    + '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--accent)">' + (rule.total_events || 0).toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Total Events</div></div>'
-    + '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:#22c55e">' + (rule.pass_count || 0).toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Pass</div></div>'
-    + '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:#ef4444">' + (rule.block_count || 0).toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Block</div></div>'
-    + '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + rule.unique_src_ips + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Sources</div></div>'
-    + '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + rule.unique_dst_ips + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Destinations</div></div>'
-    + '</div>';
-  
-  // Classification reasoning
+  html += '<div style="padding:16px 24px;display:flex;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--border)">';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--accent)">' + (rule.total_events || 0).toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Total Events</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:#22c55e">' + (rule.pass_count || 0).toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Pass</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:#ef4444">' + (rule.block_count || 0).toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Block</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + rule.unique_src_ips + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Sources</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + rule.unique_dst_ips + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Destinations</div></div>';
+  html += '</div>';
   html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
   html += '<h4 style="margin:0 0 12px 0;font-size:14px;color:var(--text-secondary)">Classification Reasoning</h4>';
-  
   if (rule.classification === 'SUSPICIOUS' || rule.classification === 'UNCERTAIN') {
     html += '<div style="background:' + (rule.classification === 'SUSPICIOUS' ? '#fef3c7' : '#f3f4f6') + ';border:1px solid ' + (rule.classification === 'SUSPICIOUS' ? '#f59e0b' : '#d1d5db') + ';border-radius:8px;padding:12px;margin-bottom:12px">'
       + '<div style="font-size:13px;font-weight:600;margin-bottom:4px">' + (rule.classification === 'SUSPICIOUS' ? '⚠️ Suspicious Patterns Detected' : '🔍 Inconclusive — Limited Data') + '</div>'
       + '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + susp.verdict + '</div>';
     if (susp.reasons.length > 0) {
       html += '<div style="font-size:12px"><strong>Indicators:</strong></div>';
-      susp.reasons.forEach(function(r, i) { html += '<div style="font-size:12px;margin:2px 0 2px 8px">• ' + r + '</div>'; });
+      susp.reasons.forEach(function(r) { html += '<div style="font-size:12px;margin:2px 0 2px 8px">• ' + r + '</div>'; });
     }
     html += '</div>';
   }
-  
-  // Feature breakdown
   html += '<div style="margin-bottom:8px"><strong style="font-size:12px;color:var(--text-muted)">Feature Scores</strong></div>';
   html += featureBar('Port Diversity (scanning)', rule.port_scan_score, rule.port_scan_score > 0.5 ? '#ef4444' : rule.port_scan_score > 0.2 ? '#f59e0b' : '#22c55e');
   html += featureBar('Destination Diversity (scanning)', rule.dest_scan_score, rule.dest_scan_score > 0.5 ? '#ef4444' : rule.dest_scan_score > 0.2 ? '#f59e0b' : '#22c55e');
@@ -2047,107 +2342,52 @@ function openRuleDrillDown(rule, containerEl) {
   html += featureBar('Protocol Normality', rule.protocol_score, rule.protocol_score > 0.7 ? '#22c55e' : rule.protocol_score > 0.4 ? '#f59e0b' : '#ef4444');
   html += featureBar('Overall Goodness Score', rule.goodness_score, rule.goodness_score > 0.65 ? '#22c55e' : rule.goodness_score > 0.35 ? '#f59e0b' : '#ef4444');
   html += '</div>';
-  
-  // Top IPs and ports
   html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">';
-  
-  // Top source IPs
   if (rule.top_src_ips && rule.top_src_ips.length > 0) {
     html += '<div><strong style="font-size:12px;color:var(--text-muted)">Top Source IPs</strong><div style="margin-top:8px">';
     rule.top_src_ips.slice(0, 5).forEach(function(item) {
-      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHTML(item.ip) + '</span><span>' + item.count.toLocaleString() + '</span></div>';
+      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHtml(item.ip) + '</span><span>' + item.count.toLocaleString() + '</span></div>';
     });
     html += '</div></div>';
   }
-  
-  // Top ports
   if (rule.top_ports && rule.top_ports.length > 0) {
     html += '<div><strong style="font-size:12px;color:var(--text-muted)">Top Destination Ports</strong><div style="margin-top:8px">';
     rule.top_ports.slice(0, 5).forEach(function(item) {
-      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHTML(String(item.port)) + '</span><span>' + item.count.toLocaleString() + '</span></div>';
+      html += '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)"><span>' + escapeHtml(String(item.port)) + '</span><span>' + item.count.toLocaleString() + '</span></div>';
     });
     html += '</div></div>';
   }
   html += '</div>';
-  
-  // Recent events
   if (rule.recent_events && rule.recent_events.length > 0) {
     html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
     html += '<strong style="font-size:12px;color:var(--text-muted)">Recent Events</strong><table style="width:100%;font-size:11px;margin-top:8px"><thead><tr><th>Time</th><th>Src IP</th><th>Dst Port</th><th>Action</th></tr></thead><tbody>';
     rule.recent_events.forEach(function(e) {
-      html += '<tr><td style="color:var(--text-muted)">' + (e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '-') + '</td><td>' + escapeHTML(e.src_ip || '-') + '</td><td>' + escapeHTML(String(e.dst_port || '-')) + '</td><td><span class="badge-' + (e.action === 'PASS' ? 'pass' : 'block') + '">' + e.action + '</span></td></tr>';
+      html += '<tr><td style="color:var(--text-muted)">' + (e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '-') + '</td><td>' + escapeHtml(e.src_ip || '-') + '</td><td>' + escapeHtml(String(e.dst_port || '-')) + '</td><td><span class="badge-' + (e.action === 'PASS' ? 'pass' : 'block') + '">' + e.action + '</span></td></tr>';
     });
     html += '</tbody></table></div>';
   }
-  
-  // OPNsense metadata
   if (rule.rule_action || rule.rule_protocol || rule.rule_interface) {
-    html += '<div style="padding:16px 24px;font-size:12px">';
-    html += '<strong style="color:var(--text-muted)">OPNsense Metadata</strong><br>';
+    html += '<div style="padding:16px 24px;font-size:12px"><strong style="color:var(--text-muted)">OPNsense Metadata</strong><br>';
     if (rule.rule_action) html += 'Action: <strong>' + escapeHTML(rule.rule_action) + '</strong><br>';
     if (rule.rule_protocol) html += 'Protocol: <strong>' + escapeHTML(rule.rule_protocol) + '</strong><br>';
     if (rule.rule_interface) html += 'Interface: <strong>' + escapeHTML(rule.rule_interface) + '</strong><br>';
     html += '</div>';
   }
-  
-  // Close button
-  html += '<div style="padding:12px 24px;text-align:right;border-top:1px solid var(--border)"><button onclick="this.closest(\'#ruleDrillModal\').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:13px">Close</button></div>'
-    + '</div></div>';
+  html += '<div style="padding:12px 24px;text-align:right;border-top:1px solid var(--border)"><button onclick="this.closest(\'#ruleDrillModal\').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:13px">Close</button></div>';
+  html += '</div></div>';
   
   containerEl.insertAdjacentHTML('beforeend', html);
-  
-  // Close on backdrop click
   document.getElementById('ruleDrillModal').addEventListener('click', function(e) {
     if (e.target === this) this.remove();
   });
 }
 
-// Enhanced rule row with expand button
-function buildRulesTable(rules, color, header) {
-  if (rules.length === 0) {
-    return '<div style="color:var(--text-muted);padding:20px;text-align:center">' + header + '</div>';
-  }
-  
-  function makeRow(r) {
-    var scanScore = ((r.port_scan_score || 0) + (r.dest_scan_score || 0)) / 2;
-    var scanColor = scanScore > 0.5 ? '#ef4444' : scanScore > 0.2 ? '#f59e0b' : '#22c55e';
-    var confPercent = (r.confidence * 100).toFixed(0);
-    var goodnessPercent = (r.goodness_score * 100).toFixed(0);
-    var confClass = r.confidence > 0.7 ? 'high' : r.confidence > 0.4 ? 'med' : 'low';
-    var goodnessClass = r.goodness_score > 0.65 ? 'high' : r.goodness_score > 0.35 ? 'med' : 'low';
-    var humanName = escapeHTML(r.human_readable_name || '?');
-    var description = escapeHTML(r.rule_description || '');
-    var classification = escapeHTML(r.classification || '?');
-    
-    return '<tr class="rule-row-' + color + '" style="cursor:pointer" onclick="openRuleDrillDown(this.closest(\'tr\').__ruleData, this)">'
-      + '<td style="font-weight:bold" data-rule-name>' + humanName + '</td>'
-      + '<td><span class="badge-' + color + '">' + classification + '</span></td>'
-      + '<td>' + (r.total_events || 0).toLocaleString() + '</td>'
-      + '<td style="color:#22c55e">' + (r.pass_count || 0).toLocaleString() + '</td>'
-      + '<td style="color:#ef4444">' + (r.block_count || 0).toLocaleString() + '</td>'
-      + '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>'
-      + '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>'
-      + '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>'
-      + '<td style="color:var(--text-muted);font-size:0.85em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHTML(description || '') + '">' + (description || '(none)') + '</td>'
-      + '<td style="padding:8px 12px"><button onclick="event.stopPropagation();openRuleDrillDown(this.closest(\'tr\').__ruleData, this.closest(\'tr\').parentElement)" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>'
-      + '</tr>';
-  }
-  
-  var html = '<table class="rules-table"><thead><tr><th>Rule Name</th><th>Class</th><th>Events</th><th>Pass</th><th>Block</th><th>Scan</th><th>Conf</th><th>Goodness</th><th style="max-width:120px">Desc</th><th style="width:90px">Action</th></tr></thead><tbody>';
-  
-  rules.forEach(function(r) {
-    var row = makeRow(r);
-    html += row;
-    // Store rule data for click handler
-    html = html.replace(/<tr class="rule-row-' + color + '" style="cursor:pointer" onclick="openRuleDrillDown/, '<tr class="rule-row-' + color + '" style="cursor:pointer" data-rule-name="data-store" onclick="');
-  });
-  
-  html += '</tbody></table>';
-  html += '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">💡 Click 📊 or a row to see detailed breakdown</div>';
-  return html;
+function escapeHTML(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
 }
 
-// Now we need to store rule data on rows — rewrite buildRulesTable properly
 function buildRulesTable2(rules, color, header) {
   if (rules.length === 0) {
     return '<div style="color:var(--text-muted);padding:20px;text-align:center">' + header + '</div>';
@@ -2165,20 +2405,20 @@ function buildRulesTable2(rules, color, header) {
     var humanName = escapeHTML(r.human_readable_name || '?');
     var description = escapeHTML(r.rule_description || '');
     var classification = escapeHTML(r.classification || '?');
-    var ruleNameAttr = escapeHTML(r.rule_name || r.rule_name || '?');
+    var ruleNameAttr = escapeHTML(r.rule_name || '?');
     
-    html += '<tr class="rule-row-' + color + '" style="cursor:pointer" data-rule-name="' + ruleNameAttr + '" onclick="showRuleDrillDown(this)">'
-      + '<td style="font-weight:bold">' + humanName + '</td>'
-      + '<td><span class="badge-' + color + '">' + classification + '</span></td>'
-      + '<td>' + (r.total_events || 0).toLocaleString() + '</td>'
-      + '<td style="color:#22c55e">' + (r.pass_count || 0).toLocaleString() + '</td>'
-      + '<td style="color:#ef4444">' + (r.block_count || 0).toLocaleString() + '</td>'
-      + '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>'
-      + '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>'
-      + '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>'
-      + '<td style="color:var(--text-muted);font-size:0.85em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHTML(description || '') + '">' + (description || '(none)') + '</td>'
-      + '<td style="padding:8px 12px"><button onclick="event.stopPropagation();showRuleDrillDown(this.closest(\'tr\'))" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>'
-      + '</tr>';
+    html += '<tr style="cursor:pointer" data-rule-name="' + ruleNameAttr + '" onclick="showRuleDrillDown(this)">';
+    html += '<td style="font-weight:bold">' + humanName + '</td>';
+    html += '<td><span class="badge-' + color + '">' + classification + '</span></td>';
+    html += '<td>' + (r.total_events || 0).toLocaleString() + '</td>';
+    html += '<td style="color:#22c55e">' + (r.pass_count || 0).toLocaleString() + '</td>';
+    html += '<td style="color:#ef4444">' + (r.block_count || 0).toLocaleString() + '</td>';
+    html += '<td><span style="color:' + scanColor + '">' + (scanScore * 100).toFixed(0) + '%</span></td>';
+    html += '<td><span class="confidence-' + confClass + '">' + confPercent + '%</span></td>';
+    html += '<td><span class="goodness-' + goodnessClass + '">' + goodnessPercent + '%</span></td>';
+    html += '<td style="color:var(--text-muted);font-size:0.85em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHTML(description || '') + '">' + (description || '(none)') + '</td>';
+    html += '<td style="padding:8px 12px"><button onclick="event.stopPropagation();showRuleDrillDown(this.closest(\'tr\'))" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-tertiary);cursor:pointer;font-size:11px;white-space:nowrap">🔍 Drill-down</button></td>';
+    html += '</tr>';
   });
   
   html += '</tbody></table>';
@@ -2190,11 +2430,9 @@ function showRuleDrillDown(rowEl) {
   var ruleName = rowEl.getAttribute('data-rule-name');
   if (!ruleName) return;
   
-  // Close any existing modal
   var existing = document.getElementById('ruleDrillModal');
   if (existing) existing.remove();
   
-  // Show loading
   var html = '<div id="ruleDrillModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">'
     + '<div style="background:var(--bg-secondary);border-radius:12px;padding:30px;text-align:center">'
     + '<div class="loading-spinner" style="margin:0 auto 10px"></div>'
@@ -2206,15 +2444,11 @@ function showRuleDrillDown(rowEl) {
     if (e.target === this) this.remove();
   });
   
-  // Fetch full drill-down data
   fetch(API_BASE + '/api/rule-detail/' + encodeURIComponent(ruleName))
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      // Remove loading modal
       var modal = document.getElementById('ruleDrillModal');
       if (modal) modal.remove();
-      
-      // Show detail modal with fetched data
       showRuleDetailModal(ruleName, data);
     })
     .catch(function(e) {
@@ -2226,7 +2460,6 @@ function showRuleDrillDown(rowEl) {
 }
 
 function showRuleDetailModal(ruleName, data) {
-  // Merge basic stats with drill-down data
   var totalEvents = data.total_events || 0;
   var actions = data.actions || {};
   var passCount = actions['PASS'] || 0;
@@ -2234,22 +2467,15 @@ function showRuleDetailModal(ruleName, data) {
   var topSrcIps = data.top_src_ips || [];
   var topDstIps = data.top_dst_ips || [];
   var topPorts = data.top_ports || [];
-  var topSrcPorts = data.top_src_ports || [];
   var protocols = data.protocols || [];
-  var interfaces = data.interfaces || [];
-  var directions = data.directions || [];
-  var timeDist = data.time_distribution || {};
-  var dailyCounts = data.daily_counts || [];
   var recentEvents = data.recent_events || [];
   
-  // Classification reasoning
   var blockRatio = totalEvents > 0 ? blockCount / totalEvents : 0;
   var passRatio = totalEvents > 0 ? passCount / totalEvents : 1;
   var uniqueSrcIps = topSrcIps.length;
   var uniqueDstIps = topDstIps.length;
   var uniquePorts = topPorts.length;
   
-  // Feature scores (recompute from data)
   var portScanScore = uniquePorts > 5 ? Math.min(uniquePorts / 20, 1.0) : uniquePorts / 5;
   var destScanScore = uniqueDstIps > 10 ? Math.min(uniqueDstIps / 50, 1.0) : uniqueDstIps / 10;
   var actionRatio = blockCount > 0 && passCount > 0 ? passCount / (passCount + blockCount) : (passCount > 0 ? 1.0 : 0.0);
@@ -2263,47 +2489,36 @@ function showRuleDetailModal(ruleName, data) {
   
   var html = '<div id="ruleDrillModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px">'
     + '<div style="background:var(--bg-secondary);border-radius:12px;max-width:900px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">';
-  
-  // Header
   html += '<div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start">';
   html += '<div><h3 style="margin:0;font-size:18px">🔍 Rule Detail</h3>';
   html += '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;font-family:monospace">' + escapeHTML(ruleName) + '</div>';
   html += '</div>';
-  html += '<div><span class="badge-' + (isUncertain ? 'warning' : classification === 'ABUSIVE' ? 'block' : classification === 'SUSPICIOUS' ? 'warning' : 'pass') + '" style="font-size:13px">' + classification + (isUncertain ? ' (UNCERTAIN - limited data)' : '') + '</span> <button onclick="document.getElementById(\'ruleDrillModal\').remove()" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:12px">Close</button></div>';
+  html += '<div><span class="badge-' + (isUncertain ? 'warning' : classification === 'ABUSIVE' ? 'block' : classification === 'SUSPICIOUS' ? 'warning' : 'pass') + '" style="font-size:13px">' + classification + (isUncertain ? ' (UNCERTAIN)' : '') + '</span> <button onclick="document.getElementById(\'ruleDrillModal\').remove()" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:12px">Close</button></div>';
   html += '</div>';
-  
-  // Quick stats
   html += '<div style="padding:16px 24px;display:flex;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--border)">';
-  html += statTile('Total Events', totalEvents.toLocaleString(), 'var(--accent)');
-  html += statTile('Pass', passCount.toLocaleString(), '#22c55e');
-  html += statTile('Block', blockCount.toLocaleString(), '#ef4444');
-  html += statTile('Unique Sources', uniqueSrcIps, 'var(--text-secondary)');
-  html += statTile('Unique Destinations', uniqueDstIps, 'var(--text-secondary)');
-  html += statTile('Unique Ports', uniquePorts, 'var(--text-secondary)');
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--accent)">' + totalEvents.toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Total Events</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:#22c55e">' + passCount.toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Pass</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:#ef4444">' + blockCount.toLocaleString() + '</div><div style="font-size:11px;color:var(--text-muted)">Block</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + uniqueSrcIps + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Sources</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + uniqueDstIps + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Destinations</div></div>';
+  html += '<div style="flex:1;min-width:100px"><div style="font-size:24px;font-weight:700;color:var(--text-secondary)">' + uniquePorts + '</div><div style="font-size:11px;color:var(--text-muted)">Unique Ports</div></div>';
   html += '</div>';
-  
-  // Classification reasoning
   html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
   html += '<h4 style="margin:0 0 12px 0;font-size:14px;color:var(--text-secondary)">Classification Reasoning</h4>';
-  
   if (isSuspicious) {
     html += '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px;margin-bottom:12px">';
     html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">⚠️ Suspicious Patterns Detected</div>';
     var reasons = [];
-    if (portScanScore > 0.5) reasons.push('High port diversity: ' + uniquePorts + ' unique ports (possible port scan)');
-    if (destScanScore > 0.5) reasons.push('High destination diversity: ' + uniqueDstIps + ' unique destinations (possible dest scan)');
-    if (blockRatio > 0.5) reasons.push('High block ratio: ' + (blockRatio * 100).toFixed(0) + '% of traffic blocked');
+    if (portScanScore > 0.5) reasons.push('High port diversity: ' + uniquePorts + ' unique ports');
+    if (destScanScore > 0.5) reasons.push('High destination diversity: ' + uniqueDstIps + ' unique destinations');
+    if (blockRatio > 0.5) reasons.push('High block ratio: ' + (blockRatio * 100).toFixed(0) + '% blocked');
     if (reasons.length === 0) reasons.push('Traffic pattern suggests anomalous behavior');
-    html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + reasons.join('<br>') + '</div>';
-    html += '</div>';
+    html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + reasons.join('<br>') + '</div></div>';
   } else if (isUncertain) {
     html += '<div style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:8px;padding:12px;margin-bottom:12px">';
     html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">🔍 Inconclusive — Limited Data</div>';
-    html += '<div style="font-size:12px;color:var(--text-secondary)">Only ' + totalEvents + ' events recorded. The system needs more data to make a confident classification. Continue monitoring.</div>';
-    html += '</div>';
+    html += '<div style="font-size:12px;color:var(--text-secondary)">Only ' + totalEvents + ' events. Need more data for confident classification.</div></div>';
   }
-  
-  // Feature scores
   html += '<div style="margin-bottom:8px"><strong style="font-size:12px;color:var(--text-muted)">Feature Scores</strong></div>';
   html += featureBar('Port Diversity (scanning)', portScanScore, portScanScore > 0.5 ? '#ef4444' : portScanScore > 0.2 ? '#f59e0b' : '#22c55e');
   html += featureBar('Destination Diversity (scanning)', destScanScore, destScanScore > 0.5 ? '#ef4444' : destScanScore > 0.2 ? '#f59e0b' : '#22c55e');
@@ -2312,10 +2527,7 @@ function showRuleDetailModal(ruleName, data) {
   html += featureBar('Protocol Normality', protocolScore, protocolScore > 0.7 ? '#22c55e' : protocolScore > 0.4 ? '#f59e0b' : '#ef4444');
   html += featureBar('Overall Goodness Score', goodnessScore, goodnessScore > 0.65 ? '#22c55e' : goodnessScore > 0.35 ? '#f59e0b' : '#ef4444');
   html += '</div>';
-  
-  // Top IPs and ports
   html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">';
-  
   if (topSrcIps.length > 0) {
     html += '<div><strong style="font-size:12px;color:var(--text-muted)">Top Source IPs</strong><div style="margin-top:8px">';
     topSrcIps.slice(0, 5).forEach(function(item) {
@@ -2323,7 +2535,6 @@ function showRuleDetailModal(ruleName, data) {
     });
     html += '</div></div>';
   }
-  
   if (topPorts.length > 0) {
     html += '<div><strong style="font-size:12px;color:var(--text-muted)">Top Destination Ports</strong><div style="margin-top:8px">';
     topPorts.slice(0, 5).forEach(function(item) {
@@ -2331,7 +2542,6 @@ function showRuleDetailModal(ruleName, data) {
     });
     html += '</div></div>';
   }
-  
   if (protocols.length > 0) {
     html += '<div><strong style="font-size:12px;color:var(--text-muted)">Protocols</strong><div style="margin-top:8px">';
     protocols.forEach(function(item) {
@@ -2339,10 +2549,7 @@ function showRuleDetailModal(ruleName, data) {
     });
     html += '</div></div>';
   }
-  
   html += '</div>';
-  
-  // Recent events
   if (recentEvents.length > 0) {
     html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
     html += '<strong style="font-size:12px;color:var(--text-muted)">Recent Events</strong><table style="width:100%;font-size:11px;margin-top:8px"><thead><tr><th>Time</th><th>Src IP</th><th>Dst Port</th><th>Action</th></tr></thead><tbody>';
@@ -2351,12 +2558,11 @@ function showRuleDetailModal(ruleName, data) {
     });
     html += '</tbody></table></div>';
   }
-  
-  // Time distribution
-  if (Object.keys(timeDist).length > 0) {
+  if (Object.keys(data.time_distribution || {}).length > 0) {
     html += '<div style="padding:16px 24px;border-bottom:1px solid var(--border)">';
     html += '<strong style="font-size:12px;color:var(--text-muted)">Traffic by Hour</strong>';
     html += '<div style="display:flex;align-items:flex-end;gap:2px;height:80px;margin-top:8px">';
+    var timeDist = data.time_distribution || {};
     var maxCount = Math.max.apply(null, Object.values(timeDist)) || 1;
     for (var h = 0; h < 24; h++) {
       var count = timeDist[h] || 0;
@@ -2365,10 +2571,8 @@ function showRuleDetailModal(ruleName, data) {
     }
     html += '</div></div>';
   }
-  
-  // Close
-  html += '<div style="padding:12px 24px;text-align:right;border-top:1px solid var(--border)"><button onclick="this.closest(\'#ruleDrillModal\').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:13px">Close</button></div>'
-    + '</div></div>';
+  html += '<div style="padding:12px 24px;text-align:right;border-top:1px solid var(--border)"><button onclick="this.closest(\'#ruleDrillModal\').remove()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);cursor:pointer;font-size:13px">Close</button></div>';
+  html += '</div></div>';
   
   document.body.insertAdjacentHTML('beforeend', html);
   document.getElementById('ruleDrillModal').addEventListener('click', function(e) {
@@ -2387,7 +2591,7 @@ function featureBar(label, score, color) {
 function loadRulesML() {
   apiFetch('/api/rules-classified').then(function(data) {
     if (!data) {
-      document.getElementById('rulesMLABUSIVE').innerHTML = '<div class="error">Failed to load ML classification data. Try again.</div>';
+      document.getElementById('rulesMLABUSIVE').innerHTML = '<div class="error">Failed to load ML classification data.</div>';
       document.getElementById('rulesMLGOOD').innerHTML = '<div class="error">Failed to load ML classification data.</div>';
       document.getElementById('rulesMLOther').innerHTML = '<div class="error">Failed to load ML classification data.</div>';
       return;
@@ -2396,20 +2600,16 @@ function loadRulesML() {
     var summary = data.summary || {};
     var rules = data.classified_rules || [];
     var eventsFetched = data.events_fetched || 0;
-
-    // Summary cards
     var byClass = summary.by_classification || {};
     var goodCount = byClass['GOOD'] || 0;
     var abusiveCount = byClass['ABUSIVE'] || 0;
     var suspiciousCount = byClass['SUSPICIOUS'] || 0;
-    var uncertainCount = byClass['UNCERTAIN'] || 0;
     var defaultDeny = summary.default_deny || {};
     var totalRules = summary.total_rules || 0;
     var eventsWithRule = summary.events_with_rule || 0;
     var eventsWithoutRule = summary.events_without_rule || 0;
 
-    var summaryHTML = ''
-      + metricBlock('📋 Total Rules Classified', totalRules)
+    var summaryHTML = metricBlock('📋 Total Rules Classified', totalRules)
       + metricBlock('⚠️ Abusive Rules', abusiveCount)
       + metricBlock('🔍 Suspicious', suspiciousCount)
       + metricBlock('✅ Good Rules', goodCount)
@@ -2420,55 +2620,41 @@ function loadRulesML() {
 
     document.getElementById('rulesMLSummary').innerHTML = summaryHTML;
 
-    // Classification explanation cards
-    var explanationHTML = ''
-      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">'
-      // ABUSIVE
+    var explanationHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">'
       + '<div style="border-left:3px solid #ef4444;padding-left:12px">'
       + '<div style="font-weight:600;color:#ef4444;margin-bottom:4px">⚠️ ABUSIVE Rules</div>'
-      + '<div style="font-size:12px;color:var(--text-secondary)">Scanning patterns, high port/destination diversity, elevated block ratios. These rules match traffic exhibiting characteristics of port scans, destination scans, brute force, or other malicious behavior.</div>'
+      + '<div style="font-size:12px;color:var(--text-secondary)">Scanning patterns, high port/destination diversity, elevated block ratios.</div>'
       + '</div>'
-      // SUSPICIOUS
       + '<div style="border-left:3px solid #f59e0b;padding-left:12px">'
       + '<div style="font-weight:600;color:#f59e0b;margin-bottom:4px">🔍 SUSPICIOUS Rules</div>'
-      + '<div style="font-size:12px;color:var(--text-secondary)">Uncertain classification — may indicate a mix of good and bad patterns. Could be legitimate traffic with occasional scanning behavior, or a rule with limited data for confident classification. Review the drill-down to understand which features are conflicting.</div>'
+      + '<div style="font-size:12px;color:var(--text-secondary)">Uncertain classification — mix of good and bad patterns.</div>'
       + '</div>'
-      // UNCERTAIN
       + '<div style="border-left:3px solid #6b7280;padding-left:12px">'
       + '<div style="font-weight:600;color:#6b7280;margin-bottom:4px">❓ UNCERTAIN Rules</div>'
-      + '<div style="font-size:12px;color:var(--text-secondary)">Not enough data for classification (< 20 events). These rules may need more traffic to analyze. Continue monitoring for sufficient event volume.</div>'
+      + '<div style="font-size:12px;color:var(--text-secondary)">Not enough data for classification (< 20 events).</div>'
       + '</div>'
-      // GOOD
       + '<div style="border-left:3px solid #22c55e;padding-left:12px">'
       + '<div style="font-weight:600;color:#22c55e;margin-bottom:4px">✅ GOOD Rules</div>'
-      + '<div style="font-size:12px;color:var(--text-secondary)">Normal, legitimate traffic patterns. Low scan scores, normal volume, high pass ratio. These are well-functioning firewall rules allowing appropriate traffic.</div>'
+      + '<div style="font-size:12px;color:var(--text-secondary)">Normal, legitimate traffic patterns.</div>'
       + '</div>'
       + '</div>';
     
     document.getElementById('rulesMLExplanation').innerHTML = explanationHTML;
 
-    // Abusive rules table
     document.getElementById('rulesMLABUSIVE').innerHTML = buildRulesTable2(
-      rules.filter(function(r) { return r.classification === 'ABUSIVE'; }),
-      'abusive',
-      'No abusive rules detected in the sample window.'
+      rules.filter(function(r) { return r.classification === 'ABUSIVE'; }), 'abusive', 'No abusive rules detected.'
     );
 
-    // Good rules table
     document.getElementById('rulesMLGOOD').innerHTML = buildRulesTable2(
-      rules.filter(function(r) { return r.classification === 'GOOD'; }),
-      'good',
-      'No good rules detected in the sample window.'
+      rules.filter(function(r) { return r.classification === 'GOOD'; }), 'good', 'No good rules detected.'
     );
     
-    // Default deny + Suspicious/Uncertain rules
     var otherRules = rules.filter(function(r) {
       return r.classification === 'SUSPICIOUS' || r.classification === 'UNCERTAIN';
     });
-    var defaultDenyHTML = ''
-      + '<div class="card"><div class="card-body">'
+    var defaultDenyHTML = '<div class="card"><div class="card-body">'
       + '<h4 style="margin-top:0;color:var(--accent)">📊 Default Deny Traffic</h4>'
-      + '<p>Events that reached the firewall but did not match any rule — these are dropped by the default deny policy.</p>'
+      + '<p>Events that did not match any rule — dropped by default deny policy.</p>'
       + '<div class="grid">'
       + metricBlock('🔥 Default Deny Events', defaultDeny.events ? defaultDeny.events.toLocaleString() : 'N/A')
       + metricBlock('📊 Deny % of Total', defaultDeny.percentage != null ? defaultDeny.percentage.toFixed(1) + '%' : 'N/A')
@@ -2476,16 +2662,13 @@ function loadRulesML() {
       + metricBlock('🚫 Events without Rules', eventsWithoutRule.toLocaleString())
       + '</div></div></div>';
     if (otherRules.length > 0) {
-      defaultDenyHTML += '<div class="card"><div class="card-body"><h4 style="margin-top:0">🔍 Suspicious & Uncertain Rules (Click 🔍 to drill down)</h4>';
+      defaultDenyHTML += '<div class="card"><div class="card-body"><h4 style="margin-top:0">🔍 Suspicious & Uncertain Rules</h4>';
       defaultDenyHTML += buildRulesTable2(otherRules, 'suspicious', '');
       defaultDenyHTML += '</div></div>';
     }
     document.getElementById('rulesMLOther').innerHTML = defaultDenyHTML;
     
-    // Load self-learning stats
     loadMLSelfLearningStats();
-    
-    // Load active learning queue
     loadActiveLearningQueue();
   });
 }
@@ -2493,7 +2676,6 @@ function loadRulesML() {
 function loadMLSelfLearningStats() {
   apiFetch('/api/ml-summary').then(function(data) {
     if (!data) return;
-    
     var mlStats = data.ml_stats || {};
     var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:16px">';
     html += '<div class="card"><div class="card-body" style="padding:16px">';
@@ -2504,19 +2686,16 @@ function loadMLSelfLearningStats() {
       html += '<div style="font-size:11px;color:' + (mlStats.feedback_agreement > 0.7 ? '#22c55e' : '#f59e0b') + '">Agreement: ' + (mlStats.feedback_agreement * 100).toFixed(0) + '%</div>';
     }
     html += '</div></div>';
-    
     html += '<div class="card"><div class="card-body" style="padding:16px">';
     html += '<div style="font-size:12px;color:var(--text-muted)">📈 Baselines Updated</div>';
     html += '<div style="font-size:24px;font-weight:600;margin:8px 0">' + (mlStats.baselines_updated || 0) + '</div>';
     html += '<div style="font-size:11px;color:var(--text-secondary)">Rules with Learned Baselines</div>';
     html += '</div></div>';
-    
     html += '<div class="card"><div class="card-body" style="padding:16px">';
     html += '<div style="font-size:12px;color:var(--text-muted)">⏰ Temporal Patterns</div>';
     html += '<div style="font-size:24px;font-weight:600;margin:8px 0">' + (mlStats.temporal_patterns || 0) + '</div>';
     html += '<div style="font-size:11px;color:var(--text-secondary)">Rules with Time Patterns</div>';
     html += '</div></div>';
-    
     html += '</div>';
     document.getElementById('mlSelfLearningStats').innerHTML = html;
   });
@@ -2525,13 +2704,12 @@ function loadMLSelfLearningStats() {
 function loadActiveLearningQueue() {
   apiFetch('/api/active-learning-queue').then(function(data) {
     if (!data || !data.queue || data.queue.length === 0) {
-      document.getElementById('activeLearningQueue').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">✅ No rules currently in the active learning queue. All classifications have high confidence.</div>';
+      document.getElementById('activeLearningQueue').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">✅ No rules currently in the active learning queue.</div>';
       return;
     }
     
     var html = '<div style="overflow-x:auto">';
-    html += '<table class="rules-table">';
-    html += '<thead><tr><th>Rule Name</th><th>Classification</th><th>Confidence</th><th>Reasons</th><th>Actions</th></tr></thead><tbody>';
+    html += '<table><thead><tr><th>Rule Name</th><th>Classification</th><th>Confidence</th><th>Reasons</th><th>Actions</th></tr></thead><tbody>';
     
     data.queue.forEach(function(item) {
       var confPercent = (item.confidence * 100).toFixed(0) + '%';
@@ -2551,7 +2729,7 @@ function loadActiveLearningQueue() {
     });
     
     html += '</tbody></table>';
-    html += '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">💡 Review uncertain rules and provide feedback to improve classification accuracy</div>';
+    html += '<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">💡 Review uncertain rules and provide feedback</div>';
     html += '</div>';
     
     document.getElementById('activeLearningQueue').innerHTML = html;
@@ -2565,12 +2743,7 @@ function provideFeedback(ruleName, isCorrect, btn) {
   fetch(API_BASE + '/api/feedback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      rule_name: ruleName,
-      label: label,
-      reason: reason,
-      user_id: 'web_ui'
-    })
+    body: JSON.stringify({ rule_name: ruleName, label: label, reason: reason, user_id: 'web_ui' })
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
@@ -2579,32 +2752,23 @@ function provideFeedback(ruleName, isCorrect, btn) {
       btn.disabled = true;
       btn.style.background = '#22c55e';
       btn.style.borderColor = '#22c55e';
-      alert('Feedback saved! This will improve future classifications.');
-      // Refresh the queue
       loadActiveLearningQueue();
     } else {
-      alert('Error saving feedback: ' + (data.error || 'Unknown error'));
+      alert('Error saving feedback: ' + (data.error || 'Unknown'));
     }
   })
-  .catch(function(e) {
-    alert('Error saving feedback: ' + e.message);
-  });
+  .catch(function(e) { alert('Error saving feedback: ' + e.message); });
 }
 
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
 // Utilities
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
 
 function updateStatus(type, text) {
   var dot = document.getElementById('statusDot');
   var txt = document.getElementById('statusText');
-  if (type === 'ok') {
-    dot.style.background = 'var(--success)';
-  } else if (type === 'warn') {
-    dot.style.background = 'var(--warning)';
-  } else {
-    dot.style.background = 'var(--danger)';
-  }
+  if (!dot || !txt) return;
+  dot.style.background = type === 'ok' ? 'var(--success)' : type === 'warn' ? 'var(--warning)' : 'var(--danger)';
   txt.textContent = text;
 }
 
@@ -2618,55 +2782,22 @@ function escapeHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ═══════════════════════════════════════════
-// Init
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════
+// Settings
+// ═══════════════════════════════════════
 
-window.addEventListener('DOMContentLoaded', function() {
-  loadOverview();
-  setInterval(function() { loadOverview(); }, 30000);
-  initAppHeatmap();
-  initAppFlows();
-  loadServices();
-  setInterval(loadServices, 30000);
-  loadSettings();
-  loadNetworkMap();
-  loadWanFlapStatus();
-  loadWanFlapHistory();
-  
-  // SSE for real-time stats
-  try {
-    var eventSource = new EventSource('/api/sse-stats');
-    eventSource.onmessage = function(event) {
-      try {
-        var data = JSON.parse(event.data);
-        updateStatsUI(data);
-      } catch(e) {}
-    };
-  } catch(e) {}
-});
-
-// ═══════════════════════════════════════════
-// New Feature Functions
-// ═══════════════════════════════════════════
-
-// Settings Management
 function loadSettings() {
     apiFetch('/api/settings' + CACHE_BUST).then(function(data) {
-        renderSettings(data);
+        var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">';
+        html += '<div><label style="display:block;margin-bottom:4px;font-size:13px;color:var(--text-secondary)">Port Scan Window (seconds)</label><input type="number" id="portscanWindow" value="' + (data.portscan_window || 60) + '" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary);color:var(--text-primary)"></div>';
+        html += '<div><label style="display:block;margin-bottom:4px;font-size:13px;color:var(--text-secondary)">Brute Force Threshold</label><input type="number" id="bruteforceThreshold" value="' + (data.bruteforce_threshold || 50) + '" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary);color:var(--text-primary)"></div>';
+        html += '<div><label style="display:block;margin-bottom:4px;font-size:13px;color:var(--text-secondary)">Sensitivity</label><select id="sensitivity" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary);color:var(--text-primary)"><option value="low" ' + (data.sensitivity === 'low' ? 'selected' : '') + '>Low</option><option value="medium" ' + (data.sensitivity === 'medium' ? 'selected' : '') + '>Medium</option><option value="high" ' + (data.sensitivity === 'high' ? 'selected' : '') + '>High</option></select></div>';
+        html += '<div style="align-self:end"><button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button></div>';
+        html += '</div>';
+        document.getElementById('settingsContent').innerHTML = html;
     }).catch(function() {
-        showApiError();
+        document.getElementById('settingsContent').innerHTML = '<div class="error-msg">Failed to load settings</div>';
     });
-}
-
-function renderSettings(data) {
-    var html = '<div class="grid" style="grid-template-columns: 1fr 1fr; gap: 20px;">';
-    html += '<div><label>Port Scan Window (seconds)</label><input type="number" id="portscanWindow" value="' + (data.portscan_window || 60) + '" class="form-input"></div>';
-    html += '<div><label>Brute Force Threshold</label><input type="number" id="bruteforceThreshold" value="' + (data.bruteforce_threshold || 50) + '" class="form-input"></div>';
-    html += '<div><label>Sensitivity</label><select id="sensitivity" class="form-input"><option value="low" ' + (data.sensitivity === 'low' ? 'selected' : '') + '>Low</option><option value="medium" ' + (data.sensitivity === 'medium' ? 'selected' : '') + '>Medium</option><option value="high" ' + (data.sensitivity === 'high' ? 'selected' : '') + '>High</option></select></div>';
-    html += '<div style="align-self: end;"><button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button></div>';
-    html += '</div>';
-    document.getElementById('settingsContent').innerHTML = html;
 }
 
 function saveSettings() {
@@ -2679,14 +2810,13 @@ function saveSettings() {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(settings)
-    }).then(function() {
-        alert('Settings saved!');
-    }).catch(function() {
-        showApiError();
-    });
+    }).then(function() { alert('Settings saved!'); }).catch(function() { alert('Failed to save settings'); });
 }
 
+// ═══════════════════════════════════════
 // Log Search
+// ═══════════════════════════════════════
+
 function searchLogs() {
     var srcIp = document.getElementById('logSrcIp').value;
     var days = document.getElementById('logDays').value;
@@ -2696,7 +2826,7 @@ function searchLogs() {
     apiFetch(url + CACHE_BUST).then(function(data) {
         renderLogs(data.logs || []);
     }).catch(function() {
-        showApiError();
+        document.getElementById('logResults').innerHTML = '<div class="error-msg">Failed to search logs</div>';
     });
 }
 
@@ -2705,7 +2835,7 @@ function renderLogs(logs) {
     if (logs.length === 0) {
         html = '<p style="color:var(--text-muted)">No logs found</p>';
     } else {
-        html = '<table class="data-table"><thead><tr><th>Time</th><th>Src IP</th><th>Dst IP</th><th>Port</th><th>Proto</th><th>Action</th><th>Rule</th></tr></thead><tbody>';
+        html = '<table><thead><tr><th>Time</th><th>Src IP</th><th>Dst IP</th><th>Port</th><th>Proto</th><th>Action</th><th>Rule</th></tr></thead><tbody>';
         for (var i = 0; i < logs.length; i++) {
             var l = logs[i];
             html += '<tr>';
@@ -2723,54 +2853,41 @@ function renderLogs(logs) {
     document.getElementById('logResults').innerHTML = html;
 }
 
+// ═══════════════════════════════════════
 // Network Map
+// ═══════════════════════════════════════
+
 function loadNetworkMap() {
     apiFetch('/api/ip-flow' + CACHE_BUST).then(function(data) {
-        renderNetworkMap(data);
-    }).catch(function() {
-        showApiError();
-    });
-}
-
-function renderNetworkMap(data) {
-    var connections = data.connections || [];
-    if (connections.length === 0) {
-        document.getElementById('networkMapContent').innerHTML = '<p style="color:var(--text-muted)">No network data yet</p>';
-        return;
-    }
-    var html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">';
-    for (var i = 0; i < connections.length && i < 50; i++) {
-        var c = connections[i];
-        html += '<div class="card" style="margin:0; padding:15px;">';
-        html += '<div style="font-weight:bold;">' + escapeHtml(c.src_ip) + ' → ' + escapeHtml(c.dst_ip) + '</div>';
-        html += '<div style="color:var(--text-muted); font-size:14px;">Events: ' + c.count + ' | Ports: ' + c.ports.join(', ') + '</div>';
+        var connections = data.connections || [];
+        if (connections.length === 0) {
+            document.getElementById('networkMapContent').innerHTML = '<p style="color:var(--text-muted)">No network data yet</p>';
+            return;
+        }
+        var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:15px">';
+        for (var i = 0; i < connections.length && i < 50; i++) {
+            var c = connections[i];
+            html += '<div class="card" style="margin:0;padding:15px">';
+            html += '<div style="font-weight:bold">' + escapeHtml(c.src_ip) + ' → ' + escapeHtml(c.dst_ip) + '</div>';
+            html += '<div style="color:var(--text-muted);font-size:14px;margin-top:4px">Events: ' + c.count + ' | Ports: ' + c.ports.join(', ') + '</div>';
+            html += '</div>';
+        }
         html += '</div>';
-    }
-    html += '</div>';
-    document.getElementById('networkMapContent').innerHTML = html;
-}
-
-// Active Learning Integration (add to rules table)
-function addActiveLearningButton(ruleName, eventId) {
-    // This would be called from the rules row to submit feedback
-    apiFetch('/api/active-learning/feedback', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            rule_name: ruleName,
-            feedback_type: 'false_positive'
-        })
-    }).then(function(data) {
-        console.log('Feedback saved:', data);
-    }).catch(function(e) {
-        console.error('Feedback failed:', e);
+        document.getElementById('networkMapContent').innerHTML = html;
+    }).catch(function() {
+        document.getElementById('networkMapContent').innerHTML = '<div class="error-msg">Failed to load network map</div>';
     });
 }
+
+// ═══════════════════════════════════════
+// WAN Flap
+// ═══════════════════════════════════════
+
 function loadWanFlapStatus() {
     apiFetch('/api/wan-flap-status' + CACHE_BUST).then(function(data) {
         renderWanFlapStatus(data);
     }).catch(function() {
-        showApiError();
+        document.getElementById('wanFlapStatus').innerHTML = '<div class="error-msg">Failed to load WAN flap status</div>';
     });
 }
 
@@ -2780,16 +2897,11 @@ function renderWanFlapStatus(data) {
     if (Object.keys(status).length === 0) {
         html = '<p style="color:var(--text-muted)">No WAN flaps detected yet.</p>';
     } else {
-        html = '<table class="data-table"><thead><tr><th>Gateway</th><th>Status</th><th>Flaps (1h)</th><th>Last Change</th></tr></thead><tbody>';
+        html = '<table><thead><tr><th>Gateway</th><th>Status</th><th>Flaps (1h)</th><th>Last Change</th></tr></thead><tbody>';
         for (var gw in status) {
             var s = status[gw];
             var stateColor = s.current_state === 'up' ? 'green' : 'red';
-            html += '<tr>';
-            html += '<td>' + escapeHtml(gw) + '</td>';
-            html += '<td><span style="color:' + stateColor + '">' + s.current_state.toUpperCase() + '</span></td>';
-            html += '<td>' + (s.flaps_1h || 0) + '</td>';
-            html += '<td>' + formatTime(s.last_change) + '</td>';
-            html += '</tr>';
+            html += '<tr><td>' + escapeHtml(gw) + '</td><td><span style="color:' + stateColor + '">' + s.current_state.toUpperCase() + '</span></td><td>' + (s.flaps_1h || 0) + '</td><td>' + formatTime(s.last_change) + '</td></tr>';
         }
         html += '</tbody></table>';
     }
@@ -2800,7 +2912,7 @@ function loadWanFlapHistory() {
     apiFetch('/api/wan-flap-history' + CACHE_BUST).then(function(data) {
         renderWanFlapHistory(data);
     }).catch(function() {
-        showApiError();
+        document.getElementById('wanFlapHistory').innerHTML = '<div class="error-msg">Failed to load WAN flap history</div>';
     });
 }
 
@@ -2810,21 +2922,57 @@ function renderWanFlapHistory(data) {
     if (flaps.length === 0) {
         html = '<p style="color:var(--text-muted)">No recent flaps.</p>';
     } else {
-        html = '<table class="data-table"><thead><tr><th>Time</th><th>Gateway</th><th>From</th><th>To</th></tr></thead><tbody>';
+        html = '<table><thead><tr><th>Time</th><th>Gateway</th><th>From</th><th>To</th></tr></thead><tbody>';
         for (var i = 0; i < flaps.length; i++) {
             var f = flaps[i];
             var stateFrom = f.old_state === 'up' ? '🟢 UP' : '🔴 DOWN';
             var stateTo = f.new_state === 'up' ? '🟢 UP' : '🔴 DOWN';
-            html += '<tr>';
-            html += '<td>' + formatTime(f.time) + '</td>';
-            html += '<td>' + escapeHtml(f.gateway) + '</td>';
-            html += '<td>' + stateFrom + '</td>';
-            html += '<td>' + stateTo + '</td>';
-            html += '</tr>';
+            html += '<tr><td>' + formatTime(f.time) + '</td><td>' + escapeHtml(f.gateway) + '</td><td>' + stateFrom + '</td><td>' + stateTo + '</td></tr>';
         }
         html += '</tbody></table>';
     }
     document.getElementById('wanFlapHistory').innerHTML = html;
+}
+
+function formatTime(t) {
+    if (!t) return '-';
+    try { return new Date(t).toLocaleString(); } catch(e) { return t; }
+}
+
+// ═══════════════════════════════════════
+// Init
+// ═══════════════════════════════════════
+
+window.addEventListener('DOMContentLoaded', function() {
+  initTheme();
+  loadOverview();
+  setInterval(function() { loadOverview(); }, 30000);
+  initAppHeatmap();
+  initAppFlows();
+  loadServices();
+  setInterval(loadServices, 30000);
+  loadSettings();
+  loadNetworkMap();
+  loadWanFlapStatus();
+  loadWanFlapHistory();
+  
+  try {
+    var eventSource = new EventSource('/api/sse-stats');
+    eventSource.onmessage = function(event) {
+      try {
+        var data = JSON.parse(event.data);
+        updateStatsUI(data);
+      } catch(e) {}
+    };
+  } catch(e) {}
+});
+
+function updateStatsUI(data) {
+  // Update stats from SSE
+  if (data.total_events !== undefined) {
+    var cards = document.querySelectorAll('.stat-value');
+    if (cards[0]) cards[0].textContent = formatNum(data.total_events);
+  }
 }
 </script>
 
