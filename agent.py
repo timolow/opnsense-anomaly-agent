@@ -259,7 +259,7 @@ class OPNsenseClient:
                 return {}
             
             data = resp.json()
-            rules_list = data.get("rule", [])
+            rules_list = data.get("rows", [])
             rules_by_uuid: Dict[str, Dict[str, Any]] = {}
             
             for rule in rules_list:
@@ -414,8 +414,8 @@ class OPNsenseAgent:
         try:
             rules = self.opn_client.fetch_rules()
             for uuid_or_id, rule in rules.items():
-                # Extract human-readable name (description field)
-                rule_name = rule.get("description", "") or rule.get("xmldescription", "") or f"Rule {uuid_or_id}"
+                # Extract human-readable name from source_net field (rule identifier)
+                rule_name = rule.get("source_net", "") or f"Rule {uuid_or_id}"
                 # Store mapping from UUID/ID to human-readable name
                 self.rules_mapping[uuid_or_id] = rule_name
                 # Also map the short ID if different from UUID
