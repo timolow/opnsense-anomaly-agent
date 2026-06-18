@@ -34,6 +34,8 @@ COPY server.py .
 COPY app.html .
 COPY ml_learning.py .
 COPY wan_flap_detector.py .
+COPY zenarmor_classifier.py .
+COPY ids_signature_analyzer.py .
 
 # Create data directory
 RUN mkdir -p /app/agent_data
