@@ -29,6 +29,7 @@ COPY rule_classifier.py .
 COPY system_log_classifier.py .
 COPY rule_classify.py .
 COPY service_monitor.py .
+COPY apprise_notifier.py .
 COPY server.py .
 COPY app.html .
 COPY ml_learning.py .
