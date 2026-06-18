@@ -75,6 +75,8 @@ from rule_classifier import RuleClassifier
 from system_log_classifier import SystemLogClassifier
 from service_monitor import ServiceMonitor
 from apprise_notifier import AppriseNotifier
+from zenarmor_classifier import ZenArmorClassifier
+from ids_signature_analyzer import IDSSignatureAnalyzer
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -416,6 +418,16 @@ class OPNsenseAgent:
         # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
         self.service_monitor = ServiceMonitor(None)
         self.service_monitor.load()
+        
+        # ZenArmor policy classifier — tracks security gateway policies
+        self.zenarmor_classifier = ZenArmorClassifier()
+        self.zenarmor_classifier.load_state()
+        
+        # IDS signature analyzer — tracks IDS/Snort/Suricata signatures
+        self.ids_analyzer = IDSSignatureAnalyzer()
+        self.ids_analyzer.load_state()
+        
+        # State persistence
         self.persistence.load(self)
         
         # Startup health checks
@@ -542,6 +554,15 @@ class OPNsenseAgent:
 
         # Rule-based learning (firewall rules only)
         self.rule_classifier.process_event(event)
+
+        # ZenArmor policy classifier — tracks security gateway policies
+        log_type = event.get('log_type', '')
+        if log_type == 'zenarmor':
+            self.zenarmor_classifier.process_event(event)
+        
+        # IDS signature analyzer — tracks IDS/Snort/Suricata signatures
+        if log_type == 'ids':
+            self.ids_analyzer.process_event(event)
 
         # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
         self.service_monitor.process_event(event)
@@ -686,6 +707,30 @@ class OPNsenseAgent:
         except Exception as e:
             logger.error("WAN flap check failed: %s", e)
 
+    def _check_zenarmor_anomalies(self):
+        """Check ZenArmor classifier for anomalies and send alerts."""
+        anomalies = self.zenarmor_classifier.detect_anomalies()
+        if not anomalies:
+            return
+        
+        for anomaly in anomalies:
+            self.anomaly_count += 1
+            logger.info("ZenArmor anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            self.discord_bot.send_alert(anomaly)
+            self.apprise_notifier.send_alert(anomaly)
+
+    def _check_ids_anomalies(self):
+        """Check IDS analyzer for anomalies and send alerts."""
+        anomalies = self.ids_analyzer.detect_anomalies()
+        if not anomalies:
+            return
+        
+        for anomaly in anomalies:
+            self.anomaly_count += 1
+            logger.info("IDS anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            self.discord_bot.send_alert(anomaly)
+            self.apprise_notifier.send_alert(anomaly)
+
     def _send_status(self):
         """Log periodic status."""
         uptime = int(time.time() - self.start_time)
@@ -793,6 +838,14 @@ class OPNsenseAgent:
                         except Exception as e:
                             logger.warning("WAN flap check failed: %s", e)
 
+                    # Check ZenArmor policy anomalies periodically
+                    if now - self.last_syslog_anomaly_check >= self.config.learn_interval:
+                        try:
+                            self._check_zenarmor_anomalies()
+                            self._check_ids_anomalies()
+                        except Exception as e:
+                            logger.warning("ZenArmor/IDS anomaly check failed: %s", e)
+
                     # Save state periodically (every learn_interval, alongside baseline save)
                     if now - self.last_save >= self.config.learn_interval:
                         self.last_save = now
@@ -802,6 +855,8 @@ class OPNsenseAgent:
                         # Persist all ML/tracking state to JSON file
                         self.persistence.save(self)
                         self.service_monitor.save()
+                        self.zenarmor_classifier.save_state()
+                        self.ids_analyzer.save_state()
 
                     # Periodic status (time-based every 60s)
                     now = time.time()

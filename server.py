@@ -995,6 +995,173 @@ def query_health():
         close_db(conn)
         return {"status": "error", "database": {"status": "error", "message": str(e)}, "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0), "uptime_seconds": uptime}
 
+
+# ──────────────────────────────────────────────────────────────────────
+# ZenArmor query helpers
+# ──────────────────────────────────────────────────────────────────────
+
+ZENARMOR_STATE_FILE = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "zenarmor_state.json")
+IDS_STATE_FILE = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "ids_state.json")
+
+def load_json_state(filepath):
+    """Load a JSON state file, returning empty dict on failure."""
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def query_zenarmor_summary():
+    """Return ZenArmor policy summary from state file."""
+    state = load_json_state(ZENARMOR_STATE_FILE)
+    if not state:
+        return {"total_events": 0, "known_policies_count": 0, "policies_by_classification": {}, "top_policies": []}
+    return state.get("summary", {})
+
+def query_zenarmor_policies():
+    """Return all known ZenArmor policies."""
+    state = load_json_state(ZENARMOR_STATE_FILE)
+    if not state:
+        return []
+    policies = []
+    for name, data in state.get("policies", {}).items():
+        policies.append({
+            "policy_name": name,
+            "total_events": data.get("total_events", 0),
+            "actions": data.get("actions", {}),
+            "first_seen": data.get("first_seen"),
+            "last_seen": data.get("last_seen"),
+            "action_history": data.get("action_history", []),
+        })
+    return sorted(policies, key=lambda x: -x["total_events"])
+
+def query_zenarmor_events(limit=100, offset=0):
+    """Return recent ZenArmor events from the database."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT timestamp, src_ip, dst_ip, dst_port, proto, action,
+                   rule_name, log_type
+            FROM events
+            WHERE log_type = 'zenarmor'
+            ORDER BY timestamp DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        rows = cur.fetchall()
+        close_db(conn)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        close_db(conn)
+        return []
+
+def query_zenarmor_anomalies():
+    """Return recent ZenArmor anomalies from the database."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT timestamp, attack_type, severity, src_ip, dst_ip,
+                   description, detail
+            FROM anomalies
+            WHERE (detail::text LIKE '%%zenarmor%%' OR description::text LIKE '%%ZenArmor%%' OR description::text LIKE '%%Policy%%')
+              AND (detail::text LIKE '%%NEW_POLICY%%' OR detail::text LIKE '%%POLICY_CHANGE%%'
+                   OR detail::text LIKE '%%BLOCK_SPIKE%%' OR detail::text LIKE '%%MIXED_POLICY%%'
+                   OR description::text LIKE '%%NEW ZenArmor%%' OR description::text LIKE '%%Policy%% changed%%'
+                   OR description::text LIKE '%%blocking%%' OR description::text LIKE '%%mixed%%'
+                   OR description::text LIKE '%%SYSTEM_BLOCK%%')
+            ORDER BY timestamp DESC
+            LIMIT 100
+        """)
+        rows = cur.fetchall()
+        close_db(conn)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        close_db(conn)
+        return []
+
+# ──────────────────────────────────────────────────────────────────────
+# IDS query helpers
+# ──────────────────────────────────────────────────────────────────────
+
+def query_ids_summary():
+    """Return IDS signature summary from state file."""
+    state = load_json_state(IDS_STATE_FILE)
+    if not state:
+        return {"total_events": 0, "known_signatures_count": 0, "signatures_by_classification": {}, "top_signatures": []}
+    return state.get("summary", {})
+
+def query_ids_signatures():
+    """Return all known IDS signatures."""
+    state = load_json_state(IDS_STATE_FILE)
+    if not state:
+        return []
+    sigs = []
+    for name, data in state.get("signatures", {}).items():
+        sigs.append({
+            "signature": name,
+            "priority": data.get("priority", 0),
+            "trigger_count": data.get("trigger_count", 0),
+            "first_seen": data.get("first_seen"),
+            "last_seen": data.get("last_seen"),
+            "trigger_history": data.get("trigger_history", []),
+        })
+    return sorted(sigs, key=lambda x: -x["trigger_count"])
+
+def query_ids_events(limit=100, offset=0):
+    """Return recent IDS events from the database."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT timestamp, src_ip, dst_ip, dst_port, proto, action,
+                   rule_name, log_type
+            FROM events
+            WHERE log_type = 'ids'
+            ORDER BY timestamp DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        rows = cur.fetchall()
+        close_db(conn)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        close_db(conn)
+        return []
+
+def query_ids_anomalies():
+    """Return recent IDS anomalies from the database."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT timestamp, attack_type, severity, src_ip, dst_ip,
+                   description, detail
+            FROM anomalies
+            WHERE (detail::text LIKE '%%ids%%' OR description::text LIKE '%%IDS%%' OR description::text LIKE '%%signature%%')
+              AND (detail::text LIKE '%%NEW_SIGNATURE%%' OR detail::text LIKE '%%SIGNATURE_SPIKE%%'
+                   OR detail::text LIKE '%%TARGET_CHANGE%%' OR detail::text LIKE '%%CROSS_NETWORK%%'
+                   OR detail::text LIKE '%%MULTIPLE_NEW%%'
+                   OR description::text LIKE '%%New IDS%%' OR description::text LIKE '%%signature%% spike%%'
+                   OR description::text LIKE '%%targets%% distinct%%')
+            ORDER BY timestamp DESC
+            LIMIT 100
+        """)
+        rows = cur.fetchall()
+        close_db(conn)
+        return [dict(r) for r in rows]
+    except Exception as e:
+        close_db(conn)
+        return []
+
+
 # Request Handler
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data, code=200):
@@ -1045,6 +1212,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/service-status":
             # Service monitor status — DHCP, Unbound, NTP, OpenVPN, WireGuard
             self._send_json(query_service_status())
+        elif path == "/api/zenarmor-summary":
+            self._send_json(query_zenarmor_summary())
+        elif path == "/api/zenarmor-policies":
+            self._send_json(query_zenarmor_policies())
+        elif path == "/api/zenarmor-events":
+            query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+            limit = int(query.get("limit", [100])[0])
+            offset = int(query.get("offset", [0])[0])
+            self._send_json(query_zenarmor_events(limit=limit, offset=offset))
+        elif path == "/api/zenarmor-anomalies":
+            self._send_json(query_zenarmor_anomalies())
+        elif path == "/api/ids-summary":
+            self._send_json(query_ids_summary())
+        elif path == "/api/ids-signatures":
+            self._send_json(query_ids_signatures())
+        elif path == "/api/ids-events":
+            query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+            limit = int(query.get("limit", [100])[0])
+            offset = int(query.get("offset", [0])[0])
+            self._send_json(query_ids_events(limit=limit, offset=offset))
+        elif path == "/api/ids-anomalies":
+            self._send_json(query_ids_anomalies())
         elif path == "/api/heartbeat":
             # Simple heartbeat - returns current time and counters from state
             state = load_state()
