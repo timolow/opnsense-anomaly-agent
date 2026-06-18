@@ -677,17 +677,22 @@ function toggleTheme() {
 // ═══════════════════════════════════════════
 
 function switchTab(tabId) {
-  // Update nav buttons
+  // Update nav buttons — use style properties for reliability
   var btns = document.querySelectorAll('.tab-btn');
+  var btnColors = {};
   for (var i = 0; i < btns.length; i++) {
     var btn = btns[i];
     if (btn.getAttribute('data-tab') === tabId) {
-      btn.classList.add('active');
+      btn.style.color = 'var(--primary)';
+      btn.style.borderBottom = '2px solid var(--primary)';
+      btn.style.borderColor = 'var(--primary)';
     } else {
-      btn.classList.remove('active');
+      btn.style.color = '';
+      btn.style.borderBottom = '';
+      btn.style.borderColor = '';
     }
   }
-  // Show content — use display property directly for reliability
+  // Show content — use display property directly
   var allContent = document.querySelectorAll('.tab-content');
   for (var i = 0; i < allContent.length; i++) {
     var contentDiv = allContent[i];
