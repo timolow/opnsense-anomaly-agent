@@ -54,6 +54,10 @@ When using **standalone mode**, the JSONL file must be shared with the Docker ag
 - **WAN flap detection** — Gateway up/down flapping alerts
 - **Service anomalies** — DHCP, Unbound, NTP, OpenVPN, WireGuard issues
 - **System log anomalies** — Unusual patterns in OPNsense system logs (interfaces, routing, DHCP)
+- **ZenArmor policy tracking** — Security gateway policy classification (ALLOW/BLOCK/MIXED), new policy detection, policy change detection, block rate anomaly alerts
+- **ZenArmor anomalies** — NEW_POLICY, POLICY_CHANGE, BLOCK_SPIKE, MIXED_POLICY, SYSTEM_BLOCK_SPIKE detection
+- **IDS signature tracking** — Snort/Suricata signature classification by priority (HIGH/MEDIUM/LOW), signature frequency analysis, new signature detection
+- **IDS anomalies** — NEW_SIGNATURE, SIGNATURE_SPIKE, TARGET_CHANGE, CROSS_NETWORK, MULTIPLE_NEW_SIGNATURES detection
 
 ## Quick Start
 
@@ -222,7 +226,18 @@ The dashboard API is served on port 8766. Key endpoints include:
 | `GET /api/events` | Recent events |
 | `GET /api/flows` | IP flow data |
 | `GET /api/geo` | Geographic IP data |
-| `GET /api/heatmap` | Traffic heatmap data |
+| `GET /api/heatmap` | Traffic heatmap data 
+| `GET /api/opnsense` | OPNsense connection status |
+| `GET /api/service-status` | Service monitor status |
+| `GET /api/heartbeat` | Agent heartbeat |
+| `GET /api/zenarmor-summary` | ZenArmor policy summary |
+| `GET /api/zenarmor-policies` | All known ZenArmor policies |
+| `GET /api/zenarmor-events` | Recent ZenArmor events (with limit/offset) |
+| `GET /api/zenarmor-anomalies` | Recent ZenArmor anomalies |
+| `GET /api/ids-summary` | IDS signature summary |
+| `GET /api/ids-signatures` | All known IDS signatures |
+| `GET /api/ids-events` | Recent IDS events (with limit/offset) |
+| `GET /api/ids-anomalies` | Recent IDS anomalies |
 | `GET /api/ip/<ip>` | Detailed IP flow analysis |
 | `GET /api/system_logs` | System log entries |
 | `GET /api/services` | Service status (DHCP, Unbound, NTP, etc.) |
