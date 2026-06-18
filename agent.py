@@ -148,13 +148,12 @@ class Config:
         self.vpn_ips_str = os.getenv("VPN_IPS", "")
         # Custom interface-to-class mapping: "iface=class,iface2=class2"
         self.custom_interfaces_str = os.getenv("CUSTOM_INTERFACES", "")
-        self.custom_interfaces_str = os.getenv("CUSTOM_INTERFACES", "")
         self.network_auto_discover = os.getenv("NETWORK_AUTO_DISCOVER", "true").lower() == "true"
         
         # WAN flap detection
         from wan_flap_detector import WANFlapDetector
         self.wan_flap_detector = WANFlapDetector()
-        self.last_gateway_states: Dict[str, str] = {}
+        self.last_gateway_states = {}
 
 
 # ── vLLM client (optional) ─────────────────────────────────────────────
