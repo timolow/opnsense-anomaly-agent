@@ -715,13 +715,18 @@ window.addEventListener('DOMContentLoaded', function() {
   console.log('[TAB] DOMContentLoaded fired, registering handlers for', document.querySelectorAll('.tab-btn[data-tab]').length, 'buttons');
   var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
   for (var i = 0; i < tabButtons.length; i++) {
-    // Remove any existing onclick handler
-    tabButtons[i].onclick = function(e) {
-      console.log('[TAB] Click on button:', this.getAttribute('data-tab'));
-      var tabId = this.getAttribute('data-tab');
-      switchTab(tabId);
-    };
+    // Add click handler
+    (function(button) {
+      button.addEventListener('click', function(e) {
+        console.log('[TAB] Click on button:', this.getAttribute('data-tab'));
+        console.log('[TAB] Button element:', this);
+        console.log('[TAB] Button data-tab:', this.getAttribute('data-tab'));
+        var tabId = this.getAttribute('data-tab');
+        switchTab(tabId);
+      });
+    })(tabButtons[i]);
   }
+  console.log('[TAB] Registered click handlers for', tabButtons.length, 'buttons');
 });
 
 // ═══════════════════════════════════════════
