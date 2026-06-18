@@ -369,7 +369,14 @@ class AdaptiveParser:
         return features
     
     def _parse_zenarmor(self, raw: str) -> Dict[str, Any]:
-        """Parse ZenArmor logs - extract IPs, ports, rules."""
+        """Parse ZenArmor logs - extract IPs, ports, rules.
+        
+        ZenArmor syslog format examples:
+          blocked from 1.2.3.4 port 80 by policy "Block External"
+          allowed from 1.2.3.4 port 443 by policy "Allow HTTPS"
+          policy "Block External" matched traffic from 1.2.3.4:5678
+          blocked: 1.2.3.4:5678 -> 5.6.7.8:443 tcp policy "Block External"
+        """
         features = {}
         
         # Extract IPs
@@ -384,7 +391,7 @@ class AdaptiveParser:
             if v:
                 features['src_ip'] = v
         
-        # Extract ports
+        # Extract ports — look for port patterns like "port 80" or "1.2.3.4:80"
         ports = PORT_RE.findall(raw)
         if ports:
             try:
@@ -392,12 +399,31 @@ class AdaptiveParser:
             except (ValueError, IndexError):
                 pass
         
-        # Extract rule/action
+        # Also try to extract sport from colon-separated IP:port
+        ip_port_pattern = re.findall(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', raw)
+        if len(ip_port_pattern) >= 2:
+            v1 = _validate_ip(ip_port_pattern[0][0])
+            v2 = _validate_ip(ip_port_pattern[1][0])
+            if v1 and v2:
+                features['src_ip'] = v1
+                features['dst_ip'] = v2
+            if ip_port_pattern[0][1].isdigit():
+                features['sport'] = int(ip_port_pattern[0][1])
+            if ip_port_pattern[1][1].isdigit():
+                features['dport'] = int(ip_port_pattern[1][1])
+        
+        # Extract policy/rule name — match quoted policy names
+        policy_match = re.search(r'policy\s+["\']?([^"\'>\s]+)["\']?', raw, re.IGNORECASE)
+        if policy_match:
+            features['rule'] = policy_match.group(1)
+            features['policy_name'] = policy_match.group(1)
+        
+        # Extract rule/action from generic patterns
         rule_match = re.search(r'(?:rule|action|policy)\s*[:=]\s*(\S+)', raw, re.IGNORECASE)
         if rule_match:
-            features['rule'] = rule_match.group(1)
+            features['rule'] = features.get('rule', rule_match.group(1))
         
-        # Action
+        # Action — detect pass/block/allow/deny
         action_m = ACTION_RE.search(raw)
         if action_m:
             features['action'] = ACTION_MAP.get(action_m.group(1).lower(), action_m.group(1).upper())
@@ -432,10 +458,34 @@ class AdaptiveParser:
         return features
     
     def _parse_ids(self, raw: str) -> Dict[str, Any]:
-        """Parse IDS logs (suricata/snort) - extract alert details."""
+        """Parse IDS logs (suricata/snort) - extract alert details.
+        
+        IDS/Snort syslog format examples:
+          [1:2001219:20] ET SCAN Potential SSH Scan 1.2.3.4:5678 -> 5.6.7.8:22 tcp
+          [1:2001219:20] ET SCAN Priority 1: 1.2.3.4:5678 -> 5.6.7.8:22 tcp
+          [1:2001219:20] ET SCAN Priority 1 1.2.3.4 -> 5.6.7.8 proto=6 port=22
+        """
         features = {}
         
-        # Extract IPs
+        # Extract signature ID from brackets [sid:revision:prio] or [sid:rev]
+        sig_id_match = re.search(r'\[(\d+):(\d+)(?::(\d+))?\]', raw)
+        if sig_id_match:
+            features['signature_id'] = int(sig_id_match.group(1))
+            features['revision'] = int(sig_id_match.group(2))
+            if sig_id_match.group(3):
+                features['priority_score'] = int(sig_id_match.group(3))
+        
+        # Extract signature name — text after the bracketed ID
+        sig_name_match = re.search(r'\]\s+([A-Z]+[-\s]*\S[^\[]*)', raw)
+        if sig_name_match:
+            features['rule'] = sig_name_match.group(1).strip()
+        
+        # Also try priority keyword
+        pri_match = re.search(r'priority\s*[:=]?\s*(\d+)', raw, re.IGNORECASE)
+        if pri_match and not features.get('priority_score'):
+            features['priority_score'] = int(pri_match.group(1))
+        
+        # Extract IPs — try SRC=DST pattern first, then IP:port patterns
         src_match = re.search(r'SRC=(\S+)', raw)
         dst_match = re.search(r'DST=(\S+)', raw)
         if src_match and dst_match:
@@ -445,6 +495,42 @@ class AdaptiveParser:
                 features['src_ip'] = v_src
                 features['dst_ip'] = v_dst
         
+        # If no SRC=DST, try IP:port -> IP:port pattern
+        ip_port_pattern = re.findall(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)\s*->\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', raw)
+        if len(ip_port_pattern) >= 1:
+            p = ip_port_pattern[0]
+            v1 = _validate_ip(p[0])
+            v2 = _validate_ip(p[2])
+            if v1 and v2:
+                features['src_ip'] = v1
+                features['dst_ip'] = v2
+                if p[1].isdigit():
+                    features['sport'] = int(p[1])
+                if p[3].isdigit():
+                    features['dport'] = int(p[3])
+        elif len(ip_port_pattern) == 0:
+            # Try simpler IP -> IP pattern
+            ip_arrow = re.findall(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s*->\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', raw)
+            if len(ip_arrow) >= 1:
+                v1 = _validate_ip(ip_arrow[0][0])
+                v2 = _validate_ip(ip_arrow[0][1])
+                if v1 and v2:
+                    features['src_ip'] = v1
+                    features['dst_ip'] = v2
+        
+        # If no SRC=DST or arrow, try generic IP extraction
+        if not features.get('src_ip') or not features.get('dst_ip'):
+            ips = IPV4_RE.findall(raw)
+            if len(ips) >= 2:
+                v1, v2 = _validate_ip(ips[0]), _validate_ip(ips[1])
+                if v1 and v2:
+                    features['src_ip'] = features.get('src_ip') or v1
+                    features['dst_ip'] = features.get('dst_ip') or v2
+            elif len(ips) == 1:
+                v = _validate_ip(ips[0])
+                if v:
+                    features['src_ip'] = v
+        
         # Extract ports
         spt_match = re.search(r'SPT=(\d+)', raw)
         dpt_match = re.search(r'DPT=(\d+)', raw)
@@ -453,15 +539,15 @@ class AdaptiveParser:
         if dpt_match:
             features['dport'] = int(dpt_match.group(1))
         
-        # Alert rule/metadata
-        rule_match = re.search(r'(?:signature|alert|rule)[s]?\s*[:=]?\s*(\S+)', raw, re.IGNORECASE)
-        if rule_match:
-            features['rule'] = rule_match.group(1)
+        # Extract protocol
+        proto_match = re.search(r'proto[=:\s]*(tcp|udp|icmp|ipv6)', raw, re.IGNORECASE)
+        if proto_match:
+            features['proto'] = proto_match.group(1).upper()
         
-        # Priority
-        pri_match = re.search(r'priority\s*[:=]?\s*(\d+)', raw, re.IGNORECASE)
-        if pri_match:
-            features['priority_score'] = int(pri_match.group(1))
+        # Extract attack category (ET SCAN, ET TROJAN, etc.)
+        category_match = re.search(r'\]\s+([A-Z]+)\s', raw)
+        if category_match:
+            features['category'] = category_match.group(1)
         
         return features
     
