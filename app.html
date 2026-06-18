@@ -683,9 +683,13 @@ function switchTab(tabId) {
     var btn = btns[i];
     var dataTab = btn.getAttribute('data-tab');
     if (dataTab === tabId) {
-      btn.classList.add('active');
+      btn.style.color = '#3b82f6';
+      btn.style.borderBottom = '2px solid #3b82f6';
+      btn.style.fontWeight = '600';
     } else {
-      btn.classList.remove('active');
+      btn.style.color = '';
+      btn.style.borderBottom = '';
+      btn.style.fontWeight = '';
     }
   }
   // Show content
@@ -701,6 +705,17 @@ function switchTab(tabId) {
   // Load tab data
   loadTabData(tabId);
 }
+
+// Register event listeners for ALL tab buttons (replaces inline onclick handlers)
+window.addEventListener('DOMContentLoaded', function() {
+  var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
+  for (var i = 0; i < tabButtons.length; i++) {
+    tabButtons[i].addEventListener('click', function(e) {
+      var tabId = this.getAttribute('data-tab');
+      switchTab(tabId);
+    });
+  }
+});
 
 // ═══════════════════════════════════════════
 // Tab Data Loaders
