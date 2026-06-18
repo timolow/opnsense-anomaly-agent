@@ -552,7 +552,14 @@ tr:hover { background: var(--bg-tertiary); }
         </div>
         <div class="nav-item" data-tab="mutes" onclick="switchTab('mutes')">
           <span class="nav-icon">🔇</span><span class="nav-label">Mutes</span>
+        
+        <div class="nav-item" data-tab="zenarmor" onclick="switchTab('zenarmor')">
+          <span class="nav-icon">🛡️</span><span class="nav-label">ZenArmor</span>
         </div>
+        <div class="nav-item" data-tab="ids" onclick="switchTab('ids')">
+          <span class="nav-icon">🔍</span><span class="nav-label">IDS</span>
+        </div>
+</div>
       </div>
     </div>
 
@@ -805,7 +812,129 @@ tr:hover { background: var(--bg-tertiary); }
     </div>
 
     <!-- Geo Tab -->
-    <div class="tab-content" id="tab-geo">
+    <div class="tab-content"
+    <!-- ZenArmor Panel -->
+    <div class="tab-content" id="tab-zenarmor">
+      <div class="card">
+        <div class="card-header">ZenArmor Security Gateway</div>
+        <div class="card-body">
+          <div class="stats-row">
+            <div class="stat-box">
+              <div class="stat-value" id="zenarmorEvents">0</div>
+              <div class="stat-label">Total Events</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="zenarmorPolicies">0</div>
+              <div class="stat-label">Policies Tracked</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="zenarmorAnomalies">0</div>
+              <div class="stat-label">Anomalies</div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <div class="card-header">Policy Classifications</div>
+            <div class="card-body">
+              <table class="zenarmor-table">
+                <thead>
+                  <tr>
+                    <th>Policy Name</th>
+                    <th>Classification</th>
+                    <th>Events</th>
+                    <th>Actions</th>
+                    <th>Block Rate</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="zenarmorPoliciesTable">
+                  <tr><td colspan="6" class="loading"><div class="loading-spinner"></div>Loading policies...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <div class="card-header">Recent Anomalies</div>
+            <div class="card-body">
+              <table class="anomaly-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Severity</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody id="zenarmorAnomaliesTable">
+                  <tr><td colspan="4" class="loading"><div class="loading-spinner"></div>Loading anomalies...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IDS Panel -->
+    <div class="tab-content" id="tab-ids">
+      <div class="card">
+        <div class="card-header">IDS / Snort / Suricata Signatures</div>
+        <div class="card-body">
+          <div class="stats-row">
+            <div class="stat-box">
+              <div class="stat-value" id="idsEvents">0</div>
+              <div class="stat-label">Total Events</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="idsSignatures">0</div>
+              <div class="stat-label">Signatures Tracked</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="idsAnomalies">0</div>
+              <div class="stat-label">Anomalies</div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <div class="card-header">Signature Classifications</div>
+            <div class="card-body">
+              <table class="ids-table">
+                <thead>
+                  <tr>
+                    <th>Signature</th>
+                    <th>Classification</th>
+                    <th>Priority</th>
+                    <th>Triggers</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="idsSignaturesTable">
+                  <tr><td colspan="6" class="loading"><div class="loading-spinner"></div>Loading signatures...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <div class="card-header">Recent Anomalies</div>
+            <div class="card-body">
+              <table class="anomaly-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Severity</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody id="idsAnomaliesTable">
+                  <tr><td colspan="4" class="loading"><div class="loading-spinner"></div>Loading anomalies...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+ id="tab-geo">
       <div class="card">
         <div class="card-header">Traffic by Country</div>
         <div class="card-body">
@@ -1109,7 +1238,8 @@ function switchTab(tabId) {
     'geo': 'Geo Distribution', 'opnsense': 'OPNsense', 'wan-flap': 'WAN Flaps',
     'settings': 'Settings', 'logs': 'Log Search', 'network': 'Network Map',
     'rules': 'Firewall Rules', 'syslogs': 'System Logs',
-    'services': 'Services', 'rules-classified': 'Rules ML'
+    'services': 'Services', 'rules-classified': 'Rules ML',
+    'zenarmor': 'ZenArmor Security Gateway', 'ids': 'IDS / Snort / Suricata'
   };
   document.getElementById('headerTitle').textContent = titleMap[tabId] || tabId;
 
@@ -1135,6 +1265,8 @@ function loadTabData(tabId) {
     case 'logs': searchLogs(); break;
     case 'network': loadNetworkMap(); break;
     case 'rules-classified': loadRulesML(); break;
+    case 'zenarmor': loadZenArmor(); break;
+    case 'ids': loadIDS(); break;
   }
 }
 
@@ -1626,6 +1758,134 @@ function loadGeo() {
 }
 
 // OPNsense
+// ═══════════════════════════════════════
+// ZenArmor Security Gateway
+// ═══════════════════════════════════════
+
+function loadZenArmor() {
+  apiFetch('/api/zenarmor-summary').then(function(data) {
+    var events = document.getElementById('zenarmorEvents');
+    var policies = document.getElementById('zenarmorPolicies');
+    var anomalies = document.getElementById('zenarmorAnomalies');
+    if (events) events.textContent = (data.total_events || 0).toLocaleString();
+    if (policies) policies.textContent = (data.known_policies_count || 0).toLocaleString();
+    if (anomalies) anomalies.textContent = (data.anomaly_count || 0).toLocaleString();
+    loadZenArmorPolicies();
+    loadZenArmorAnomalies();
+  });
+}
+
+function loadZenArmorPolicies() {
+  apiFetch('/api/zenarmor-policies').then(function(data) {
+    var tbody = document.getElementById('zenarmorPoliciesTable');
+    if (!tbody) return;
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666">No ZenArmor policies tracked yet</td></tr>';
+      return;
+    }
+    var html = '';
+    data.forEach(function(p) {
+      var pass = p.actions.PASS || 0;
+      var block = p.actions.BLOCK || 0;
+      var total = pass + block;
+      var blockRate = total > 0 ? ((block / total) * 100).toFixed(0) : 0;
+      var classColor = 'medium';
+      if (block > pass) classColor = 'critical';
+      else if (pass > block && block > 0) classColor = 'low';
+      else if (pass === block && pass > 0) classColor = 'high';
+      html += '<tr><td>' + escapeHtml(p.policy_name) + '</td>';
+      html += '<td><span class="badge badge-' + classColor + '">' + p.classification + '</span></td>';
+      html += '<td>' + (p.total_events || 0).toLocaleString() + '</td>';
+      html += '<td>P:' + pass + ' B:' + block + '</td>';
+      html += '<td>' + blockRate + '%</td>';
+      html += '<td>' + (p.last_seen ? new Date(p.last_seen).toLocaleString() : '-') + '</td></tr>';
+    });
+    tbody.innerHTML = html;
+  });
+}
+
+function loadZenArmorAnomalies() {
+  apiFetch('/api/zenarmor-anomalies').then(function(data) {
+    var tbody = document.getElementById('zenarmorAnomaliesTable');
+    if (!tbody) return;
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#666">No ZenArmor anomalies detected</td></tr>';
+      return;
+    }
+    var html = '';
+    data.forEach(function(a) {
+      var sevClass = getSeverityClass(a.severity);
+      html += '<tr><td>' + formatTime(a.timestamp) + '</td>';
+      html += '<td><code>' + escapeHtml(a.attack_type || '') + '</code></td>';
+      html += '<td><span class="badge badge-' + sevClass + '">' + (a.severity || 'INFO') + '</span></td>';
+      html += '<td>' + escapeHtml(a.description || '') + '</td></tr>';
+    });
+    tbody.innerHTML = html;
+  });
+}
+
+// ═══════════════════════════════════════
+// IDS / Snort / Suricata
+// ═══════════════════════════════════════
+
+function loadIDS() {
+  apiFetch('/api/ids-summary').then(function(data) {
+    var events = document.getElementById('idsEvents');
+    var sigs = document.getElementById('idsSignatures');
+    var anomalies = document.getElementById('idsAnomalies');
+    if (events) events.textContent = (data.total_events || 0).toLocaleString();
+    if (sigs) sigs.textContent = (data.known_signatures_count || 0).toLocaleString();
+    if (anomalies) anomalies.textContent = (data.anomaly_count || 0).toLocaleString();
+    loadIDSSignatures();
+    loadIDSAnomalies();
+  });
+}
+
+function loadIDSSignatures() {
+  apiFetch('/api/ids-signatures').then(function(data) {
+    var tbody = document.getElementById('idsSignaturesTable');
+    if (!tbody) return;
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666">No IDS signatures tracked yet</td></tr>';
+      return;
+    }
+    var html = '';
+    data.forEach(function(s) {
+      var classColor = 'low';
+      if (s.priority && s.priority <= 1) classColor = 'critical';
+      else if (s.priority && s.priority <= 3) classColor = 'high';
+      html += '<tr><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis" title="' + escapeHtml(s.signature) + '">' + escapeHtml(s.signature) + '</td>';
+      html += '<td><span class="badge badge-' + classColor + '">' + s.classification + '</span></td>';
+      html += '<td>' + (s.priority || 'N/A') + '</td>';
+      html += '<td>' + (s.trigger_count || 0).toLocaleString() + '</td>';
+      html += '<td>' + (s.first_seen ? new Date(s.first_seen).toLocaleDateString() : '-') + '</td>';
+      html += '<td>' + (s.last_seen ? new Date(s.last_seen).toLocaleDateString() : '-') + '</td></tr>';
+    });
+    tbody.innerHTML = html;
+  });
+}
+
+function loadIDSAnomalies() {
+  apiFetch('/api/ids-anomalies').then(function(data) {
+    var tbody = document.getElementById('idsAnomaliesTable');
+    if (!tbody) return;
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#666">No IDS anomalies detected</td></tr>';
+      return;
+    }
+    var html = '';
+    data.forEach(function(a) {
+      var sevClass = getSeverityClass(a.severity);
+      html += '<tr><td>' + formatTime(a.timestamp) + '</td>';
+      html += '<td><code>' + escapeHtml(a.attack_type || '') + '</code></td>';
+      html += '<td><span class="badge badge-' + sevClass + '">' + (a.severity || 'INFO') + '</span></td>';
+      html += '<td>' + escapeHtml(a.description || '') + '</td></tr>';
+    });
+    tbody.innerHTML = html;
+  });
+}
+
+
 function loadOPNsense() {
   apiFetch('/api/opnsense').then(function(data) {
     if (!data) {
