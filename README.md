@@ -1,6 +1,6 @@
 # OPNsense Anomaly Detection Agent
 
-A lightweight anomaly detection agent that monitors OPNsense firewall logs, learns normal traffic patterns, and sends Discord alerts for suspicious activity.
+A lightweight anomaly detection agent that monitors OPNsense firewall logs, learns normal traffic patterns, detects attacks and service anomalies, and sends alerts via Discord, Apprise (70+ platforms), or both.
 
 ## Architecture
 
@@ -18,16 +18,17 @@ OPNsense Firewall
          v
 ┌─────────────────────────┐
 │ anomaly agent (Docker)  │    Detects anomalies, sends alerts,
-│                         │    serves web dashboard + REST API
-│                         │    ML self-learning engine (5 weeks)
+│                         │    serves web dashboard + REST API (8766)
+│                         │    ML self-learning engine (5 phases)
 │                         │    Reverse DNS resolver + hostname map
 │                         │    Rule classifier (GOOD/SUSPICIOUS/ABUSIVE)
+│                         │    Apprise notifications (70+ platforms)
 └────────┬────────────────┘
          |
-         | (Discord API + Webhook)
+         | (Discord API + Apprise)
          v
 ┌─────────────────────────┐
-│    Discord / Webhook    │    Alerts + chat commands
+│    Discord + Apprise    │    Alerts via multiple channels
 └─────────────────────────┘
 ```
 
@@ -50,6 +51,9 @@ When using **standalone mode**, the JSONL file must be shared with the Docker ag
 - **Brute force detection** — Repeated auth-related actions from the same source
 - **New service detection** — New services appearing on the network
 - **Protocol anomalies** — Unusual protocol usage patterns
+- **WAN flap detection** — Gateway up/down flapping alerts
+- **Service anomalies** — DHCP, Unbound, NTP, OpenVPN, WireGuard issues
+- **System log anomalies** — Unusual patterns in OPNsense system logs (interfaces, routing, DHCP)
 
 ## Quick Start
 
@@ -116,9 +120,14 @@ docker compose up -d
 This starts:
 - `anomaly-postgres` — PostgreSQL 16 for persistent event storage
 - `anomaly-redis` — Redis 7 for reverse DNS caching
-- `anomaly-agent` — The anomaly detection agent (includes syslog listener, ML engine, web dashboard, REST API, Discord bot, webhook alerts)
+- `anomaly-agent` — The anomaly detection agent (includes syslog listener, ML engine, web dashboard, REST API, Discord bot, Apprise notifications)
 
 No separate syslog listener process needed.
+
+**Volume mounts:**
+- `./app.html:/app/app.html:ro` — Web UI (hot-swappable, no rebuild needed)
+- `./agent_data:/app/agent_data` — Persistent learned patterns, events, mutes
+- `./data:/app/data` — GeoLite2 database
 
 #### Using Pre-built Docker Images
 
@@ -138,7 +147,7 @@ docker compose up -d
 
 ### Chat Commands
 
-The agent runs a local HTTP server on port 8765. Send commands from any Discord channel:
+The agent runs an HTTP server on port 8765 for chat commands. Send commands from any Discord channel:
 
 | Command | Description |
 |---|---|
@@ -146,6 +155,22 @@ The agent runs a local HTTP server on port 8765. Send commands from any Discord 
 | `!topblocked` | Show top blocked source IPs |
 | `!help` | Show all available commands |
 
+### Web Dashboard
+
+A comprehensive responsive web UI is served at `http://<server>:8766/` with a collapsible sidebar organized into categories:
+
+- **Dashboard** (`overview`) — Overall stats, incident timeline, traffic heatmaps
+- **Alerts** (`alerts`) — Recent anomaly alerts with severity and filtering
+- **Flows** (`flows`) — IP flow visualization and bandwidth tracking
+- **Threats** (`heatmap`, `ipflow`, `geo`) — Traffic heatmaps, detailed IP flows, geographic analysis
+- **Network** (`network`, `mutes`) — Network classification, muted IP management
+- **Rules** (`rules`) — ML-classified firewall rules (GOOD/SUSPICIOUS/ABUSIVE)
+- **Services** (`services`) — DHCP, Unbound, NTP, OpenVPN, WireGuard status
+- **Logs** (`syslogs`, `logs`) — System log viewer with filtering
+- **OPNsense** (`opnsense`) — OPNsense API proxy for gateway status, interfaces, routing
+- **Settings** (`settings`) — Agent configuration, stats, and health
+
+All tabs are searchable, filterable, and support dark/light theme auto-detection.
 
 ## Notifications
 
@@ -198,30 +223,33 @@ A comprehensive web UI is served at `http://<server>:8765/` with tabs for:
 
 ## REST API
 
-The agent exposes a full REST API on port 8765:
+The dashboard API is served on port 8766. Key endpoints include:
 
 | Endpoint | Description |
 |---|---|
 | `GET /api/health` | Health check |
 | `GET /api/stats` | Current agent statistics |
 | `GET /api/rules` | All firewall rules |
-| `GET /api/rules-classified` | ML-classified rules (GOOD/SUSPICIOUS/ABUSIVE) |
-| `GET /api/rule-detail/<uuid>` | Detailed breakdown for a specific rule |
-| `GET /api/ml-summary` | ML self-learning engine status |
-| `GET /api/active-learning-queue` | Active learning queue (rules needing feedback) |
+| `GET /api/rules/<uuid>` | Individual rule detail |
 | `GET /api/alerts` | Recent anomaly alerts |
 | `GET /api/events` | Recent events |
 | `GET /api/flows` | IP flow data |
-| `GET /api/ip-flow` | Detailed IP flow analysis |
-| `GET /api/heatmap` | Traffic heatmap data |
 | `GET /api/geo` | Geographic IP data |
+| `GET /api/heatmap` | Traffic heatmap data |
+| `GET /api/ip/<ip>` | Detailed IP flow analysis |
 | `GET /api/system_logs` | System log entries |
-| `GET /api/service-status` | Service status |
-| `GET /api/opnsense` | OPNsense API proxy |
-| `GET /api/heartbeat` | Heartbeat/ping |
-| `POST /api/feedback` | Submit rule classification feedback |
+| `GET /api/services` | Service status (DHCP, Unbound, NTP, etc.) |
+| `GET /api/ml` | ML self-learning engine status |
 | `GET /api/mutes` | List muted IPs |
 | `POST /api/mutes/<ip>` | Mute/unmute an IP |
+| `POST /api/feedback` | Submit rule classification feedback |
+| `GET /api/opnsense` | OPNsense API proxy |
+| `GET /api/interfaces` | OPNsense interface status |
+| `GET /api/wan` | WAN gateway status |
+| `GET /api/dhcpd` | DHCP lease info |
+| `GET /api/filter` | Firewall filter status |
+| `GET /api/routing` | Routing/gateway status |
+| `GET /api/heartbeat` | Heartbeat/ping |
 
 ## Machine Learning Self-Learning Engine
 
@@ -269,6 +297,8 @@ The agent includes a reverse DNS resolver that translates IP addresses to hostna
 | `SYSLOG_ENABLED` | `false` | Enable built-in syslog listener |
 | `SYSLOG_UDP_PORT` | `1514` | UDP port to receive syslog |
 | `APPRISE_URLS` | `(none)` | Comma-separated Apprise notification URIs (optional multi-platform alerts) |
+| `SYSLOG_BIND` | `0.0.0.0` | Network interface for syslog UDP listener (set to specific IP to restrict) |
+| `DASHBOARD_BIND` | `0.0.0.0` | Network interface for dashboard API (set to `127.0.0.1` for localhost-only) |
 | `WAN_IP_MIN_EVENTS` | `10` | Minimum events before an external IP gets tracked |
 | `MAX_WAN_IPS` | `10000` | Maximum number of external WAN IPs to track |
 | `OWN_WAN_IPS` | *(required)* | Your own WAN IP addresses — comma-separated |
@@ -374,8 +404,9 @@ docker compose up -d
 
 The project includes a comprehensive GitHub Actions CI pipeline:
 
-- **Test Suite** — 158 tests across all modules (adaptive_parser, reverse_dns, ml_learning, rule_classify, statistical_model, integration)
+- **Test Suite** — 172 tests across all modules (adaptive_parser, reverse_dns, ml_learning, rule_classify, statistical_model, apprise_notifier, integration)
 - **Docker Build** — Builds and pushes multi-platform Docker images to GHCR
+- **CodeQL Analysis** — Automated security scanning (binding, permissions, etc.)
 - **Every Push** — All tests run automatically on every commit to `master`
 - **Tag Releases** — Docker images are tagged with commit SHA and `latest`
 
