@@ -280,6 +280,40 @@ class OPNsenseClient:
         except Exception as e:
             logger.error("OPNsense firewall rules fetch failed: %s", e)
             return {}
+    
+    def build_rule_ruid_mapping(self, rules: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+        """Build a mapping from RUID (MD5 hash of rule) to rule name."""
+        import hashlib
+        import xml.etree.ElementTree as ET
+        from datetime import datetime
+        
+        ruid_to_name: Dict[str, str] = {}
+        
+        for uuid_or_id, rule in rules.items():
+            try:
+                # Build XML representation of the rule for RUID calculation
+                rule_id = rule.get("id", "")
+                source_net = rule.get("source_net", "")
+                destination_net = rule.get("destination_net", "")
+                action = rule.get("action", "")
+                protocol = rule.get("protocol", "")
+                interface = rule.get("interface", "")
+                
+                # Create a simple XML string for hashing
+                xml_str = f"<rule><id>{rule_id}</id><source><net>{source_net}</net></source><destination><net>{destination_net}</net></destination><action>{action}</action><protocol>{protocol}</protocol><interface>{interface}</interface></rule>"
+                
+                # Compute MD5 hash to get RUID
+                ruid = hashlib.md5(xml_str.encode()).hexdigest()
+                
+                # Use source_net as the rule name if available
+                rule_name = source_net or f"Rule {rule_id}"
+                ruid_to_name[ruid] = rule_name
+            except Exception as e:
+                logger.debug("Failed to compute RUID for rule %s: %s", uuid_or_id, e)
+                continue
+        
+        logger.info("Built RUID->name mapping: %d rules", len(ruid_to_name))
+        return ruid_to_name
 
 
 # ── HTTP chat command server ───────────────────────────────────────────
@@ -413,14 +447,8 @@ class OPNsenseAgent:
         self.rules_mapping: Dict[str, str] = {}
         try:
             rules = self.opn_client.fetch_rules()
-            for uuid_or_id, rule in rules.items():
-                # Extract human-readable name from source_net field (rule identifier)
-                rule_name = rule.get("source_net", "") or f"Rule {uuid_or_id}"
-                # Store mapping from UUID/ID to human-readable name
-                self.rules_mapping[uuid_or_id] = rule_name
-                # Also map the short ID if different from UUID
-                if rule.get("id") and rule.get("id") != uuid_or_id:
-                    self.rules_mapping[rule["id"]] = rule_name
+            # Build RUID->name mapping using MD5 hash of rule XML
+            self.rules_mapping = self.opn_client.build_rule_ruid_mapping(rules)
             if self.rules_mapping:
                 logger.info("Built rule name mapping: %d rules", len(self.rules_mapping))
         except Exception as e:
