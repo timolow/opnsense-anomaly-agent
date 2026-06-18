@@ -249,7 +249,7 @@ class OPNsenseClient:
         """Fetch all firewall rules from OPNsense API and index by UUID."""
         try:
             resp = requests.get(
-                f"{self.base_url}/api/firewall/rule/searchRule",
+                f"{self.base_url}/api/firewall/filter/search_rule",
                 headers=self._auth_headers(),
                 timeout=30,
                 verify=False,
