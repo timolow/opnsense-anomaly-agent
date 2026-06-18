@@ -1173,6 +1173,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         print(f"[Rules] Failed to fetch OPNsense rules: {e}")
                         opnsense_rules = {}
                 
+                # Normalize: remove hyphens from UUIDs for consistent matching
+                normalized_opnsense_rules = {}
+                for key, val in opnsense_rules.items():
+                    normalized_opnsense_rules[key] = val  # Keep original
+                    # Also create hyphen-less version for RUID matching
+                    clean_key = key.replace("-", "")
+                    if clean_key != key:
+                        normalized_opnsense_rules[clean_key] = val
+                
                 # Build response
                 rules_list = []
                 for rule_hash, info in sorted(rules.items(), key=lambda x: -x[1]['events'])[:50]:
@@ -1180,26 +1189,68 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     display_name = None
                     enabled = True
                     
-                    # Try exact match first (full UUID or hash)
-                    meta = opnsense_rules.get(rule_hash, {})
+                    # Try multiple match strategies
+                    meta = None
+                    
+                    # 1. Try exact match (hash or UUID)
+                    meta = normalized_opnsense_rules.get(rule_hash)
+                    
+                    # 2. Try short ID match (first 8 chars)
                     if not meta:
-                        short_id = rule_hash[:8] if rule_hash else ''
-                        meta = opnsense_rules.get(short_id, {})
+                        short_id = rule_hash[:8]
+                        meta = normalized_opnsense_rules.get(short_id)
+                    
+                    # 3. Try with hyphens (if hash has no hyphens)
+                    if not meta and "-" not in rule_hash:
+                        # Try adding hyphens to match UUID format
+                        try:
+                            uuid_hyphenated = f"{rule_hash[:8]}-{rule_hash[8:12]}-{rule_hash[12:16]}-{rule_hash[16:20]}-{rule_hash[20:]}"
+                            meta = normalized_opnsense_rules.get(uuid_hyphenated)
+                        except:
+                            pass
+                    
+                    # 4. Try removing hyphens (if hash has hyphens)
+                    if not meta and "-" in rule_hash:
+                        clean_hash = rule_hash.replace("-", "")
+                        meta = normalized_opnsense_rules.get(clean_hash)
+                    
+                    # 5. Try short ID with hyphens
+                    if not meta:
+                        short_id = rule_hash[:8]
+                        try:
+                            short_id_hyphenated = short_id  # Short ID doesn't need hyphens
+                            meta = normalized_opnsense_rules.get(short_id_hyphenated)
+                        except:
+                            pass
                     
                     if meta:
                         if meta.get('description'):
                             # Use OPNsense description
                             display_name = meta['description']
                         else:
-                            # Generate name from rule attributes
+                            # Generate name from rule attributes if available
                             generated = generate_rule_name(meta)
                             if generated:
                                 display_name = generated
+                        
                         enabled = meta.get('enabled', '1') == '1'
                     
                     if not display_name:
-                        display_name = rule_hash  # fallback
-                    
+                        # Last resort: try to generate name from event data
+                        # Count actions to determine if permit or deny
+                        total = info['events']
+                        block_count = info['actions'].get('BLOCK', 0)
+                        pass_count = info['actions'].get('PASS', 0)
+                        
+                        if block_count > pass_count * 2:
+                            # Rule blocks most traffic
+                            display_name = f"Rule: {rule_hash[:8]}... (DENY dominant)"
+                        elif pass_count > block_count * 2:
+                            # Rule permits most traffic
+                            display_name = f"Rule: {rule_hash[:8]}... (PERMIT dominant)"
+                        else:
+                            # Fallback to short hash
+                            display_name = rule_hash[:12]
                     # Classify rule: if mostly BLOCK = DENY, mostly PASS = PERMIT
                     total = info['events']
                     block_count = info['actions'].get('BLOCK', 0)
@@ -1446,7 +1497,10 @@ def generate_rule_name(rule_data):
     """Generate a human-readable rule name from OPNsense rule attributes when description is empty."""
     if not rule_data:
         return None
-
+    
+    # Try to generate a meaningful name from available attributes
+    # If no attributes, return None to trigger fallback logic
+    
     protocol = rule_data.get("protocol", "").upper()
     src_port = rule_data.get("source_port", "")
     dst_port = rule_data.get("destination_port", "")
@@ -1454,9 +1508,18 @@ def generate_rule_name(rule_data):
     dst_net = rule_data.get("destination_net", "")
     action = rule_data.get("action", "").upper()
     interface = rule_data.get("interface", "")
-
+    categories = rule_data.get("categories", "")
+    
+    # Only generate name if we have at least some meaningful data
+    has_protocol = bool(protocol)
+    has_ports = bool(dst_port or src_port)
+    has_networks = bool(dst_net or src_net)
+    
+    if not (has_protocol or has_ports or has_networks):
+        return None  # Not enough data to generate a name
+    
     parts = []
-
+    
     # Protocol + ports
     if protocol:
         if dst_port:
@@ -1466,21 +1529,23 @@ def generate_rule_name(rule_data):
     else:
         if dst_port:
             parts.append(f"port:{dst_port}")
-
+        elif src_port:
+            parts.append(f"port:{src_port}")
+    
     # Network info
     if dst_net and dst_net != "any":
         parts.append(f"to:{dst_net}")
     elif src_net and src_net != "any":
         parts.append(f"from:{src_net}")
-
+    
     # Interface
     if interface:
         parts.append(f"[{interface}]")
-
+    
     # Action indicator
     if action:
         parts.append(f"({action})")
-
+    
     if parts:
         return " ".join(parts)
     return None
