@@ -18,8 +18,11 @@ class TestReverseDNSResolver:
             dns_server="192.168.1.1",
             enabled=True,
             cache_ttl=3600,
-            redis_url="redis://redis:6379/0",
         )
+        assert len(resolver.static_map) > 0  # Has defaults
+        assert resolver.static_map.get("192.168.1.1") == "opnsense"
+        assert resolver.static_map.get("192.168.1.19") == "hassio"
+        assert resolver.static_map.get("192.168.1.50") == "anomaly-agent"
         assert resolver.dns_server == "192.168.1.1"
         assert resolver.enabled is True
         assert resolver.cache_ttl == 3600

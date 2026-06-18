@@ -38,18 +38,21 @@ class ReverseDNSResolver:
         self.enabled = enabled
         self.cache_ttl = cache_ttl
         self.redis_url = redis_url
-        self.static_map: Dict[str, str] = {}  # ip -> hostname
         self.static_map_file = static_map_file
 
         # Load static hostname map if file provided
         if static_map_file:
+            self.static_map = {}  # Reset before loading from file
             self._load_static_map(static_map_file)
         else:
-            # No hardcoded static map — users should configure REVERSE_DNS_STATIC_MAP
-            # or use their own DNS server. The default static map ensures zero
-            # assumptions about any particular network layout.
-            self.static_map = {}
-            logger.info("Loaded default static hostname map (empty — configure via REVERSE_DNS_STATIC_MAP or DNS)")
+            # Default static map — common OPNsense home-lab hostnames.
+            # Users can override via REVERSE_DNS_STATIC_MAP env var or a file.
+            self.static_map = {
+                "192.168.1.1": "opnsense",
+                "192.168.1.19": "hassio",
+                "192.168.1.50": "anomaly-agent",
+            }
+            logger.info("Loaded default static hostname map (opnsense, hassio, anomaly-agent)")
 
         # Redis cache (persistent across restarts)
         self._redis = None
