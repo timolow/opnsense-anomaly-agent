@@ -208,19 +208,6 @@ Apprise provides unified alerting to **Telegram, Slack, Email, SMS, PushBullet, 
 - Graceful degradation: if Apprise isn't installed or URLs are invalid, alerts continue to Discord
 - All alerts (attack, geo, service, WAN flap, system log) are sent through both channels
 
-## Web Dashboard
-
-A comprehensive web UI is served at `http://<server>:8765/` with tabs for:
-
-- **Dashboard** — Overall stats, traffic overview
-- **Alerts** — Recent anomaly alerts
-- **Flows** — IP flow visualization
-- **Heatmap** — Traffic heatmaps by IP/port
-- **Events** — Event log viewer
-- **Geo** — Geographic IP analysis
-- **ML Summary** — Machine learning engine status and classified rules
-- **Rule Detail** — Drill-down on individual rules with feature breakdowns
-
 ## REST API
 
 The dashboard API is served on port 8766. Key endpoints include:
