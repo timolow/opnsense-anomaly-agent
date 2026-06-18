@@ -311,6 +311,9 @@ tr:hover { background: var(--bg-tertiary); }
       <button class="tab-btn" data-tab="geo" onclick="switchTab('geo')">🌍 Geo</button>
       <button class="tab-btn" data-tab="opnsense" onclick="switchTab('opnsense')">🔌 OPNsense</button>
       <button class="tab-btn" data-tab="wan-flap" onclick="switchTab('wan-flap')">🌊 WAN Flaps</button>
+      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ Settings</button>
+      <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">📋 Log Search</button>
+      <button class="tab-btn" data-tab="network" onclick="switchTab('network')">🌐 Network Map</button>
       <button class="tab-btn" data-tab="rules" onclick="switchTab('rules')">🛡️ Rules</button>
       <button class="tab-btn" data-tab="syslogs" onclick="switchTab('syslogs')">📋 System Logs</button>
       <button class="tab-btn" data-tab="services" onclick="switchTab('services')">🔧 Services</button>
@@ -521,6 +524,49 @@ tr:hover { background: var(--bg-tertiary); }
     </div>
   </div>
 
+  <!-- Settings Tab -->
+  <div class="tab-content" id="tab-settings">
+    <div class="card">
+      <div class="card-header">⚙️ Alert Sensitivity & Thresholds</div>
+      <div class="card-body" id="settingsContent">
+        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Search Tab -->
+  <div class="tab-content" id="tab-logs">
+    <div class="card">
+      <div class="card-header">📋 Log Search & Filter</div>
+      <div class="card-body">
+        <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+          <div>
+            <label>Source IP</label>
+            <input type="text" id="logSrcIp" placeholder="e.g. 192.168.1.100" class="form-input">
+          </div>
+          <div>
+            <label>Days</label>
+            <input type="number" id="logDays" value="7" min="1" max="90" class="form-input">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="searchLogs()">🔍 Search Logs</button>
+        <div id="logResults" style="margin-top: 15px; max-height: 500px; overflow-y: auto;">
+          <p style="color:var(--text-muted)">Enter search criteria and click Search</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Network Map Tab -->
+  <div class="tab-content" id="tab-network">
+    <div class="card">
+      <div class="card-header">🌐 Network Topology Map</div>
+      <div class="card-body" id="networkMapContent">
+        <div class="loading"><div class="loading-spinner"></div>Loading...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- WAN Flap Monitoring Tab -->
   <div class="tab-content" id="tab-wan-flap">
     <div class="grid">
@@ -671,6 +717,9 @@ function loadTabData(tabId) {
     case 'syslogs': loadSysLogs(); break;
     case 'services': loadServices(); break;
     case 'wan-flap': loadWanFlapStatus(); loadWanFlapHistory(); break;
+    case 'settings': loadSettings(); break;
+    case 'logs': break;
+    case 'network': loadNetworkMap(); break;
     case 'rules-classified': loadRulesML(); break;
   }
 }
@@ -2547,9 +2596,143 @@ window.addEventListener('DOMContentLoaded', function() {
   initAppFlows();
   loadServices();
   setInterval(loadServices, 30000);
+  loadSettings();
+  loadNetworkMap();
+  loadWanFlapStatus();
+  loadWanFlapHistory();
+  
+  // SSE for real-time stats
+  try {
+    var eventSource = new EventSource('/api/sse-stats');
+    eventSource.onmessage = function(event) {
+      try {
+        var data = JSON.parse(event.data);
+        updateStatsUI(data);
+      } catch(e) {}
+    };
+  } catch(e) {}
 });
 
-// WAN Flap Monitoring
+// ═══════════════════════════════════════════
+// New Feature Functions
+// ═══════════════════════════════════════════
+
+// Settings Management
+function loadSettings() {
+    apiFetch('/api/settings' + CACHE_BUST).then(function(data) {
+        renderSettings(data);
+    }).catch(function() {
+        showApiError();
+    });
+}
+
+function renderSettings(data) {
+    var html = '<div class="grid" style="grid-template-columns: 1fr 1fr; gap: 20px;">';
+    html += '<div><label>Port Scan Window (seconds)</label><input type="number" id="portscanWindow" value="' + (data.portscan_window || 60) + '" class="form-input"></div>';
+    html += '<div><label>Brute Force Threshold</label><input type="number" id="bruteforceThreshold" value="' + (data.bruteforce_threshold || 50) + '" class="form-input"></div>';
+    html += '<div><label>Sensitivity</label><select id="sensitivity" class="form-input"><option value="low" ' + (data.sensitivity === 'low' ? 'selected' : '') + '>Low</option><option value="medium" ' + (data.sensitivity === 'medium' ? 'selected' : '') + '>Medium</option><option value="high" ' + (data.sensitivity === 'high' ? 'selected' : '') + '>High</option></select></div>';
+    html += '<div style="align-self: end;"><button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button></div>';
+    html += '</div>';
+    document.getElementById('settingsContent').innerHTML = html;
+}
+
+function saveSettings() {
+    var settings = {
+        portscan_window: parseInt(document.getElementById('portscanWindow').value),
+        bruteforce_threshold: parseInt(document.getElementById('bruteforceThreshold').value),
+        sensitivity: document.getElementById('sensitivity').value
+    };
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(settings)
+    }).then(function() {
+        alert('Settings saved!');
+    }).catch(function() {
+        showApiError();
+    });
+}
+
+// Log Search
+function searchLogs() {
+    var srcIp = document.getElementById('logSrcIp').value;
+    var days = document.getElementById('logDays').value;
+    var url = '/api/logs?days=' + days + '&limit=50';
+    if (srcIp) url += '&src_ip=' + encodeURIComponent(srcIp);
+    
+    apiFetch(url + CACHE_BUST).then(function(data) {
+        renderLogs(data.logs || []);
+    }).catch(function() {
+        showApiError();
+    });
+}
+
+function renderLogs(logs) {
+    var html = '';
+    if (logs.length === 0) {
+        html = '<p style="color:var(--text-muted)">No logs found</p>';
+    } else {
+        html = '<table class="data-table"><thead><tr><th>Time</th><th>Src IP</th><th>Dst IP</th><th>Port</th><th>Proto</th><th>Action</th><th>Rule</th></tr></thead><tbody>';
+        for (var i = 0; i < logs.length; i++) {
+            var l = logs[i];
+            html += '<tr>';
+            html += '<td>' + new Date(l.timestamp).toLocaleString() + '</td>';
+            html += '<td>' + escapeHtml(l.src_ip) + '</td>';
+            html += '<td>' + escapeHtml(l.dst_ip) + '</td>';
+            html += '<td>' + (l.dst_port || '-') + '</td>';
+            html += '<td>' + escapeHtml(l.proto) + '</td>';
+            html += '<td>' + escapeHtml(l.action) + '</td>';
+            html += '<td>' + escapeHtml(l.rule_name || 'N/A') + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+    }
+    document.getElementById('logResults').innerHTML = html;
+}
+
+// Network Map
+function loadNetworkMap() {
+    apiFetch('/api/ip-flow' + CACHE_BUST).then(function(data) {
+        renderNetworkMap(data);
+    }).catch(function() {
+        showApiError();
+    });
+}
+
+function renderNetworkMap(data) {
+    var connections = data.connections || [];
+    if (connections.length === 0) {
+        document.getElementById('networkMapContent').innerHTML = '<p style="color:var(--text-muted)">No network data yet</p>';
+        return;
+    }
+    var html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">';
+    for (var i = 0; i < connections.length && i < 50; i++) {
+        var c = connections[i];
+        html += '<div class="card" style="margin:0; padding:15px;">';
+        html += '<div style="font-weight:bold;">' + escapeHtml(c.src_ip) + ' → ' + escapeHtml(c.dst_ip) + '</div>';
+        html += '<div style="color:var(--text-muted); font-size:14px;">Events: ' + c.count + ' | Ports: ' + c.ports.join(', ') + '</div>';
+        html += '</div>';
+    }
+    html += '</div>';
+    document.getElementById('networkMapContent').innerHTML = html;
+}
+
+// Active Learning Integration (add to rules table)
+function addActiveLearningButton(ruleName, eventId) {
+    // This would be called from the rules row to submit feedback
+    apiFetch('/api/active-learning/feedback', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            rule_name: ruleName,
+            feedback_type: 'false_positive'
+        })
+    }).then(function(data) {
+        console.log('Feedback saved:', data);
+    }).catch(function(e) {
+        console.error('Feedback failed:', e);
+    });
+}
 function loadWanFlapStatus() {
     apiFetch('/api/wan-flap-status' + CACHE_BUST).then(function(data) {
         renderWanFlapStatus(data);

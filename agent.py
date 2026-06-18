@@ -27,8 +27,22 @@ import argparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
+import threading
 from threading import Thread, Event, Condition, Lock
 from typing import Dict, Any, Optional, List
+
+try:
+    import redis as redis_lib
+    HAS_REDIS = True
+except ImportError:
+    HAS_REDIS = False
+
+try:
+    import redis
+    redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), socket_timeout=2, decode_responses=True)
+    redis_client.ping()
+except Exception:
+    redis_client = None
 
 import requests
 
@@ -398,6 +412,82 @@ class OPNsenseAgent:
         self.service_monitor = ServiceMonitor(None)
         self.service_monitor.load()
         self.persistence.load(self)
+        
+        # Startup health checks
+        self._check_startup_health()
+        self._start_maintenance_thread()
+
+    def _check_startup_health(self):
+        """Verify connectivity to critical services before starting."""
+        logger.info("Running startup health checks...")
+        
+        # Check Database
+        max_retries = 5
+        for i in range(max_retries):
+            if self.db:
+                try:
+                    self.db.connect()
+                    logger.info("Database connection successful")
+                    break
+                except Exception as e:
+                    if i == max_retries - 1:
+                        logger.error(f"Database connection failed after {max_retries} attempts: {e}")
+                    time.sleep(2)
+            else:
+                break
+        
+        # Check Redis (if enabled)
+        if redis_client:
+            for i in range(max_retries):
+                try:
+                    redis_client.ping()
+                    logger.info("Redis connection successful")
+                    break
+                except Exception as e:
+                    if i == max_retries - 1:
+                        logger.warning(f"Redis connection failed: {e}")
+                    time.sleep(2)
+        
+        # Check OPNsense API
+        try:
+            self.opn_client.test_connection()
+            logger.info("OPNsense API connection successful")
+        except Exception as e:
+            logger.warning(f"OPNsense API connection failed: {e} (will retry during operation)")
+        
+        logger.info("Startup health checks complete")
+
+    def _start_maintenance_thread(self):
+        """Start background thread for periodic maintenance tasks."""
+        def maintenance_loop():
+            while not self._shutdown.is_set():
+                try:
+                    # Prune old events from database (keep 30 days)
+                    self._prune_events()
+                except Exception as e:
+                    logger.warning(f"Maintenance task failed: {e}")
+                self._shutdown.wait(3600)  # Run every hour
+        
+        t = threading.Thread(target=maintenance_loop, daemon=True)
+        t.start()
+        logger.info("Background maintenance thread started")
+
+    def _prune_events(self):
+        """Prune old events from the database to prevent unlimited growth."""
+        try:
+            if self.db:
+                conn = self.db.connect()
+                if conn:
+                    cur = conn.cursor()
+                    # Delete events older than 30 days
+                    cur.execute("DELETE FROM events WHERE timestamp < NOW() - INTERVAL '30 days'")
+                    deleted = cur.rowcount
+                    conn.commit()
+                    cur.close()
+                    if deleted > 0:
+                        logger.info(f"Pruned {deleted} old events from database")
+        except Exception as e:
+            logger.error(f"Event pruning failed: {e}")
 
     # ── event callback (from syslog listener thread) ─────────────────
     def _on_event(self, event: dict):
