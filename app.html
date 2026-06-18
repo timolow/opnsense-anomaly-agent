@@ -708,13 +708,19 @@ function switchTab(tabId) {
 
 // Register event listeners for tab buttons
 window.addEventListener('DOMContentLoaded', function() {
+  console.log('[TAB] Registering click handlers...');
   var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
+  console.log('[TAB] Found', tabButtons.length, 'tab buttons');
   for (var i = 0; i < tabButtons.length; i++) {
-    tabButtons[i].addEventListener('click', function() {
-      var tabId = this.getAttribute('data-tab');
-      switchTab(tabId);
-    });
+    (function(button) {
+      button.addEventListener('click', function() {
+        console.log('[TAB] Click on:', this.getAttribute('data-tab'));
+        var tabId = this.getAttribute('data-tab');
+        switchTab(tabId);
+      });
+    })(tabButtons[i]);
   }
+  console.log('[TAB] Done registering click handlers');
 });
 
 // ═══════════════════════════════════════════
