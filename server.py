@@ -2121,7 +2121,15 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-def run_server(host="0.0.0.0", port=8766):
+def run_server(host=None, port=8766):
+    """Run the dashboard HTTP server.
+
+    Binds to 0.0.0.0 (all interfaces) by default so the dashboard is
+    accessible on the network. Override with DASHBOARD_BIND env var to
+    restrict to a specific interface (e.g. '127.0.0.1' for localhost-only).
+    """
+    bind_host = host or os.getenv("DASHBOARD_BIND", "0.0.0.0")
+    
     # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
     import os
     import traceback as tb
@@ -2136,7 +2144,7 @@ def run_server(host="0.0.0.0", port=8766):
         pass
     
     try:
-        server = ThreadedHTTPServer((host, port), DashboardHandler)
+        server = ThreadedHTTPServer((bind_host, port), DashboardHandler)
         with open(marker, "a") as f:
             f.write("ThreadedHTTPServer created\n")
             f.flush()

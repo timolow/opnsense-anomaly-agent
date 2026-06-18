@@ -96,12 +96,20 @@ def write_event(event):
         return False
 
 def run_syslog_listener():
-    """Run the syslog UDP listener."""
+    """Run the syslog UDP listener.
+
+    Binds to 0.0.0.0 (all interfaces) because OPNsense sends syslog from
+    any network interface. This is safe — UDP syslog is firewalled and
+    only trusted OPNsense hosts are configured to send to this port.
+    The bind address can be overridden with SYSLOG_BIND env var.
+    """
+    bind_host = os.getenv("SYSLOG_BIND", "0.0.0.0")
+    
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     
     try:
-        sock.bind(('0.0.0.0', UDP_PORT))
+        sock.bind((bind_host, UDP_PORT))
         logger.info(f"Syslog listener started on UDP port {UDP_PORT}")
         logger.info(f"Events will be written to: {OUTPUT_FILE}")
         
@@ -177,11 +185,16 @@ class SyslogListener:
             return False
     
     def _run(self):
-        """Run the syslog listener loop."""
+        """Run the syslog listener loop.
+
+        Binds to all interfaces for syslog reception from OPNsense.
+        This is safe — firewalled to trusted hosts only.
+        """
+        bind_host = os.getenv("SYSLOG_BIND", "0.0.0.0")
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(('0.0.0.0', self.UDP_PORT))
+            sock.bind((bind_host, self.UDP_PORT))
             
             count = 0
             while self._running:
