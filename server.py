@@ -18,6 +18,28 @@ from eventdb import EventDatabase
 
 logger = logging.getLogger(__name__)
 
+# Rate limiter for API requests
+from collections import defaultdict
+import time as time_module
+
+class RateLimiter:
+    """Simple token bucket rate limiter."""
+    def __init__(self, max_requests=60, window=60):
+        self.max_requests = max_requests
+        self.window = window
+        self.clients = defaultdict(list)
+    
+    def is_allowed(self, client_ip):
+        now = time_module.time()
+        # Remove old requests
+        self.clients[client_ip] = [t for t in self.clients[client_ip] if now - t < self.window]
+        if len(self.clients[client_ip]) >= self.max_requests:
+            return False
+        self.clients[client_ip].append(now)
+        return True
+
+rate_limiter = RateLimiter(max_requests=120, window=60)
+
 try:
     import psycopg2
     import psycopg2.extras
@@ -1125,6 +1147,103 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_rule_detail(rule_name))
             else:
                 self._send_json({"error": "No rule name specified"}, 400)
+        elif path == "/api/sse-stats":
+            # Server-Sent Events for real-time stats
+            try:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Cache-Control', 'no-cache')
+                self.send_header('Connection', 'keep-alive')
+                self.end_headers()
+                self.wfile.write(b"data: " + json.dumps(query_stats()).encode() + b"\n\n")
+                self.wfile.flush()
+                time.sleep(30)  # Update every 30s
+            except Exception:
+                pass  # Client disconnected
+        elif path == "/api/active-learning/feedback":
+            # Save user feedback for active learning
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 0:
+                    body = json.loads(self.rfile.read(content_length))
+                else:
+                    body = {}
+                rule_name = body.get('rule_name', '')
+                feedback_type = body.get('feedback_type', '')
+                
+                if rule_name and feedback_type:
+                    result = save_active_learning_feedback(rule_name, feedback_type)
+                    self._send_json(result)
+                else:
+                    self._send_json({'error': 'rule_name and feedback_type required'}, 400)
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+        elif path == "/api/settings":
+            # Get or update thresholds
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 0:
+                    body = json.loads(self.rfile.read(content_length))
+                    # Save settings
+                    settings_path = os.path.join(DATA_DIR, "settings.json")
+                    with open(settings_path, 'w') as f:
+                        json.dump(body, f, indent=2)
+                    self._send_json({'status': 'updated', 'settings': body})
+                else:
+                    # Load settings
+                    settings_path = os.path.join(DATA_DIR, "settings.json")
+                    if os.path.exists(settings_path):
+                        with open(settings_path) as f:
+                            self._send_json(json.load(f))
+                    else:
+                        self._send_json({"portscan_window": 60, "bruteforce_threshold": 50, "sensitivity": "medium"})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
+        elif path == "/api/logs":
+            # Search/filter logs
+            try:
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                src_ip = query.get("src_ip", [""])[0]
+                days = int(query.get("days", ["7"])[0])
+                limit = int(query.get("limit", ["100"])[0])
+                
+                conn = get_db()
+                if not conn:
+                    self._send_json({"logs": [], "count": 0})
+                    return
+                cur = conn.cursor()
+                if src_ip:
+                    cur.execute("""
+                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw
+                        FROM events
+                        WHERE src_ip = %s AND timestamp > NOW() - INTERVAL '%s days'
+                        ORDER BY timestamp DESC LIMIT %s
+                    """, (src_ip, days, limit))
+                else:
+                    cur.execute("""
+                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw
+                        FROM events
+                        WHERE timestamp > NOW() - INTERVAL '%s days'
+                        ORDER BY timestamp DESC LIMIT %s
+                    """, (days, limit))
+                
+                rows = cur.fetchall()
+                cur.close()
+                logs = []
+                for row in rows:
+                    logs.append({
+                        "timestamp": str(row[0]),
+                        "src_ip": row[1],
+                        "dst_ip": row[2],
+                        "dst_port": row[3],
+                        "proto": row[4],
+                        "action": row[5],
+                        "rule_name": row[6],
+                        "raw": row[7][:200] if row[7] else ""
+                    })
+                self._send_json({"logs": logs, "count": len(logs)})
+            except Exception as e:
+                self._send_json({'error': str(e)}, 500)
         elif path == "/api/rules":
             # Query rule_name distribution from PG for ML analysis
             # Only counts firewall events (action IN ('PASS','BLOCK'))
@@ -1550,6 +1669,28 @@ def generate_rule_name(rule_data):
         return " ".join(parts)
     return None
 
+
+def save_active_learning_feedback(rule_name, feedback_type):
+    """Save user feedback for active learning."""
+    # Load current feedback
+    feedback_path = os.path.join(DATA_DIR, "active_learning_feedback.json")
+    feedback = []
+    if os.path.exists(feedback_path):
+        with open(feedback_path) as f:
+            feedback = json.load(f)
+    
+    # Append new feedback
+    feedback.append({
+        "rule_name": rule_name,
+        "feedback_type": feedback_type,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    # Save back
+    with open(feedback_path, 'w') as f:
+        json.dump(feedback, f, indent=2)
+    
+    return {"status": "saved", "rule_name": rule_name}
 
 def query_opnsense_firewall_rules():
     """Fetch actual firewall rules from OPNsense with descriptions."""
