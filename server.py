@@ -1239,7 +1239,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "proto": row[4],
                         "action": row[5],
                         "rule_name": row[6],
-                        "raw": row[7][:200] if row[7] else ""
+                        "raw_message": row[7][:200] if row[7] else ""
                     })
                 self._send_json({"logs": logs, "count": len(logs)})
             except Exception as e:
