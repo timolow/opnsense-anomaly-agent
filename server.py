@@ -1214,14 +1214,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 cur = conn.cursor()
                 if src_ip:
                     cur.execute("""
-                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw
+                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw_message
                         FROM events
                         WHERE src_ip = %s AND timestamp > NOW() - INTERVAL '%s days'
                         ORDER BY timestamp DESC LIMIT %s
                     """, (src_ip, days, limit))
                 else:
                     cur.execute("""
-                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw
+                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw_message
                         FROM events
                         WHERE timestamp > NOW() - INTERVAL '%s days'
                         ORDER BY timestamp DESC LIMIT %s
