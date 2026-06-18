@@ -26,6 +26,16 @@ from typing import Optional, Dict, Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
+def _validate_ip(ip_str: str) -> Optional[str]:
+    """Validate that a string is a proper IP address. Returns None if invalid."""
+    if not ip_str:
+        return None
+    try:
+        ipaddress.ip_address(ip_str)
+        return ip_str
+    except ValueError:
+        return None
+
 # ── Syslog header patterns ──────────────────────────────────────────────
 SYSLOG_HEADER_RE = re.compile(
     r'<(\d+)>'              # priority
@@ -234,8 +244,10 @@ class AdaptiveParser:
                 # IPs and ports at fixed positions for IPv4
                 if proto_name == 'udp' and len(parts) > 18:
                     # UDP: [16]=src_ip, [17]=dst_ip, [18]=sport, [19]=dport
-                    features['src_ip'] = parts[16] if len(parts) > 16 else None
-                    features['dst_ip'] = parts[17] if len(parts) > 17 else None
+                    v1 = _validate_ip(parts[16]) if len(parts) > 16 else None
+                    v2 = _validate_ip(parts[17]) if len(parts) > 17 else None
+                    if v1: features['src_ip'] = v1
+                    if v2: features['dst_ip'] = v2
                     try:
                         features['sport'] = int(parts[18]) if parts[18].isdigit() else None
                     except (ValueError, IndexError):
@@ -246,8 +258,10 @@ class AdaptiveParser:
                         features['dport'] = None
                 elif len(parts) > 19:
                     # TCP with enough parts: [16]=src_ip, [17]=dst_ip, [18]=sport, [19]=dport
-                    features['src_ip'] = parts[16] if len(parts) > 16 else None
-                    features['dst_ip'] = parts[17] if len(parts) > 17 else None
+                    v1 = _validate_ip(parts[16]) if len(parts) > 16 else None
+                    v2 = _validate_ip(parts[17]) if len(parts) > 17 else None
+                    if v1: features['src_ip'] = v1
+                    if v2: features['dst_ip'] = v2
                     try:
                         features['sport'] = int(parts[18]) if parts[18].isdigit() else None
                     except (ValueError, IndexError):
@@ -260,8 +274,10 @@ class AdaptiveParser:
             elif ip_version == '6':
                 # IPv6: src/dst IPs at positions 15/16 (different from IPv4!)
                 if len(parts) > 16:
-                    features['src_ip'] = parts[15] if len(parts) > 15 else None
-                    features['dst_ip'] = parts[16] if len(parts) > 16 else None
+                    v1 = _validate_ip(parts[15]) if len(parts) > 15 else None
+                    v2 = _validate_ip(parts[16]) if len(parts) > 16 else None
+                    if v1: features['src_ip'] = v1
+                    if v2: features['dst_ip'] = v2
                     
                     # For IPv6, the proto field may not be explicit in the CSV.
                     # Detect protocol from TCP indicators:
@@ -340,11 +356,15 @@ class AdaptiveParser:
             src_match = re.search(r'SRC=(\S+)', csv_data)
             dst_match = re.search(r'DST=(\S+)', csv_data)
             if src_match and dst_match:
-                features['src_ip'] = src_match.group(1)
-                features['dst_ip'] = dst_match.group(1)
-                proto_m = re.search(r'PROTO=(\S+)', csv_data)
-                if proto_m:
-                    features['proto'] = proto_m.group(1).upper()
+                # Validate that extracted values are actual IP addresses
+                src_ip = _validate_ip(src_match.group(1))
+                dst_ip = _validate_ip(dst_match.group(1))
+                if src_ip and dst_ip:
+                    features['src_ip'] = src_ip
+                    features['dst_ip'] = dst_ip
+                    proto_m = re.search(r'PROTO=(\S+)', csv_data)
+                    if proto_m:
+                        features['proto'] = proto_m.group(1).upper()
         
         return features
     
@@ -355,10 +375,14 @@ class AdaptiveParser:
         # Extract IPs
         ips = IPV4_RE.findall(raw)
         if len(ips) >= 2:
-            features['src_ip'] = ips[0]
-            features['dst_ip'] = ips[1]
+            v1, v2 = _validate_ip(ips[0]), _validate_ip(ips[1])
+            if v1 and v2:
+                features['src_ip'] = v1
+                features['dst_ip'] = v2
         elif len(ips) == 1:
-            features['src_ip'] = ips[0]
+            v = _validate_ip(ips[0])
+            if v:
+                features['src_ip'] = v
         
         # Extract ports
         ports = PORT_RE.findall(raw)
@@ -390,7 +414,9 @@ class AdaptiveParser:
             raw
         )
         if m:
-            features['src_ip'] = m.group(1)
+            v_ip = _validate_ip(m.group(1))
+            if v_ip:
+                features['src_ip'] = v_ip
             features['timestamp'] = m.group(2)
             features['request'] = m.group(3)
             features['status_code'] = int(m.group(4))
@@ -413,8 +439,11 @@ class AdaptiveParser:
         src_match = re.search(r'SRC=(\S+)', raw)
         dst_match = re.search(r'DST=(\S+)', raw)
         if src_match and dst_match:
-            features['src_ip'] = src_match.group(1)
-            features['dst_ip'] = dst_match.group(1)
+            v_src = _validate_ip(src_match.group(1))
+            v_dst = _validate_ip(dst_match.group(1))
+            if v_src and v_dst:
+                features['src_ip'] = v_src
+                features['dst_ip'] = v_dst
         
         # Extract ports
         spt_match = re.search(r'SPT=(\d+)', raw)
@@ -443,10 +472,14 @@ class AdaptiveParser:
         # Extract IPv4 addresses
         ipv4_matches = IPV4_RE.findall(raw)
         if len(ipv4_matches) >= 2:
-            features['src_ip'] = ipv4_matches[0]
-            features['dst_ip'] = ipv4_matches[1]
+            validated = _validate_ip(ipv4_matches[0]), _validate_ip(ipv4_matches[1])
+            if validated[0] and validated[1]:
+                features['src_ip'] = validated[0]
+                features['dst_ip'] = validated[1]
         elif len(ipv4_matches) == 1:
-            features['src_ip'] = ipv4_matches[0]
+            v = _validate_ip(ipv4_matches[0])
+            if v:
+                features['src_ip'] = v
         
         # Extract ports
         port_matches = PORT_RE.findall(raw)

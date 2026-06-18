@@ -680,19 +680,21 @@ function switchTab(tabId) {
   // Update nav buttons
   var btns = document.querySelectorAll('.tab-btn');
   for (var i = 0; i < btns.length; i++) {
-    if (btns[i].getAttribute('data-tab') === tabId) {
-      btns[i].classList.add('active');
+    var btn = btns[i];
+    if (btn.getAttribute('data-tab') === tabId) {
+      btn.classList.add('active');
     } else {
-      btns[i].classList.remove('active');
+      btn.classList.remove('active');
     }
   }
-  // Show content
-  var contents = document.querySelectorAll('.tab-content');
-  for (var i = 0; i < contents.length; i++) {
-    if (contents[i].id === 'tab-' + tabId) {
-      contents[i].classList.add('active');
+  // Show content — use display property directly for reliability
+  var allContent = document.querySelectorAll('.tab-content');
+  for (var i = 0; i < allContent.length; i++) {
+    var contentDiv = allContent[i];
+    if (contentDiv.id === 'tab-' + tabId) {
+      contentDiv.style.display = 'block';
     } else {
-      contents[i].classList.remove('active');
+      contentDiv.style.display = 'none';
     }
   }
   // Load tab data
@@ -718,7 +720,7 @@ function loadTabData(tabId) {
     case 'services': loadServices(); break;
     case 'wan-flap': loadWanFlapStatus(); loadWanFlapHistory(); break;
     case 'settings': loadSettings(); break;
-    case 'logs': break;
+    case 'logs': searchLogs(); break;
     case 'network': loadNetworkMap(); break;
     case 'rules-classified': loadRulesML(); break;
   }
