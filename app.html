@@ -677,7 +677,8 @@ function toggleTheme() {
 // ═══════════════════════════════════════════
 
 function switchTab(tabId) {
-  // DEBUG: Log tab switch attempt
+  // DEBUG: Alert to verify onclick is firing
+  alert('switchTab called with: ' + tabId);
   console.log('[TAB] Attempting to switch to:', tabId);
   
   // Update nav buttons — use style properties for reliability
