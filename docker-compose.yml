@@ -88,6 +88,8 @@ services:
       # GeoLite2 database path (inside container)
       - GEO_DB_PATH=${GEO_DB_PATH:-/app/data/GeoLite2-Country.mmdb}
     volumes:
+      # Web UI (mounted so changes take effect without rebuild)
+      - ./app.html:/app/app.html:ro
       # Persist learned patterns, GeoLite2 DB, and event files across restarts
       - ./agent_data:/app/agent_data
       # GeoLite2 database (mounted when available)
