@@ -677,56 +677,44 @@ function toggleTheme() {
 // ═══════════════════════════════════════════
 
 function switchTab(tabId) {
-  try {
-    // Update nav buttons
-    var btns = document.querySelectorAll('.tab-btn');
-    for (var i = 0; i < btns.length; i++) {
-      var btn = btns[i];
-      var dataTab = btn.getAttribute('data-tab');
-      if (dataTab === tabId) {
-        btn.style.color = '#3b82f6';
-        btn.style.borderBottom = '2px solid #3b82f6';
-        btn.style.fontWeight = '600';
-      } else {
-        btn.style.color = '';
-        btn.style.borderBottom = '';
-        btn.style.fontWeight = '';
-      }
+  // Update nav buttons
+  var btns = document.querySelectorAll('.tab-btn');
+  for (var i = 0; i < btns.length; i++) {
+    var btn = btns[i];
+    var dataTab = btn.getAttribute('data-tab');
+    if (dataTab === tabId) {
+      btn.style.color = '#3b82f6';
+      btn.style.borderBottom = '2px solid #3b82f6';
+      btn.style.fontWeight = '600';
+    } else {
+      btn.style.color = '';
+      btn.style.borderBottom = '';
+      btn.style.fontWeight = '';
     }
-    // Show content
-    var allContent = document.querySelectorAll('.tab-content');
-    for (var i = 0; i < allContent.length; i++) {
-      var contentDiv = allContent[i];
-      if (contentDiv.id === 'tab-' + tabId) {
-        contentDiv.style.display = 'block';
-      } else {
-        contentDiv.style.display = 'none';
-      }
-    }
-    // Load tab data
-    loadTabData(tabId);
-  } catch(e) {
-    console.error('[TAB] Error switching to ' + tabId + ':', e);
   }
+  // Show content
+  var allContent = document.querySelectorAll('.tab-content');
+  for (var i = 0; i < allContent.length; i++) {
+    var contentDiv = allContent[i];
+    if (contentDiv.id === 'tab-' + tabId) {
+      contentDiv.style.display = 'block';
+    } else {
+      contentDiv.style.display = 'none';
+    }
+  }
+  // Load tab data
+  loadTabData(tabId);
 }
 
-// Remove old event listeners and add new ones
+// Register event listeners for tab buttons
 window.addEventListener('DOMContentLoaded', function() {
-  console.log('[TAB] DOMContentLoaded fired, registering handlers for', document.querySelectorAll('.tab-btn[data-tab]').length, 'buttons');
   var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
   for (var i = 0; i < tabButtons.length; i++) {
-    // Add click handler
-    (function(button) {
-      button.addEventListener('click', function(e) {
-        console.log('[TAB] Click on button:', this.getAttribute('data-tab'));
-        console.log('[TAB] Button element:', this);
-        console.log('[TAB] Button data-tab:', this.getAttribute('data-tab'));
-        var tabId = this.getAttribute('data-tab');
-        switchTab(tabId);
-      });
-    })(tabButtons[i]);
+    tabButtons[i].addEventListener('click', function() {
+      var tabId = this.getAttribute('data-tab');
+      switchTab(tabId);
+    });
   }
-  console.log('[TAB] Registered click handlers for', tabButtons.length, 'buttons');
 });
 
 // ═══════════════════════════════════════════
