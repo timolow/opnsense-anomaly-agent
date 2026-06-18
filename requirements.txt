@@ -6,3 +6,4 @@ maxminddb>=2.0.0
 python-dotenv>=1.0.0
 dnspython>=2.6.0
 redis>=5.0.0
+apprise>=1.9.0

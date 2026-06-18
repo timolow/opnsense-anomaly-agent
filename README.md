@@ -146,6 +146,43 @@ The agent runs a local HTTP server on port 8765. Send commands from any Discord 
 | `!topblocked` | Show top blocked source IPs |
 | `!help` | Show all available commands |
 
+
+## Notifications
+
+The agent supports two notification systems:
+
+### Discord (built-in)
+Rich embed alerts to a Discord channel with attack details, severity, and IP info.
+
+### Apprise (multi-platform — optional)
+Apprise provides unified alerting to **Telegram, Slack, Email, SMS, PushBullet, Gotify, Matrix, and 70+ other platforms** via a simple URI scheme. No additional hosted infrastructure required.
+
+[Apprise Documentation](https://github.com/caronc/apprise)
+
+**Setup:**
+1. Install: `pip install apprise>=1.9.0`
+2. Add `APPRISE_URLS` to `.env` with comma-separated URIs:
+   ```env
+   APPRISE_URLS=tgram://BOT_TOKEN/CHAT_ID,slack://webhook_url,mailto://user:pass@emailhost?to=recipient@example.com
+   ```
+3. Restart the agent
+
+**Supported Apprise URLs:**
+| Platform | Example URI |
+|----------|------------|
+| Telegram | `tgram://BOT_TOKEN/CHAT_ID` |
+| Slack | `slack://webhook_url` |
+| Email | `mailto://user:pass@emailhost?to=recipient@example.com` |
+| PushBullet | `pbul://API_TOKEN` |
+| Gotify | `gotify://gotify.host/token` |
+| Matrix | `matrix://homeserver/token/room_id` |
+| Webhook | `json://hostname/path` |
+
+**Notes:**
+- Apprise is **optional** — the agent runs fine without it
+- Graceful degradation: if Apprise isn't installed or URLs are invalid, alerts continue to Discord
+- All alerts (attack, geo, service, WAN flap, system log) are sent through both channels
+
 ## Web Dashboard
 
 A comprehensive web UI is served at `http://<server>:8765/` with tabs for:
@@ -231,6 +268,7 @@ The agent includes a reverse DNS resolver that translates IP addresses to hostna
 | `CHAT_PORT` | `8765` | HTTP port for chat commands and web dashboard |
 | `SYSLOG_ENABLED` | `false` | Enable built-in syslog listener |
 | `SYSLOG_UDP_PORT` | `1514` | UDP port to receive syslog |
+| `APPRISE_URLS` | `(none)` | Comma-separated Apprise notification URIs (optional multi-platform alerts) |
 | `WAN_IP_MIN_EVENTS` | `10` | Minimum events before an external IP gets tracked |
 | `MAX_WAN_IPS` | `10000` | Maximum number of external WAN IPs to track |
 | `OWN_WAN_IPS` | *(required)* | Your own WAN IP addresses — comma-separated |
@@ -359,6 +397,7 @@ maxminddb>=2.0.0
 python-dotenv>=1.0.0
 dnspython>=2.6.0
 redis>=5.0.0
+apprise>=1.9.0
 ```
 
 Install for local development:

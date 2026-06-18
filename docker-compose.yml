@@ -44,6 +44,8 @@ services:
       # Discord bot
       - DISCORD_TOKEN=${DISCORD_TOKEN:-}
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID:-}
+      # Apprise notifications (optional multi-platform)
+      - APPRISE_URLS=${APPRISE_URLS:-}
       # Chat command HTTP server
       - CHAT_PORT=${CHAT_PORT:-8765}
       # Syslog listener (built-in UDP)

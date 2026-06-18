@@ -74,6 +74,7 @@ from state_persistence import StatePersistence
 from rule_classifier import RuleClassifier
 from system_log_classifier import SystemLogClassifier
 from service_monitor import ServiceMonitor
+from apprise_notifier import AppriseNotifier
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -94,6 +95,8 @@ class Config:
         self.vllm_model = os.getenv("VLLM_MODEL", "QuantTrio/Qwen3.6-35B-A3B-AWQ")
         self.discord_token = os.getenv("DISCORD_TOKEN", "")
         self.discord_channel_id = os.getenv("DISCORD_CHANNEL_ID", "")
+        # Apprise multi-platform notifications (optional)
+        self.apprise_urls = os.getenv("APPRISE_URLS", "")
         config_path = BASE_DIR / "config.json"
         if config_path.exists():
             try:
@@ -362,6 +365,9 @@ class OPNsenseAgent:
         # Wire up the agent so /status and other commands work
         self.discord_bot.set_agent(self)
 
+        # Apprise notifier (multi-platform notifications)
+        self.apprise_notifier = AppriseNotifier(self.config.apprise_urls)
+
         # OPNsense API client
         self.opn_client = OPNsenseClient(self.config)
 
@@ -555,12 +561,15 @@ class OPNsenseAgent:
                         event, attack.get("attack_type", ""), attack.get("description", "")
                     )
                 self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
+                # Apprise notifier (multi-platform)
+                self.apprise_notifier.send_alert(attack)
 
         # Geo lookup
         geo_result = self.geo_lookup.check_event(event)
         if geo_result:
             self.anomaly_count += 1
             self.discord_bot.send_alert(geo_result)
+            self.apprise_notifier.send_alert(geo_result)
 
         # Track geo anomalies
         if geo_result and geo_result.get("type") == "geo_country_anomaly":
@@ -593,6 +602,7 @@ class OPNsenseAgent:
             self.anomaly_count += 1
             logger.info("System log anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             self.discord_bot.send_alert(anomaly)
+            self.apprise_notifier.send_alert(anomaly)
 
     def _check_service_anomalies(self):
         """Check service monitor for anomalies and send alerts."""
@@ -604,6 +614,7 @@ class OPNsenseAgent:
             self.anomaly_count += 1
             logger.info("Service anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             self.discord_bot.send_alert(anomaly)
+            self.apprise_notifier.send_alert(anomaly)
     
     def _check_wan_flaps(self):
         """Check OPNsense gateway states for flapping and send alerts."""
@@ -668,6 +679,7 @@ class OPNsenseAgent:
                         self.anomaly_count += 1
                         logger.warning("WAN flap detected: %s — %s", name, alert['description'])
                         self.discord_bot.send_alert(alert)
+                        self.apprise_notifier.send_alert(alert)
                 
                 self.last_gateway_states[name] = new_state
                 
