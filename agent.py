@@ -244,6 +244,42 @@ class OPNsenseClient:
         except Exception as e:
             logger.warning("OPNsense API connection failed: %s", e)
         return False
+    
+    def fetch_rules(self) -> Dict[str, Dict[str, Any]]:
+        """Fetch all firewall rules from OPNsense API and index by UUID."""
+        try:
+            resp = requests.get(
+                f"{self.base_url}/api/firewall/rule/searchRule",
+                headers=self._auth_headers(),
+                timeout=30,
+                verify=False,
+            )
+            if resp.status_code != 200:
+                logger.warning("OPNsense firewall rules fetch failed: HTTP %d", resp.status_code)
+                return {}
+            
+            data = resp.json()
+            rules_list = data.get("rule", [])
+            rules_by_uuid: Dict[str, Dict[str, Any]] = {}
+            
+            for rule in rules_list:
+                rule_uuid = rule.get("uuid", "")
+                rule_short_id = rule.get("id", "")
+                
+                # Index by full UUID
+                if rule_uuid:
+                    rules_by_uuid[rule_uuid] = rule
+                
+                # Also index by short ID for partial matching
+                if rule_short_id and rule_short_id not in rules_by_uuid:
+                    rules_by_uuid[rule_short_id] = rules_by_uuid.get(rule_uuid, rule)
+            
+            logger.info("Fetched %d firewall rules from OPNsense, indexed %d by UUID", 
+                       len(rules_list), len(rules_by_uuid))
+            return rules_by_uuid
+        except Exception as e:
+            logger.error("OPNsense firewall rules fetch failed: %s", e)
+            return {}
 
 
 # ── HTTP chat command server ───────────────────────────────────────────
@@ -372,6 +408,23 @@ class OPNsenseAgent:
 
         # OPNsense API client
         self.opn_client = OPNsenseClient(self.config)
+        
+        # Fetch firewall rules and build RUID->name mapping
+        self.rules_mapping: Dict[str, str] = {}
+        try:
+            rules = self.opn_client.fetch_rules()
+            for uuid_or_id, rule in rules.items():
+                # Extract human-readable name (description field)
+                rule_name = rule.get("description", "") or rule.get("xmldescription", "") or f"Rule {uuid_or_id}"
+                # Store mapping from UUID/ID to human-readable name
+                self.rules_mapping[uuid_or_id] = rule_name
+                # Also map the short ID if different from UUID
+                if rule.get("id") and rule.get("id") != uuid_or_id:
+                    self.rules_mapping[rule["id"]] = rule_name
+            if self.rules_mapping:
+                logger.info("Built rule name mapping: %d rules", len(self.rules_mapping))
+        except Exception as e:
+            logger.error("Failed to fetch firewall rules: %s", e)
 
         # Chat command server
         self.chat_thread = _start_chat_server(self, self.config.chat_port)
@@ -520,7 +573,10 @@ class OPNsenseAgent:
         
         # Map parser 'ruid' to PG column 'rule_name' (the CSV field at position 3)
         if 'ruid' in event:
-            event['rule_name'] = event.pop('ruid')
+            ruid = event.pop('ruid')
+            # Look up human-readable rule name from OPNsense API mapping
+            rule_name = self.rules_mapping.get(ruid, ruid)
+            event['rule_name'] = rule_name
         
         # Tag event with log_type for DB storage
         log_type = event.get('log_type', '')
