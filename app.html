@@ -712,11 +712,12 @@ function switchTab(tabId) {
 
 // Remove old event listeners and add new ones
 window.addEventListener('DOMContentLoaded', function() {
+  console.log('[TAB] DOMContentLoaded fired, registering handlers for', document.querySelectorAll('.tab-btn[data-tab]').length, 'buttons');
   var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
   for (var i = 0; i < tabButtons.length; i++) {
     // Remove any existing onclick handler
     tabButtons[i].onclick = function(e) {
-      e.stopPropagation();
+      console.log('[TAB] Click on button:', this.getAttribute('data-tab'));
       var tabId = this.getAttribute('data-tab');
       switchTab(tabId);
     };
