@@ -712,13 +712,12 @@ window.addEventListener('DOMContentLoaded', function() {
   var tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
   console.log('[TAB] Found', tabButtons.length, 'tab buttons');
   for (var i = 0; i < tabButtons.length; i++) {
-    (function(button) {
-      button.addEventListener('click', function() {
-        console.log('[TAB] Click on:', this.getAttribute('data-tab'));
-        var tabId = this.getAttribute('data-tab');
-        switchTab(tabId);
-      });
-    })(tabButtons[i]);
+    tabButtons[i].onclick = function() {
+      console.log('[TAB] Click on:', this.getAttribute('data-tab'));
+      var tabId = this.getAttribute('data-tab');
+      switchTab(tabId);
+      return false;
+    };
   }
   console.log('[TAB] Done registering click handlers');
 });
