@@ -677,6 +677,9 @@ function toggleTheme() {
 // ═══════════════════════════════════════════
 
 function switchTab(tabId) {
+  // DEBUG: Log tab switch attempt
+  console.log('[TAB] switchTab called with:', tabId);
+  
   // Update nav buttons
   var btns = document.querySelectorAll('.tab-btn');
   for (var i = 0; i < btns.length; i++) {
@@ -703,7 +706,12 @@ function switchTab(tabId) {
     }
   }
   // Load tab data
-  loadTabData(tabId);
+  try {
+    loadTabData(tabId);
+    console.log('[TAB] loadTabData succeeded for:', tabId);
+  } catch(e) {
+    console.error('[TAB] loadTabData failed for', tabId, ':', e);
+  }
 }
 
 // Register event listeners for tab buttons
