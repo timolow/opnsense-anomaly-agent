@@ -84,7 +84,32 @@ function LoadingScreen() {
 }
 
 export default function App() {
-  const { activeTab, sidebarCollapsed } = useStore();
+  const { activeTab, sidebarCollapsed, setActiveTab } = useStore();
+  
+  useEffect(() => {
+    // Sync URL hash with store
+    const hash = window.location.hash.slice(1);
+    if (hash && hash !== activeTab) {
+      setActiveTab(hash);
+    }
+    
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1);
+      if (hash) {
+        setActiveTab(hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+  
+  // Sync store with URL hash (avoid infinite loop by checking if already synced)
+  useEffect(() => {
+    const currentHash = window.location.hash.slice(1);
+    if (currentHash !== activeTab) {
+      window.history.replaceState(null, '', '#' + activeTab);
+    }
+  }, [activeTab]);
   
   useEffect(() => {
     console.log('[App] React mounted, activeTab:', activeTab);
