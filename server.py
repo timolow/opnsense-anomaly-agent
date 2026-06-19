@@ -2343,7 +2343,6 @@ def run_server(host=None, port=8766):
     bind_host = host or os.getenv("DASHBOARD_BIND", "0.0.0.0")
     
     # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
-    import os
     import traceback as tb
     marker = "/app/agent_data/server_debug.txt"
     try:
