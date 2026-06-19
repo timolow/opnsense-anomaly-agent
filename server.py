@@ -12,6 +12,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
 import sys
+from typing import Any, Dict
 sys.path.insert(0, '/app')
 
 from eventdb import EventDatabase
@@ -1915,36 +1916,58 @@ def query_opnsense_firewall_rules():
             if not rules_list:
                 rules_list = rules_data.get("row", [])
 
-        # Index by UUID for easy lookup (OPNsense uses UUIDs)
-        rules_by_uuid = {}
+        # Index by source_net for easy lookup (human-readable rule names)
+        # Also index by UUID for compatibility with existing RUID-based events
+        rules_by_name: Dict[str, Dict[str, Any]] = {}
+        rules_by_uuid: Dict[str, Dict[str, Any]] = {}
+        
         for rule in rules_list:
             rule_uuid = rule.get("uuid", "")
+            source_net = rule.get("source_net", "")
+            rule_short_id = rule_uuid.split("-")[0] if rule_uuid else ""
+            
+            rule_meta = {
+                "uuid": rule_uuid,
+                "description": rule.get("description", ""),
+                "action": rule.get("action", rule.get("%action", "")),
+                "interface": rule.get("interface", ""),
+                "source_net": source_net,
+                "destination_net": rule.get("destination_net", ""),
+                "enabled": rule.get("enabled", "1"),
+                "log": rule.get("log", "0") == "1",
+                "categories": rule.get("categories", ""),
+                "source_port": rule.get("source_port", ""),
+                "destination_port": rule.get("destination_port", ""),
+                "protocol": rule.get("protocol", ""),
+            }
+            
+            # Index by full UUID
             if rule_uuid:
-                # Extract short ID from UUID (first part before hyphen)
-                short_id = rule_uuid.split("-")[0]
-                rules_by_uuid[rule_uuid] = {
-                    "uuid": rule_uuid,
-                    "description": rule.get("description", ""),
-                    "action": rule.get("action", rule.get("%action", "")),
-                    "interface": rule.get("interface", ""),
-                    "source_net": rule.get("source_net", ""),
-                    "destination_net": rule.get("destination_net", ""),
-                    "enabled": rule.get("enabled", "1"),
-                    "log": rule.get("log", "0") == "1",
-                    "categories": rule.get("categories", ""),
-                    "source_port": rule.get("source_port", ""),
-                    "destination_port": rule.get("destination_port", ""),
-                    "protocol": rule.get("protocol", ""),
-                }
-                # Also index by short ID for partial matching
-                if short_id not in rules_by_uuid:
-                    rules_by_uuid[short_id] = rules_by_uuid[rule_uuid]
+                rules_by_uuid[rule_uuid] = rule_meta
+            
+            # Index by short UUID (first part before hyphen)
+            if rule_short_id:
+                rules_by_uuid[rule_short_id] = rule_meta
+            
+            # Index by source_net (human-readable rule name)
+            if source_net:
+                # source_net can be comma-separated (e.g., "ban_hammer" or "crowdsec_blacklists,crowdsec6_blacklists")
+                for sn in source_net.split(","):
+                    sn = sn.strip()
+                    if sn:
+                        rules_by_name[sn] = rule_meta
         
-        print(f"[OPNsense] Fetched {len(rules_list)} firewall rules, indexed {len(rules_by_uuid)} by UUID")
-        if rules_by_uuid:
-            print(f"[OPNsense] Sample UUIDs: {list(rules_by_uuid.keys())[:3]}")
-            print(f"[OPNsense] Sample description: {rules_by_uuid[list(rules_by_uuid.keys())[0]].get('description', 'N/A')}")
-        return rules_by_uuid
+        # Merge both indexes: UUID index first, then source_net (which takes precedence)
+        all_rules: Dict[str, Dict[str, Any]] = {}
+        all_rules.update(rules_by_uuid)
+        all_rules.update(rules_by_name)
+        
+        print(f"[OPNsense] Fetched {len(rules_list)} firewall rules, indexed {len(all_rules)} by name/UUID")
+        if all_rules:
+            sample_keys = list(all_rules.keys())[:3]
+            print(f"[OPNsense] Sample keys: {sample_keys}")
+            print(f"[OPNsense] Sample source_net: {all_rules.get(sample_keys[0], {}).get('source_net', 'N/A')}")
+        return all_rules
     except Exception as e:
         print(f"OPNsense firewall rules fetch failed: {e}")
         import traceback
