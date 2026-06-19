@@ -136,12 +136,74 @@ export const api = {
   heartbeat: () => json<{ ok: boolean; timestamp: number; events_processed: number; anomalies_detected: number }>('heartbeat'),
 
   // Core data
-  heatmap: () => json<HeatmapData>('/heatmap'),
-  ipFlow: () => json<IpFlowData>('/ip-flow'),
-  events: (limit = 100, offset = 0) =>
-    json<EventsData>(`/events?limit=${limit}&offset=${offset}`),
-  geo: () => json<GeoData>('/geo'),
-  alerts: () => json<AlertsData>('/alerts'),
+  heatmap: async (): Promise<HeatmapData> => {
+    const raw = await json<Record<string, unknown>>('/heatmap');
+    const data = raw.data || [];
+    const labels_x = raw.labels_x || [];
+    const labels_y = raw.labels_y || [];
+    const rows = Array.isArray(data) ? data : [];
+    return {
+      matrix: rows as any[],
+      labels: labels_x as string[],
+      rowLabels: labels_y as string[],
+      ip: labels_y as string[],
+      hour: labels_x as number[],
+      value: rows.map((r: any) => typeof r === 'number' ? r : (r.value || 0)),
+    };
+  },
+  ipFlow: async (): Promise<IpFlowData> => {
+    const raw = await json<Record<string, unknown>>('/ip-flow');
+    const nodes = raw.nodes || [];
+    const links = raw.links || [];
+    return {
+      nodes: nodes as any[],
+      edges: links as any[],
+    };
+  },
+  events: async (limit = 100, offset = 0): Promise<EventsData> => {
+    const raw = await json<Array<unknown>>(`/events?limit=${limit}&offset=${offset}`);
+    const events = raw.map((e: any) => ({
+      timestamp: '',
+      action: e.severity || 'UNKNOWN',
+      protocol: 'ip',
+      src_ip: e.ip || '0.0.0.0',
+      dst_ip: '',
+      src_port: 0,
+      dst_port: 0,
+      rule_name: e.attack_type || 'unknown',
+      interface: e.interface || 'unknown',
+      direction: 'inbound',
+      severity: e.severity || 'MEDIUM',
+      category: e.category || 'unknown',
+    }));
+    return { events, total: raw.length };
+  },
+  geo: async (): Promise<GeoData> => {
+    const raw = await json<Array<unknown>>('/geo');
+    return {
+      countries: raw.map((c: any) => ({
+        country: c.country || c.label || 'Unknown',
+        count: c.count || 0,
+        color: c.color || '#888',
+        flag: c.flag || '',
+        x: c.x || 0,
+        y: c.y || 0,
+      })),
+    };
+  },
+  alerts: async (): Promise<AlertsData> => {
+    const raw = await json<Array<unknown>>('/alerts');
+    const anomalies = raw.map((a: any) => ({
+      timestamp: '',
+      type: a.attack_type || 'UNKNOWN',
+      severity: a.severity || 'MEDIUM',
+      source_ip: a.ip || '0.0.0.0',
+      destination_ip: '',
+      details: `Count: ${a.count || 0}`,
+      category: a.attack_type || 'unknown',
+    }));
+    return { anomalies };
+  },
 
   // OPNsense
   opnsense: () => json<OpnsenseStatusData>('/opnsense'),
