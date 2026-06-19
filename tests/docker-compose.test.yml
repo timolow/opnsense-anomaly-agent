@@ -1,6 +1,4 @@
 # OPNsense Agent - E2E Test Environment
-version: '3.8'
-
 services:
   test-postgres:
     image: postgres:16-alpine
@@ -28,7 +26,7 @@ services:
       - DB_PORT=5432
       - DB_NAME=opnsense
       - DB_USER=opnsense
-      - DB_PASSWORD=***
+      - DB_PASSWORD=testpass123
       - OPN_HOST=192.168.1.1
       - OPN_PORT=443
       - OPN_API_KEY=test_key
