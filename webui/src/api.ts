@@ -103,9 +103,35 @@ export async function fetchPfelkStats(): Promise<PfelkStats | null> {
 }
 
 // ── Dashboard API ──
+function mapStats(raw: unknown): StatsData {
+  const r = raw as Record<string, unknown>;
+  const counters = (r.counters as Record<string, unknown>) || {};
+  const bySeverity = (r.by_severity as Record<string, unknown>) || {};
+  return {
+    total_events: (r.total_events as number) || (counters.events_processed as number) || 0,
+    events_24h: (counters.events_processed as number) || 0,
+    anomalies_detected: (counters.anomalies_detected as number) || 0,
+    alerts_sent: (counters.alerts_sent as number) || 0,
+    rules_classified: 0,
+    mutes_active: (r.active_mutes as number) || 0,
+    blocked_24h: 0,
+    passed_24h: 0,
+    unique_ips: (r.unique_ips as number) || (r.ip_classifications as number) || 0,
+    threat_critical: (bySeverity.CRITICAL as number) || 0,
+    threat_high: (bySeverity.HIGH as number) || 0,
+    threat_medium: (bySeverity.MEDIUM as number) || 0,
+    threat_low: (bySeverity.LOW as number) || 0,
+    health: { postgres: 'unknown', redis: 'unknown', opnsense: 'unknown' },
+    counters: counters as Record<string, unknown>,
+  };
+}
+
 export const api = {
   // Stats & Overview
-  stats: () => json<StatsData>('/stats'),
+  stats: async (): Promise<StatsData> => {
+    const raw = await json('/stats');
+    return mapStats(raw);
+  },
   health: () => json<HealthData>('/health'),
   heartbeat: () => json<{ ok: boolean; timestamp: number; events_processed: number; anomalies_detected: number }>('heartbeat'),
 
