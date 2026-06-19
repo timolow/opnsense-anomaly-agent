@@ -38,7 +38,33 @@ KNOWN_SERVICES = {
     'sshd', 'lighttpd', 'php-fpm', 'omv-engined', 'snmpd', 'avahi',
     'connmand', 'networkd', 'resolvconf', 'dhcpcd', 'firewall',
     'filterlog', 'vpn', 'openvpn', 'wireguard', 'pfsense',
+    'usbhid-ups', 'lockout_handler', 'configd', 'zenarmor', 'zenarmor.service',
 }
+
+# Services trusted to never trigger NEW_SERVICE alerts (OPNsense internal daemons)
+TRUSTED_SERVICES = {
+    'ntpd', 'dns', 'unbound', 'dhcp', 'arp', 'cron', 'sudo', 'sshd',
+    'lighttpd', 'php-fpm', 'omv-engined', 'snmpd', 'kernel', 'system',
+    'firewall', 'filterlog', 'vpn', 'openvpn', 'wireguard',
+    'usbhid-ups', 'lockout_handler', 'configd', 'zenarmor',
+    'omniservice', 'captiveportal', 'ntpctl', 'dhcpleases',
+}
+
+
+def _is_ip_address(s: str) -> bool:
+    """Check if a string is an IPv4 or IPv6 address (or prefix thereof)."""
+    if not s:
+        return False
+    # IPv4 pattern: digits and dots only, starts with a digit
+    if re.match(r'^\d+\.\d+', s):
+        return True
+    # IPv6 pattern: hex digits and colons, contains at least one colon
+    if ':' in s and re.match(r'^[0-9a-fA-F:.]+$', s):
+        # Must look like an IP (has hex groups, not just random colons)
+        parts = s.split(':')
+        if len(parts) >= 2 and all(p == '' or all(c in '0123456789abcdefABCDEF' for c in p) for p in parts):
+            return True
+    return False
 
 
 def _detect_service(raw: str, process: Optional[str]) -> str:
@@ -46,6 +72,9 @@ def _detect_service(raw: str, process: Optional[str]) -> str:
     if process:
         proc = process.lower().strip()
         if proc:
+            # Skip IP addresses that were misparsed as process names
+            if _is_ip_address(proc):
+                return 'unknown'
             for svc in KNOWN_SERVICES:
                 if svc in proc:
                     return svc
@@ -205,8 +234,12 @@ class SystemLogClassifier:
         now_str = now.strftime('%Y-%m-%d %H')
 
         for name, profile in self.service_profiles.items():
-            # 1. New services (first appearance)
+            # 1. New services (first appearance) — skip trusted OPNsense services
             if name in self._new_services_seen and profile.total_events <= 5:
+                if name in TRUSTED_SERVICES:
+                    # Trusted service — just log it, don't alert
+                    self._new_services_seen.discard(name)
+                    continue
                 anomalies.append({
                     'type': 'NEW_SERVICE',
                     'severity': 'MEDIUM' if profile.total_events <= 2 else 'LOW',
