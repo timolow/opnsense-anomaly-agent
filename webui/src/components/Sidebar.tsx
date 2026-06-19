@@ -139,9 +139,9 @@ export default function Sidebar() {
                   <button
                     key={item.id}
                     onClick={() => {
-                      // Update both store and URL hash synchronously
+                      // Update store and URL hash synchronously
                       setActiveTab(item.id);
-                      window.history.replaceState(null, '', '#' + item.id);
+                      window.location.hash = '#' + item.id;
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-150
                       ${activeTab === item.id
