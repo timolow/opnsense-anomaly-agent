@@ -8,9 +8,21 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script type="module" src="/src/main.tsx"></script>
+  <script>
+    window.addEventListener('error', function(e) {
+      console.error('Global error:', e.message, 'at', e.filename + ':' + e.lineno);
+      var root = document.getElementById('root');
+      if (root) root.innerHTML = '<h1 style="color:red">JS Error: ' + e.message + '</h1><p>File: ' + e.filename + ' Line: ' + e.lineno + '</p><pre>' + String(e.error || '') + '</pre>';
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('Unhandled rejection:', e.reason);
+      var root = document.getElementById('root');
+      if (root) root.innerHTML = '<h1 style="color:red">Promise Rejection: ' + String(e.reason) + '</h1>';
+    });
+  </script>
 </head>
 <body class="bg-cyber-darker text-cyber-text font-sans antialiased">
-  <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
+  <div id="root">Loading...</div>
 </body>
 </html>
