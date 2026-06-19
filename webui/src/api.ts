@@ -11,6 +11,35 @@ import type {
 
 const BASE = '/api';
 
+// Demo mode: mask IPs with placeholders
+const DEMO_MODE = true;
+
+function maskIp(ip: string): string {
+  if (ip === '0.0.0.0' || !ip) return ip;
+  return DEMO_MODE ? '10.0.XXX.XXX' : ip;
+}
+
+function maskAllIps(obj: unknown): unknown {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(maskAllIps);
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (typeof v === 'string' && /^[0-9a-fA-F.:]+$/.test(v) && v.includes('.')) {
+      result[k] = maskIp(v);
+    } else if (typeof v === 'string' && /^[0-9a-fA-F.:]+$/.test(v) && v.includes(':') && v.length > 5) {
+      // IPv6
+      result[k] = maskIp(v);
+    } else {
+      result[k] = maskAllIps(v);
+    }
+  }
+  return result;
+}
+
+function maskApiResponse<T>(data: T): T {
+  return DEMO_MODE ? maskAllIps(data) as T : data;
+}
+
 async function json<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Accept': 'application/json' },
