@@ -364,3 +364,49 @@ export interface PfelkStats {
   total_store_bytes: number;
   total_store_mb: number;
 }
+
+// ── PFELK Dashboard visualization types ──
+export interface PfelkTrafficFlow {
+  flow: Array<{ source: string; target: string; value: number }>;
+  time_range: string;
+}
+
+export interface PfelkProtocolDistribution {
+  protocols: Array<{ protocol: string; count: number; percent: number }>;
+  total: number;
+}
+
+export interface PfelkActionDistribution {
+  actions: Array<{ action: string; count: number; percent: number }>;
+  total: number;
+}
+
+export interface PfelkTimeline {
+  timeline: Array<{ time: string; count: number }>;
+  blocked_timeline: Array<{ time: string; count: number }>;
+  period: string;
+}
+
+export interface PfelkBlockedIps {
+  blocked_ips: Array<{ ip: string; count: number; unique_targets: number; unique_ports: number }>;
+  total_blocked: number;
+}
+
+export interface PfelkTopPorts {
+  ports: Array<{ port: number; name: string; count: number; unique_sources: number; block_count: number; percent: number }>;
+  total: number;
+}
+
+export interface PfelkRuleHeatmap {
+  heatmap: Array<{ rule: string; hourly: Array<{ time: string; count: number }> }>;
+  rules: string[];
+}
+
+export interface PfelkDirectionDistribution {
+  directions: Array<{ direction: string; count: number; percent: number }>;
+  total: number;
+}
+
+export interface PfelkRuleActionBreakdown {
+  rules: Array<{ name: string; pass: number; block: number; total: number }>;
+}

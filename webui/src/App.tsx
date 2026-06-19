@@ -25,6 +25,7 @@ import LogsQueryTab from './components/tabs/LogsQueryTab';
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
+import PfelkDashboard from './components/tabs/PfelkDashboard';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Overview',
@@ -45,6 +46,7 @@ const TAB_TITLE: Record<string, string> = {
   network: 'Network Topology',
   'wan-flap': 'WAN Flap Detection',
   'rules-classified': 'Rules ML',
+  pfelk: 'PFELK Analytics',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -67,6 +69,7 @@ function TabContent({ tab }: { tab: string }) {
     case 'network': return <NetworkTab />;
     case 'wan-flap': return <WanFlapTab />;
     case 'rules-classified': return <RulesClassifiedTab />;
+    case 'pfelk': return <PfelkDashboard />;
     default: return <OverviewTab />;
   }
 }

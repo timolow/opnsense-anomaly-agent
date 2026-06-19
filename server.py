@@ -314,6 +314,29 @@ def query_stats():
     nc = state.get("network_classifier", {}) if state else {}
     ip_data = nc.get("ip_data", {})
     ip_classifications = len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0])
+    
+    # 24h action counts for blocked/passed
+    blocked_24h = 0
+    passed_24h = 0
+    if conn:
+        try:
+            cur2 = conn.cursor()
+            cur2.execute("SELECT COUNT(*) FROM events WHERE action = 'BLOCK' AND timestamp > NOW() - INTERVAL '24 hours'")
+            blocked_24h = cur2.fetchone()[0]
+            cur2.execute("SELECT COUNT(*) FROM events WHERE action = 'PASS' AND timestamp > NOW() - INTERVAL '24 hours'")
+            passed_24h = cur2.fetchone()[0]
+            cur2.close()
+        except Exception:
+            pass
+    
+    # Rules classified count from network_classifier
+    rules_classified = 0
+    if state and "network_classifier" in state:
+        nc = state["network_classifier"]
+        if "rule_data" in nc:
+            rules_classified = len(nc["rule_data"])
+        elif "classifications" in nc:
+            rules_classified = len(nc["classifications"])
     geo_data = query_geo()
     top_countries = [g["country"] for g in geo_data]
     return {
@@ -325,6 +348,9 @@ def query_stats():
         "total_events": db_event_count,
         "time_range": "24h",
         "top_countries": top_countries,
+        "blocked_24h": blocked_24h,
+        "passed_24h": passed_24h,
+        "rules_classified": rules_classified,
     }
 
 def _fallback_stats():
@@ -1177,14 +1203,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         html_path = os.path.join(BASE_DIR, "webui", "dist", "index.html")
         if os.path.exists(html_path):
             with open(html_path, "rb") as f:
-                html = f.read()
+                html_bytes = f.read()
+            html = html_bytes.decode('utf-8')
+            # Add version query to bust browser cache
+            html = html.replace('.js">', '.js?v=' + str(int(time.time())) + '">')
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
             self.end_headers()
-            self.wfile.write(html)
+            self.wfile.write(html.encode('utf-8'))
         else:
             html_path = os.path.join(BASE_DIR, "app.html")
             if os.path.exists(html_path):
@@ -1266,6 +1295,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if path == "/api/stats":
                 self._send_json(query_stats())
+            # ═══════════════════════════════════════════════
+            # PFELK-style visualizations (read from PostgreSQL)
+            # ═══════════════════════════════════════════════
+            elif path == "/api/pfelk/traffic-flow":
+                self._send_json(query_pfelk_traffic_flow())
+            elif path == "/api/pfelk/protocols":
+                self._send_json(query_pfelk_protocol_distribution())
+            elif path == "/api/pfelk/actions":
+                self._send_json(query_pfelk_action_distribution())
+            elif path == "/api/pfelk/timeline":
+                self._send_json(query_pfelk_timeline())
+            elif path == "/api/pfelk/blocked-ips":
+                self._send_json(query_pfelk_blocked_ips())
+            elif path == "/api/pfelk/top-ports":
+                self._send_json(query_pfelk_top_ports())
+            elif path == "/api/pfelk/rule-heatmap":
+                self._send_json(query_pfelk_rule_heatmap())
+            elif path == "/api/pfelk/directions":
+                self._send_json(query_pfelk_direction_distribution())
+            elif path == "/api/pfelk/rule-actions":
+                self._send_json(query_pfelk_rule_action_breakdown())
             elif path == "/api/heatmap":
                 self._send_json(query_heatmap())
             elif path == "/api/ip-flow":
@@ -2004,6 +2054,343 @@ def api_active_learning_queue():
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+
+# ═══════════════════════════════════════════════
+# PFELK-style visualization queries
+# Read from PostgreSQL and return data formatted
+# for the React dashboard visualizations
+# ═══════════════════════════════════════════════
+def query_pfelk_traffic_flow(hours=24, limit=50):
+    """Top src→dst pairs for Sankey diagram."""
+    conn = get_db()
+    if not conn:
+        return {"flow": []}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT src_ip, dst_ip, COUNT(*) as event_count
+            FROM events
+            WHERE src_ip IS NOT NULL AND dst_ip IS NOT NULL
+              AND src_ip != '' AND dst_ip != ''
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip, dst_ip
+            ORDER BY event_count DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        cur.close()
+        flow = [{
+            "source": r["src_ip"],
+            "target": r["dst_ip"],
+            "value": r["event_count"]
+        } for r in rows]
+        return {"flow": flow, "time_range": f"{hours}h"}
+    except Exception as e:
+        print(f"Traffic flow query failed: {e}")
+        return {"flow": []}
+
+
+def query_pfelk_protocol_distribution(hours=24):
+    """Protocol distribution (TCP, UDP, ICMP, etc.)."""
+    conn = get_db()
+    if not conn:
+        return {"protocols": [], "total": 0}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT proto, COUNT(*) as event_count
+            FROM events
+            WHERE proto IS NOT NULL AND proto != ''
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY proto
+            ORDER BY event_count DESC
+        """)
+        rows = cur.fetchall()
+        total = sum(r["event_count"] for r in rows)
+        cur.close()
+        protocols = [{
+            "protocol": r["proto"],
+            "count": r["event_count"],
+            "percent": round(r["event_count"] / total * 100, 1) if total > 0 else 0
+        } for r in rows]
+        return {"protocols": protocols, "total": total}
+    except Exception as e:
+        print(f"Protocol distribution query failed: {e}")
+        return {"protocols": [], "total": 0}
+
+
+def query_pfelk_action_distribution(hours=24):
+    """Action distribution (PASS vs BLOCK, etc.)."""
+    conn = get_db()
+    if not conn:
+        return {"actions": [], "total": 0}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT action, COUNT(*) as event_count
+            FROM events
+            WHERE action IS NOT NULL AND action != ''
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY action
+            ORDER BY event_count DESC
+        """)
+        rows = cur.fetchall()
+        total = sum(r["event_count"] for r in rows)
+        cur.close()
+        actions = [{
+            "action": r["action"],
+            "count": r["event_count"],
+            "percent": round(r["event_count"] / total * 100, 1) if total > 0 else 0
+        } for r in rows]
+        return {"actions": actions, "total": total}
+    except Exception as e:
+        print(f"Action distribution query failed: {e}")
+        return {"actions": [], "total": 0}
+
+
+def query_pfelk_timeline(period="7d", granularity="hour"):
+    """Traffic volume over time (line chart)."""
+    conn = get_db()
+    if not conn:
+        return {"timeline": [], "blocked_timeline": []}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        # Total events per time bucket
+        if granularity == "hour":
+            cur.execute("""
+                SELECT date_trunc('%s', timestamp) as bucket, COUNT(*) as event_count
+                FROM events
+                WHERE timestamp > NOW() - INTERVAL '7 days'
+                GROUP BY bucket
+                ORDER BY bucket
+            """ % (granularity,))
+        else:
+            cur.execute("""
+                SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
+                FROM events
+                WHERE timestamp > NOW() - INTERVAL '7 days'
+                GROUP BY bucket
+                ORDER BY bucket
+            """)
+        rows = cur.fetchall()
+        timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in rows]
+        
+        # Blocked events per time bucket
+        if granularity == "hour":
+            cur.execute("""
+                SELECT date_trunc('%s', timestamp) as bucket, COUNT(*) as event_count
+                FROM events
+                WHERE timestamp > NOW() - INTERVAL '7 days' AND action = 'BLOCK'
+                GROUP BY bucket
+                ORDER BY bucket
+            """ % (granularity,))
+        else:
+            cur.execute("""
+                SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
+                FROM events
+                WHERE timestamp > NOW() - INTERVAL '7 days' AND action = 'BLOCK'
+                GROUP BY bucket
+                ORDER BY bucket
+            """)
+        blocked_rows = cur.fetchall()
+        blocked_timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in blocked_rows]
+        
+        cur.close()
+        return {"timeline": timeline, "blocked_timeline": blocked_timeline, "period": period}
+    except Exception as e:
+        print(f"Timeline query failed: {e}")
+        return {"timeline": [], "blocked_timeline": []}
+
+
+def query_pfelk_blocked_ips(hours=24, limit=20):
+    """Top source IPs by blocked count (bar chart)."""
+    conn = get_db()
+    if not conn:
+        return {"blocked_ips": [], "total_blocked": 0}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT src_ip, COUNT(*) as block_count,
+                   COUNT(DISTINCT dst_ip) as unique_targets,
+                   COUNT(DISTINCT dst_port) as unique_ports
+            FROM events
+            WHERE src_ip IS NOT NULL AND src_ip != ''
+              AND action = 'BLOCK'
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY src_ip
+            ORDER BY block_count DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        total_blocked = sum(r["block_count"] for r in rows)
+        cur.close()
+        blocked_ips = [{
+            "ip": r["src_ip"],
+            "count": r["block_count"],
+            "unique_targets": r["unique_targets"],
+            "unique_ports": r["unique_ports"]
+        } for r in rows]
+        return {"blocked_ips": blocked_ips, "total_blocked": total_blocked}
+    except Exception as e:
+        print(f"Blocked IPs query failed: {e}")
+        return {"blocked_ips": [], "total_blocked": 0}
+
+
+def query_pfelk_top_ports(hours=24, limit=20):
+    """Top destination ports (bar chart)."""
+    conn = get_db()
+    if not conn:
+        return {"ports": [], "total": 0}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT dst_port, COUNT(*) as event_count,
+                   COUNT(DISTINCT src_ip) as unique_sources,
+                   COUNT(DISTINCT CASE WHEN action = 'BLOCK' THEN 1 END) as block_count
+            FROM events
+            WHERE dst_port IS NOT NULL
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY dst_port
+            ORDER BY event_count DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        total = sum(r["event_count"] for r in rows)
+        cur.close()
+        
+        # Common port name mapping
+        port_names = {
+            22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 80: "HTTP",
+            123: "NTP", 443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
+            1433: "MSSQL", 1521: "Oracle", 3306: "MySQL", 3389: "RDP",
+            5432: "PostgreSQL", 5900: "VNC", 6379: "Redis", 8080: "HTTP-Alt",
+            8443: "HTTPS-Alt", 27017: "MongoDB"
+        }
+        
+        ports = [{
+            "port": r["dst_port"],
+            "name": port_names.get(r["dst_port"], str(r["dst_port"])),
+            "count": r["event_count"],
+            "unique_sources": r["unique_sources"],
+            "block_count": r["block_count"],
+            "percent": round(r["event_count"] / total * 100, 1) if total > 0 else 0
+        } for r in rows]
+        return {"ports": ports, "total": total}
+    except Exception as e:
+        print(f"Top ports query failed: {e}")
+        return {"ports": [], "total": 0}
+
+
+def query_pfelk_rule_heatmap(hours=24, limit=30):
+    """Rule activity heatmap (rules × hours)."""
+    conn = get_db()
+    if not conn:
+        return {"heatmap": [], "rules": []}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        
+        # Get top rules by event count
+        cur.execute("""
+            SELECT rule_name, COUNT(*) as total_events
+            FROM events
+            WHERE rule_name IS NOT NULL AND rule_name != ''
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY rule_name
+            ORDER BY total_events DESC
+            LIMIT %s
+        """, (limit,))
+        top_rules = [r["rule_name"] for r in cur.fetchall()]
+        
+        # Get events per hour for each rule
+        heatmap = []
+        for rule in top_rules:
+            cur.execute("""
+                SELECT date_trunc('hour', timestamp) as hour, COUNT(*) as event_count
+                FROM events
+                WHERE rule_name = %s AND timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY hour
+                ORDER BY hour
+            """, (rule,))
+            hours_data = cur.fetchall()
+            heatmap.append({
+                "rule": rule,
+                "hourly": [{"time": str(h["hour"]), "count": h["event_count"]} for h in hours_data]
+            })
+        
+        cur.close()
+        return {"heatmap": heatmap, "rules": top_rules}
+    except Exception as e:
+        print(f"Rule heatmap query failed: {e}")
+        return {"heatmap": [], "rules": []}
+
+
+def query_pfelk_direction_distribution(hours=24):
+    """Network direction distribution (in/out)."""
+    conn = get_db()
+    if not conn:
+        return {"directions": [], "total": 0}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT direction, COUNT(*) as event_count
+            FROM events
+            WHERE direction IS NOT NULL AND direction != ''
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY direction
+            ORDER BY event_count DESC
+        """)
+        rows = cur.fetchall()
+        total = sum(r["event_count"] for r in rows)
+        cur.close()
+        directions = [{
+            "direction": r["direction"],
+            "count": r["event_count"],
+            "percent": round(r["event_count"] / total * 100, 1) if total > 0 else 0
+        } for r in rows]
+        return {"directions": directions, "total": total}
+    except Exception as e:
+        print(f"Direction distribution query failed: {e}")
+        return {"directions": [], "total": 0}
+
+
+def query_pfelk_rule_action_breakdown(hours=24, limit=30):
+    """Top rules with pass/block breakdown."""
+    conn = get_db()
+    if not conn:
+        return {"rules": []}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT rule_name, action, COUNT(*) as event_count
+            FROM events
+            WHERE rule_name IS NOT NULL AND rule_name != ''
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY rule_name, action
+            ORDER BY rule_name, event_count DESC
+        """)
+        rows = cur.fetchall()
+        
+        # Group by rule_name
+        rules_dict = {}
+        for r in rows:
+            name = r["rule_name"]
+            if name not in rules_dict:
+                rules_dict[name] = {"name": name, "pass": 0, "block": 0, "total": 0}
+            act = r["action"].upper() if r["action"] else ""
+            if act == "PASS":
+                rules_dict[name]["pass"] = r["event_count"]
+            elif act == "BLOCK":
+                rules_dict[name]["block"] = r["event_count"]
+            rules_dict[name]["total"] += r["event_count"]
+        
+        rules = sorted(rules_dict.values(), key=lambda x: -x["total"])[:limit]
+        cur.close()
+        return {"rules": rules}
+    except Exception as e:
+        print(f"Rule action breakdown query failed: {e}")
+        return {"rules": []}
 
 def run_server(host=None, port=8766):
     """Run the dashboard HTTP server.
