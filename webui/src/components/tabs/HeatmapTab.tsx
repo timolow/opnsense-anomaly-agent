@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
-import { Map } from 'lucide-react';
+import { Map, Flame } from 'lucide-react';
 
 export default function HeatmapTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -96,7 +96,7 @@ export default function HeatmapTab() {
     <div className="space-y-4">
       <div className="flex items-center gap-3 mb-4">
         <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
-          <HeatMap size={16} className="text-cyber-accent" />
+          <Flame size={16} className="text-cyber-accent" />
         </div>
         <h2 className="text-lg font-bold">Traffic Heatmap</h2>
         <span className="text-xs text-cyber-textMuted font-mono">IP × Hour Activity</span>
