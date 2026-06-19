@@ -384,10 +384,60 @@ export const api = {
   },
 
   // Rules classified / ML
-  rulesClassified: (refresh = false) =>
-    json<RulesClassifiedData>(`/rules-classified${refresh ? '?refresh=true' : ''}`),
-  mlSummary: () => json<RulesClassifiedData['ml_stats'] | null>('/ml-summary'),
-  activeLearningQueue: () => json<Array<{ id: string; rule: string; state: string }>>('/active-learning-queue'),
+  rulesClassified: async (refresh = false): Promise<RulesClassifiedData> => {
+    const raw = await json<Record<string, unknown>>(`/rules-classified${refresh ? '?refresh=true' : ''}`);
+    const byClass = raw.rules_by_classification || {};
+    const allRules = Object.values(byClass).flatMap((arr: any) => Array.isArray(arr) ? arr : []);
+    const summary = raw.summary || {};
+    return {
+      summary: {
+        total: (raw.total_rules as number) || allRules.length,
+        high_traffic: 0,
+        low_traffic: 0,
+        abusive: (byClass.ABUSIVE as any[])?.length || 0,
+        good: (byClass.GOOD as any[])?.length || 0,
+      },
+      rules: allRules.map((r: any) => ({
+        uuid: r.rule_name || '',
+        short_id: (r.rule_name || '').substring(0, 8),
+        name: r.rule_name || '',
+        source_net: '',
+        destination_net: '',
+        action: '',
+        events_24h: r.total_events || 0,
+        classification: r.classification || 'UNCERTAIN',
+        confidence: Math.round((r.confidence || 0) * 100),
+        ml_label: r.classification || '',
+        ml_reason: '',
+        feedback_count: 0,
+      })),
+      ml_stats: {
+        events_processed: (summary.total_events as number) || 0,
+        rules_trained: allRules.length,
+        last_training: '',
+        accuracy: 0,
+        portscan_threshold: 0,
+        bruteforce_threshold: 0,
+        sensitivity: 'medium',
+      },
+    };
+  },
+  mlSummary: async (): Promise<RulesClassifiedData['ml_stats'] | null> => {
+    const raw = await json<Record<string, unknown>>('/ml-summary');
+    return {
+      events_processed: raw.events_processed || 0,
+      rules_trained: raw.rules_trained || 0,
+      last_training: '',
+      accuracy: 0,
+      portscan_threshold: 0,
+      bruteforce_threshold: 0,
+      sensitivity: raw.sensitivity || 'medium',
+    };
+  },
+  activeLearningQueue: async (): Promise<Array<{ id: string; rule: string; state: string }>> => {
+    const raw = await json<Array<unknown>>('/active-learning-queue');
+    return Array.isArray(raw) ? raw.map((q: any) => ({ id: q.id || '', rule: q.rule || '', state: q.state || '' })) : [];
+  },
 
   // Mutes
   mutes: () => json<MutesData[]>('/mutes'),
