@@ -1312,7 +1312,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
             elif path == "/api/sse-stats":
-                self._send_json(query_sse_stats())
+                self._send_json(query_stats())
             elif path == "/api/rules-classified":
                 query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 force_refresh = query.get("refresh", [False])[0] == "true"
