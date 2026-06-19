@@ -386,33 +386,35 @@ export const api = {
   // Rules classified / ML
   rulesClassified: async (refresh = false): Promise<RulesClassifiedData> => {
     const raw = await json<Record<string, unknown>>(`/rules-classified${refresh ? '?refresh=true' : ''}`);
-    const byClass = raw.rules_by_classification || {};
-    const allRules = Object.values(byClass).flatMap((arr: any) => Array.isArray(arr) ? arr : []);
-    const summary = raw.summary || {};
+    const summaryData = raw.summary || {};
+    // classified_rules is the flat array of all rules
+    const allRules = (raw.classified_rules as any[]) || [];
+    // Extract classification counts
+    const byClassification = summaryData.by_classification || {};
     return {
       summary: {
         total: (raw.total_rules as number) || allRules.length,
         high_traffic: 0,
         low_traffic: 0,
-        abusive: (byClass.ABUSIVE as any[])?.length || 0,
-        good: (byClass.GOOD as any[])?.length || 0,
+        abusive: (byClassification.ABUSIVE as number) || 0,
+        good: (byClassification.GOOD as number) || 0,
       },
       rules: allRules.map((r: any) => ({
         uuid: r.rule_name || '',
         short_id: (r.rule_name || '').substring(0, 8),
-        name: r.rule_name || '',
-        source_net: '',
-        destination_net: '',
-        action: '',
+        name: r.human_readable_name || r.rule_name || '',
+        source_net: r.source_address || r.source_net || '',
+        destination_net: r.destination_address || r.destination_net || '',
+        action: r.rule_action || r.action || '',
         events_24h: r.total_events || 0,
         classification: r.classification || 'UNCERTAIN',
         confidence: Math.round((r.confidence || 0) * 100),
         ml_label: r.classification || '',
-        ml_reason: '',
+        ml_reason: r.ml_reason || r.reason || '',
         feedback_count: 0,
       })),
       ml_stats: {
-        events_processed: (summary.total_events as number) || 0,
+        events_processed: (summaryData.total_events as number) || 0,
         rules_trained: allRules.length,
         last_training: '',
         accuracy: 0,
