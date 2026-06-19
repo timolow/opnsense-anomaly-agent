@@ -2350,14 +2350,18 @@ def run_server(host=None, port=8766):
     # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
     import traceback as tb
     marker = "/app/agent_data/server_debug.txt"
+    logger.info("Creating marker at %s", marker)
     try:
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
         with open(marker, "w") as f:
             f.write("run_server entered\n")
             f.flush()
             f.write(f"PID={os.getpid()}\n")
             f.flush()
-    except:
-        pass
+        logger.info("Marker created successfully")
+    except Exception as e:
+        logger.error("Failed to create marker: %s", e)
+        tb.print_exc()
     
     try:
         server = ThreadedHTTPServer((bind_host, port), DashboardHandler)
