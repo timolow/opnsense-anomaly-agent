@@ -9,7 +9,7 @@ import {
   Ban, Shield, Eye, Globe, Settings, Server, FileText,
   Activity, Cpu, Radio, Layers, TrendingUp, Database,
   Menu, X, ChevronDown, ChevronRight,
-  HeatMap,
+  Flame,
 } from 'lucide-react';
 
 interface NavGroup {
@@ -28,9 +28,9 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     name: 'Traffic',
-    icon: <HeatMap size={16} />,
+    icon: <Flame size={16} />,
     items: [
-      { id: 'heatmap', label: 'Heatmap', icon: <HeatMap size={14} /> },
+      { id: 'heatmap', label: 'Heatmap', icon: <Flame size={14} /> },
       { id: 'flows', label: 'Flow Map', icon: <GitMerge size={14} /> },
       { id: 'ipflow', label: 'IP Flow', icon: <Network size={14} /> },
       { id: 'geo', label: 'Geography', icon: <Globe size={14} /> },
