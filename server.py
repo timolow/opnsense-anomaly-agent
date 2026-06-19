@@ -1207,22 +1207,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not os.path.exists(dist_path):
             return False
         
-        # Parse the path: /static/assets/foo.js -> webui/dist/assets/foo.js
+        # Parse the path
         path = self.path.split("?")[0]
         
-        # Remove leading /assets/ or /static/ prefix
+        # Remove leading /assets/ prefix
         clean_path = path
         if clean_path.startswith("/assets/"):
-            clean_path = clean_path[8:]
-        elif clean_path.startswith("/static/"):
             clean_path = clean_path[8:]
         
         file_path = os.path.join(dist_path, clean_path)
         
-        # Security: prevent path traversal
-        real_path = os.path.realpath(file_path)
-        real_dist = os.path.realpath(dist_path)
-        if not real_path.startswith(real_dist):
+        # Security: prevent path traversal (simple check)
+        if '..' in clean_path or clean_path.startswith('/'):
             self.send_response(403)
             self.end_headers()
             return True
