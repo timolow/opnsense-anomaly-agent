@@ -206,24 +206,153 @@ export const api = {
   },
 
   // OPNsense
-  opnsense: () => json<OpnsenseStatusData>('/opnsense'),
+  opnsense: async (): Promise<OpnsenseStatusData> => {
+    const raw = await json<Record<string, unknown>>('/opnsense');
+    const status = raw.status || 'unknown';
+    const interfaces = Array.isArray(raw.interfaces) ? raw.interfaces : [];
+    const interfacesMapped = interfaces.map((i: any) => ({
+      name: i.name || '',
+      description: i.description || '',
+      mac: i.mac || '',
+      ipv4: i.ipv4 || '',
+      ipv6: i.ipv6 || '',
+      status: status,
+      bandwidth_in: '',
+      bandwidth_out: '',
+      status_icon: status === 'connected' ? 'connected' : 'disconnected',
+    }));
+    return {
+      version: raw.opnsense_version || 'unknown',
+      uptime: '',
+      cpu_usage: 0,
+      memory_usage: 0,
+      interfaces: interfacesMapped,
+      gateways: [],
+      services: [],
+    };
+  },
 
   // ZenArmor
-  zenarmorSummary: () => json<ZenArmorData['summary']>('/zenarmor-summary'),
-  zenarmorPolicies: () => json<ZenArmorData['policies'][]>('/zenarmor-policies'),
+  zenarmorSummary: async (): Promise<ZenArmorData['summary']> => {
+    const raw = await json<Record<string, unknown>>('/zenarmor-summary');
+    return {
+      total_events: raw.total_events || 0,
+      policies_count: (raw.known_policies_count as number) || 0,
+      anomalies_detected: 0,
+      events_24h: raw.total_events || 0,
+    };
+  },
+  zenarmorPolicies: async (): Promise<ZenArmorData['policies'][]> => {
+    const raw = await json<Record<string, unknown>>('/zenarmor-policies');
+    return Array.isArray(raw) ? raw.map((p: any) => ({
+      id: '',
+      name: p.name || '',
+      category: p.category || '',
+      status: 'active',
+      action: p.action || '',
+      description: '',
+      events: p.events || 0,
+    })) : [];
+  },
   zenarmorEvents: (limit = 100, offset = 0) =>
     json<ZenArmorData['events'][]>(`/zenarmor-events?limit=${limit}&offset=${offset}`),
-  zenarmorAnomalies: () => json<ZenArmorData['anomalies'][]>('/zenarmor-anomalies'),
+  zenarmorAnomalies: async (): Promise<ZenArmorData['anomalies'][]> => {
+    const raw = await json<Array<unknown>>('/zenarmor-anomalies');
+    return Array.isArray(raw) ? raw.map((a: any) => ({
+      type: a.type || 'unknown',
+      count: a.count || 0,
+      severity: a.severity || 'MEDIUM',
+      description: a.description || '',
+      source_ip: a.source_ip || '0.0.0.0',
+      timestamp: a.timestamp || '',
+    })) : [];
+  },
 
   // IDS
-  idsSummary: () => json<IdsData['summary']>('/ids-summary'),
-  idsSignatures: () => json<IdsData['signatures'][]>('/ids-signatures'),
+  idsSummary: async (): Promise<IdsData['summary']> => {
+    const raw = await json<Record<string, unknown>>('/ids-summary');
+    const topSigs = Array.isArray(raw.top_signatures) ? raw.top_signatures : [];
+    return {
+      total_events: raw.total_events || 0,
+      signatures: (raw.known_signatures_count as number) || 0,
+      anomalies_detected: 0,
+      events_24h: raw.total_events || 0,
+    };
+  },
+  idsSignatures: async (): Promise<IdsData['signatures'][]> => {
+    const raw = await json<Record<string, unknown>>('/ids-signatures');
+    const topSigs = Array.isArray(raw.top_signatures) ? raw.top_signatures : [];
+    return topSigs.map((s: any) => ({
+      id: s.id || '',
+      name: s.name || s.name || 'unknown',
+      category: s.classification || 'unknown',
+      severity: s.priority <= 1 ? 'HIGH' : 'MEDIUM',
+      description: s.description || '',
+      triggered_count: s.triggers || 0,
+      last_triggered: '',
+    }));
+  },
   idsEvents: (limit = 100, offset = 0) =>
     json<IdsData['events'][]>(`/ids-events?limit=${limit}&offset=${offset}`),
-  idsAnomalies: () => json<IdsData['anomalies'][]>('/ids-anomalies'),
+  idsAnomalies: async (): Promise<IdsData['anomalies'][]> => {
+    const raw = await json<Array<unknown>>('/ids-anomalies');
+    return Array.isArray(raw) ? raw.map((a: any) => ({
+      type: a.type || 'unknown',
+      count: a.count || 0,
+      severity: a.severity || 'MEDIUM',
+      description: a.description || '',
+      source_ip: a.source_ip || '0.0.0.0',
+      timestamp: a.timestamp || '',
+    })) : [];
+  },
 
   // Services
-  serviceStatus: () => json<ServiceStatusData>('/service-status'),
+  serviceStatus: async (): Promise<ServiceStatusData> => {
+    const raw = await json<Record<string, unknown>>('/service-status');
+    const services = raw.services || {};
+    const servicesArray = Object.entries(services).map(([name, svc]) => {
+      const s = svc as Record<string, unknown>;
+      const lastSeen = s.last_seen || '';
+      const monitored = s.monitored === true;
+      const anomalyCount = s.anomaly_count || 0;
+      return {
+        name,
+        status: monitored ? 'monitored' : 'unmonitored',
+        last_check: lastSeen ? new Date(lastSeen).toLocaleString() : 'N/A',
+        details: `Events: ${s.total_events || 0}, Anomalies: ${anomalyCount}`,
+        uptime: '',
+      };
+    });
+    const unboundSvc = services.unbound as Record<string, unknown> || {};
+    const dhcpSvc = services.dhcp as Record<string, unknown> || {};
+    const ntpSvc = services.ntp as Record<string, unknown> || {};
+    return {
+      services: servicesArray,
+      alerts: [],
+      unbound: {
+        status: (unboundSvc.monitored === true) ? 'running' : 'stopped',
+        cache_size: (unboundSvc.metrics?.cache_size as number) || 0,
+        queries_total: (unboundSvc.total_events as number) || 0,
+        queries_cached: 0,
+        status_icon: (unboundSvc.monitored === true) ? 'running' : 'stopped',
+        details: '',
+      },
+      dhcp: {
+        status: (dhcpSvc.monitored === true) ? 'running' : 'stopped',
+        leases: 0,
+        active_leases: 0,
+        status_icon: (dhcpSvc.monitored === true) ? 'running' : 'stopped',
+        details: '',
+      },
+      ntp: {
+        status: (ntpSvc.monitored === true) ? 'running' : 'stopped',
+        server: 'default',
+        offset: 0,
+        status_icon: (ntpSvc.monitored === true) ? 'running' : 'stopped',
+        details: '',
+      },
+    };
+  },
 
   // Rules classified / ML
   rulesClassified: (refresh = false) =>
