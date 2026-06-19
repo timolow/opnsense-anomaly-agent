@@ -16,3 +16,9 @@ venv/
 !.env.example
 .env
 config.json
+
+# Node/React
+node_modules/
+webui/dist/
+webui/node_modules/
+*.local

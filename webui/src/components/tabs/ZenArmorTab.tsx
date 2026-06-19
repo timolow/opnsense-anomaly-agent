@@ -1,0 +1,121 @@
+// ═══════════════════════════════════════════════════
+// ZenArmor Tab - ZenArmor security gateway
+// ═══════════════════════════════════════════════════
+
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/api';
+import type { ZenArmorData } from '@/types';
+import { Shield, BarChart3, AlertTriangle, Target } from 'lucide-react';
+
+export default function ZenArmorTab() {
+  const { data: summary } = useQuery<ZenArmorData['summary'] | null>({
+    queryKey: ['zenarmor-summary'],
+    queryFn: api.zenarmorSummary,
+    refetchInterval: 30000,
+  });
+
+  const { data: policies } = useQuery<ZenArmorData['policies'][] | null>({
+    queryKey: ['zenarmor-policies'],
+    queryFn: api.zenarmorPolicies,
+    refetchInterval: 30000,
+  });
+
+  const { data: anomalies } = useQuery<ZenArmorData['anomalies'][] | null>({
+    queryKey: ['zenarmor-anomalies'],
+    queryFn: api.zenarmorAnomalies,
+    refetchInterval: 30000,
+  });
+
+  if (!summary || !policies || !anomalies) {
+    return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-8 h-8 rounded-md bg-cyber-green/10 border border-cyber-green/20 flex items-center justify-center">
+          <Shield size={16} className="text-cyber-green" />
+        </div>
+        <h2 className="text-lg font-bold">ZenArmor</h2>
+        <span className="text-xs text-cyber-textMuted font-mono">Security Gateway</span>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-4 gap-3 mb-6">
+        <div className="cyber-card p-4 cyber-card-hover">
+          <div className="flex items-center gap-2 mb-2">
+            <BarChart3 size={16} className="text-cyber-accent" />
+            <span className="cyber-stat-label">Events</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-neon-cyan">{summary.total_events.toLocaleString()}</div>
+        </div>
+        <div className="cyber-card p-4 cyber-card-hover">
+          <div className="flex items-center gap-2 mb-2">
+            <Target size={16} className="text-cyber-pink" />
+            <span className="cyber-stat-label">Policies</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-neon-pink">{summary.policies_count}</div>
+        </div>
+        <div className="cyber-card p-4 cyber-card-hover">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={16} className="text-cyber-yellow" />
+            <span className="cyber-stat-label">Anomalies</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-neon-yellow">{summary.anomalies_detected}</div>
+        </div>
+        <div className="cyber-card p-4 cyber-card-hover">
+          <div className="flex items-center gap-2 mb-2">
+            <Shield size={16} className="text-cyber-green" />
+            <span className="cyber-stat-label">24h Events</span>
+          </div>
+          <div className="text-2xl font-bold font-mono text-neon-green">{summary.events_24h.toLocaleString()}</div>
+        </div>
+      </div>
+
+      {/* Policies */}
+      <div className="cyber-card p-4 scanlines">
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Active Policies</h3>
+        <table className="cyber-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            {policies.map((policy: any, i: number) => (
+              <tr key={i}>
+                <td className="font-semibold">{policy.name}</td>
+                <td><span className="cyber-badge cyber-badge-info">{policy.category}</span></td>
+                <td><span className={`font-mono ${policy.action === 'block' ? 'text-cyber-red' : 'text-cyber-green'}`}>{policy.action}</span></td>
+                <td><span className={`cyber-badge ${policy.status === 'active' ? 'cyber-badge-pass' : 'cyber-badge-warning'}`}>{policy.status}</span></td>
+                <td className="font-mono">{policy.events.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Anomalies */}
+      <div className="cyber-card p-4 scanlines">
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Anomalies Detected</h3>
+        <div className="space-y-3">
+          {anomalies.map((a: any, i: number) => (
+            <div key={i} className="flex items-center gap-4 p-3 rounded bg-cyber-panelHover">
+              <div className={`w-3 h-3 rounded-full flex-shrink-0 ${a.severity === 'CRITICAL' ? 'bg-cyber-red animate-pulse' : a.severity === 'HIGH' ? 'bg-cyber-orange animate-pulse' : 'bg-cyber-yellow animate-pulse'}`} />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-sm">{a.type} - {a.count} events</div>
+                <div className="text-xs text-cyber-textMuted truncate">{a.description}</div>
+              </div>
+              <span className="font-mono text-xs text-cyber-textMuted">{a.source_ip}</span>
+              <span className="font-mono text-xs text-cyber-textMuted">{a.timestamp}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

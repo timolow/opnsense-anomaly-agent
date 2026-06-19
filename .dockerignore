@@ -1,0 +1,16 @@
+node_modules/
+webui/node_modules/
+.webui/dist/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.hermes/
+agent_data/
+*.log
+.env
+config.json
+deploy-webui.sh
+pfelk/
+elasticsearch_client.py
+test*

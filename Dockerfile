@@ -1,7 +1,14 @@
-# OPNsense Anomaly Detection Agent
-# Multi-purpose Docker image: agent, syslog_listener, or vLLM client
+# ---------- WebUI build stage ----------
+FROM node:20-alpine AS webui-build
 
-# ---------- Build stage ----------
+WORKDIR /build
+COPY webui/package.json webui/package-lock.json ./
+RUN npm ci
+
+COPY webui/ .
+RUN npm run build
+
+# ---------- Production stage ----------
 FROM python:3.11-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,14 +44,11 @@ COPY wan_flap_detector.py .
 COPY zenarmor_classifier.py .
 COPY ids_signature_analyzer.py .
 
+# Copy built webui from build stage
+COPY --from=webui-build /build/dist webui/dist
+
 # Create data directory
 RUN mkdir -p /app/agent_data
-
-# ---------- Default: run anomaly agent ----------
-# Override CMD at runtime for different services:
-#   docker run anomaly-agent python3 agent.py
-#   docker run anomaly-agent python3 syslog_listener.py
-#   docker run anomaly-agent python3 -m http.server 8080  (debug)
 
 EXPOSE 1514/udp
 EXPOSE 8765/tcp
