@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test SPA</title>
+    <script>
+        window.addEventListener('error', (e) => {
+            console.error('Global error:', e.message, e.filename, e.lineno);
+            document.body.innerHTML = '<h1>Error: ' + e.message + '</h1>';
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('Unhandled rejection:', e.reason);
+            document.body.innerHTML = '<h1>Rejection: ' + String(e.reason) + '</h1>';
+        });
+    </script>
+</head>
+<body>
+    <div id="root">Loading...</div>
+    <script type="module" src="/assets/index-Du3ORamm.js"></script>
+</body>
+</html>

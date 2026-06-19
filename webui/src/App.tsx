@@ -2,7 +2,7 @@
 // Main App - React entry with sidebar and content area
 // ═══════════════════════════════════════════════════
 
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
 
@@ -85,6 +85,10 @@ function LoadingScreen() {
 
 export default function App() {
   const { activeTab, sidebarCollapsed } = useStore();
+  
+  useEffect(() => {
+    console.log('[App] React mounted, activeTab:', activeTab);
+  }, [activeTab]);
 
   return (
     <div className="h-screen flex overflow-hidden bg-cyber-darker">
