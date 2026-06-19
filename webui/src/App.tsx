@@ -149,7 +149,7 @@ export default function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-6">
           <Suspense fallback={<LoadingScreen />}>
-            <TabContent tab={activeTab} />
+            <TabContent key={activeTab} tab={activeTab} />
           </Suspense>
         </div>
       </main>

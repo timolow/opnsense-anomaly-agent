@@ -138,7 +138,11 @@ export default function Sidebar() {
                 {group.items.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setActiveTab(item.id)}
+                    onClick={() => {
+                      // Update both store and URL hash synchronously
+                      setActiveTab(item.id);
+                      window.history.replaceState(null, '', '#' + item.id);
+                    }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-150
                       ${activeTab === item.id
                         ? 'bg-cyber-accent/10 text-cyber-accent border-l-2 border-cyber-accent shadow-[inset_0_0_20px_rgba(0,229,255,0.05)]'
