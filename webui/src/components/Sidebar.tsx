@@ -9,6 +9,7 @@ import {
   Ban, Shield, Eye, Globe, Settings, Server, FileText,
   Activity, Cpu, Radio, Layers, TrendingUp, Database,
   Menu, X, ChevronDown, ChevronRight,
+  HeatMap,
 } from 'lucide-react';
 
 interface NavGroup {
