@@ -1,0 +1,30 @@
+#!/bin/bash
+# Pre-commit E2E test hook
+# Runs quick validation tests before pushing to GitHub
+
+set -e
+
+echo "=========================================="
+echo "Running pre-commit E2E validation..."
+echo "=========================================="
+
+# Check Python dependencies
+echo "📦 Checking dependencies..."
+python3 -c "import psycopg2" 2>/dev/null || {
+    echo "Installing psycopg2..."
+    pip install psycopg2-binary
+}
+
+# Run quick data flow tests (no Docker needed - tests against live system)
+echo "🧪 Running data flow tests..."
+if [ -f tests/test_e2e_data_flow.py ]; then
+    python3 tests/test_e2e_data_flow.py || {
+        echo "❌ Data flow tests failed"
+        exit 1
+    }
+else
+    echo "⚠️  Data flow test file not found - skipping"
+fi
+
+echo "✅ Pre-commit checks passed!"
+echo "=========================================="
