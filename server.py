@@ -1173,7 +1173,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data, default=str).encode())
 
     def _serve_html(self):
-        html_path = os.path.join(BASE_DIR, "app.html")
+        # Try new React SPA dist first, then fall back to app.html
+        html_path = os.path.join(BASE_DIR, "webui", "dist", "index.html")
         if os.path.exists(html_path):
             with open(html_path, "rb") as f:
                 html = f.read()
@@ -1185,548 +1186,222 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(html)
         else:
-            self.send_response(404)
+            html_path = os.path.join(BASE_DIR, "app.html")
+            if os.path.exists(html_path):
+                with open(html_path, "rb") as f:
+                    html = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+                self.wfile.write(html)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    def _serve_static(self):
+        """Serve static files from webui/dist for React SPA."""
+        dist_path = os.path.join(BASE_DIR, "webui", "dist")
+        if not os.path.exists(dist_path):
+            return False
+        
+        # Parse the path: /static/assets/foo.js -> webui/dist/assets/foo.js
+        path = self.path.split("?")[0]
+        
+        # Remove leading /assets/ or /static/ prefix
+        clean_path = path
+        if clean_path.startswith("/assets/"):
+            clean_path = clean_path[8:]
+        elif clean_path.startswith("/static/"):
+            clean_path = clean_path[8:]
+        
+        file_path = os.path.join(dist_path, clean_path)
+        
+        # Security: prevent path traversal
+        real_path = os.path.realpath(file_path)
+        real_dist = os.path.realpath(dist_path)
+        if not real_path.startswith(real_dist):
+            self.send_response(403)
             self.end_headers()
+            return True
+        
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            # Determine content type
+            ext = os.path.splitext(file_path)[1].lower()
+            content_types = {
+                ".html": "text/html",
+                ".js": "application/javascript",
+                ".css": "text/css",
+                ".json": "application/json",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".svg": "image/svg+xml",
+                ".woff": "font/woff",
+                ".woff2": "font/woff2",
+                ".ttf": "font/ttf",
+                ".ico": "image/x-icon",
+            }
+            content_type = content_types.get(ext, "application/octet-stream")
+            
+            with open(file_path, "rb") as f:
+                data = f.read()
+            
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(data)
+            return True
+        
+        return False
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/":
-            self._serve_html()
-        elif path == "/api/stats":
-            self._send_json(query_stats())
-        elif path == "/api/heatmap":
-            self._send_json(query_heatmap())
-        elif path == "/api/ip-flow":
-            self._send_json(query_ip_flow())
-        elif path == "/api/events":
-            self._send_json(query_events())
-        elif path == "/api/mutes":
-            self._send_json(load_mutes())
-        elif path == "/api/geo":
-            self._send_json(query_geo())
-        elif path == "/api/health":
-            self._send_json(query_health())
-        elif path == "/api/alerts":
-            self._send_json(query_alerts())
-        elif path == "/api/opnsense":
-            self._send_json(query_opnsense_status())
-        elif path == "/api/service-status":
-            # Service monitor status — DHCP, Unbound, NTP, OpenVPN, WireGuard
-            self._send_json(query_service_status())
-        elif path == "/api/zenarmor-summary":
-            self._send_json(query_zenarmor_summary())
-        elif path == "/api/zenarmor-policies":
-            self._send_json(query_zenarmor_policies())
-        elif path == "/api/zenarmor-events":
-            query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
-            limit = int(query.get("limit", [100])[0])
-            offset = int(query.get("offset", [0])[0])
-            self._send_json(query_zenarmor_events(limit=limit, offset=offset))
-        elif path == "/api/zenarmor-anomalies":
-            self._send_json(query_zenarmor_anomalies())
-        elif path == "/api/ids-summary":
-            self._send_json(query_ids_summary())
-        elif path == "/api/ids-signatures":
-            self._send_json(query_ids_signatures())
-        elif path == "/api/ids-events":
-            query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
-            limit = int(query.get("limit", [100])[0])
-            offset = int(query.get("offset", [0])[0])
-            self._send_json(query_ids_events(limit=limit, offset=offset))
-        elif path == "/api/ids-anomalies":
-            self._send_json(query_ids_anomalies())
-        elif path == "/api/heartbeat":
-            # Simple heartbeat - returns current time and counters from state
-            state = load_state()
-            counters = state.get("agent_counters", {}) if state else {}
-            self._send_json({
-                "ok": True,
-                "timestamp": time.time(),
-                "events_processed": counters.get("event_count", 0),
-                "anomalies_detected": counters.get("anomaly_count", 0),
-            })
-        elif path == "/api/feedback" and self.command == "POST":
-            # Save user feedback (Week 1)
-            try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                if content_length > 0:
-                    body = json.loads(self.rfile.read(content_length))
-                    rule_name = body.get('rule_name', '')
-                    label = body.get('label', '')
-                    reason = body.get('reason', '')
-                    user_id = body.get('user_id', '')
-                else:
-                    rule_name = ''
-                    label = ''
-                    reason = ''
-                    user_id = ''
-                
-                if not rule_name or not label:
-                    self._send_json({'error': 'rule_name and label required'}, 400)
-                else:
-                    result = api_save_feedback(rule_name, label, reason, user_id)
-                    self._send_json(result)
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/ml-summary":
-            # ML summary statistics (Weeks 1-5)
-            try:
-                data = api_ml_summary()
-                self._send_json(data)
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/active-learning-queue":
-            # Active learning queue (Week 4)
-            try:
-                data = api_active_learning_queue()
-                self._send_json(data)
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/rules-classified":
-            # Parse query parameters
-            query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
-            force_refresh = query.get("refresh", [False])[0] == "true"
-            
-            # Check Redis cache first (unless forced refresh)
-            cache_key = "rules-classified"
-            redis_client = get_redis()
-            if redis_client and not force_refresh:
-                cached = redis_client.get(cache_key)
-                if cached:
-                    self._send_json(json.loads(cached))
-                    return
-            
-            # Query and cache
-            result = query_rules_classified()
-            
-            # Store in Redis cache
-            if redis_client:
+        
+        # Serve static files (JS, CSS, etc.) from webui/dist
+        if path.startswith("/assets/"):
+            if self._serve_static():
+                return
+        
+        # Serve API endpoints
+        if path.startswith("/api/"):
+            if path == "/api/stats":
+                self._send_json(query_stats())
+            elif path == "/api/heatmap":
+                self._send_json(query_heatmap())
+            elif path == "/api/ip-flow":
+                self._send_json(query_ip_flow())
+            elif path == "/api/events":
+                self._send_json(query_events())
+            elif path == "/api/mutes":
+                self._send_json(load_mutes())
+            elif path == "/api/geo":
+                self._send_json(query_geo())
+            elif path == "/api/health":
+                self._send_json(query_health())
+            elif path == "/api/alerts":
+                self._send_json(query_alerts())
+            elif path == "/api/flows":
+                self._send_json(query_flows())
+            elif path == "/api/logs":
+                self._send_json(query_logs())
+            elif path == "/api/system_logs":
+                self._send_json(query_system_logs())
+            elif path == "/api/opnsense":
+                self._send_json(query_opnsense_status())
+            elif path == "/api/rules":
+                self._send_json(query_opnsense_firewall_rules())
+            elif path == "/api/ml-summary":
                 try:
-                    redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
-                except Exception:
-                    pass  # Cache miss on write is fine
-            self._send_json(result)
-            
-        # WAN flap monitoring endpoints
-        elif path == "/api/wan-flap-status":
-            # Get current flap detection status
-            try:
-                import importlib
-                wan_detector = importlib.import_module("wan_flap_detector")
-                detector = wan_detector.WANFlapDetector()
-                status = detector.get_flap_status()
-                self._send_json({"flap_status": status})
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-                
-        elif path == "/api/wan-flap-history":
-            # Get recent flap events
-            try:
-                import importlib
-                wan_detector = importlib.import_module("wan_flap_detector")
-                detector = wan_detector.WANFlapDetector()
-                flaps = detector.get_recent_flaps(hours=24)
-                self._send_json({"recent_flaps": flaps})
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-                
-        elif path.startswith("/api/rule-detail/"):
-            # Drill-down endpoint for a specific rule
-            rule_name = urllib.parse.unquote(path.split("/api/rule-detail/")[-1])
-            if rule_name:
-                self._send_json(query_rule_detail(rule_name))
-            else:
-                self._send_json({"error": "No rule name specified"}, 400)
-        elif path == "/api/sse-stats":
-            # Server-Sent Events for real-time stats
-            try:
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/event-stream')
-                self.send_header('Cache-Control', 'no-cache')
-                self.send_header('Connection', 'keep-alive')
-                self.end_headers()
-                self.wfile.write(b"data: " + json.dumps(query_stats()).encode() + b"\n\n")
-                self.wfile.flush()
-                time.sleep(30)  # Update every 30s
-            except Exception:
-                pass  # Client disconnected
-        elif path == "/api/active-learning/feedback":
-            # Save user feedback for active learning
-            try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                if content_length > 0:
-                    body = json.loads(self.rfile.read(content_length))
-                else:
-                    body = {}
-                rule_name = body.get('rule_name', '')
-                feedback_type = body.get('feedback_type', '')
-                
-                if rule_name and feedback_type:
-                    result = save_active_learning_feedback(rule_name, feedback_type)
-                    self._send_json(result)
-                else:
-                    self._send_json({'error': 'rule_name and feedback_type required'}, 400)
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/settings":
-            # Get or update thresholds
-            try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                if content_length > 0:
-                    body = json.loads(self.rfile.read(content_length))
-                    # Save settings
-                    settings_path = os.path.join(DATA_DIR, "settings.json")
-                    with open(settings_path, 'w') as f:
-                        json.dump(body, f, indent=2)
-                    self._send_json({'status': 'updated', 'settings': body})
-                else:
-                    # Load settings
-                    settings_path = os.path.join(DATA_DIR, "settings.json")
-                    if os.path.exists(settings_path):
-                        with open(settings_path) as f:
-                            self._send_json(json.load(f))
-                    else:
-                        self._send_json({"portscan_window": 60, "bruteforce_threshold": 50, "sensitivity": "medium"})
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/logs":
-            # Search/filter logs
-            try:
-                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
-                src_ip = query.get("src_ip", [""])[0]
-                days = int(query.get("days", ["7"])[0])
-                limit = int(query.get("limit", ["100"])[0])
-                
-                conn = get_db()
-                if not conn:
-                    self._send_json({"logs": [], "count": 0})
-                    return
-                cur = conn.cursor()
-                if src_ip:
-                    cur.execute("""
-                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw_message
-                        FROM events
-                        WHERE src_ip = %s AND timestamp > NOW() - INTERVAL '%s days'
-                        ORDER BY timestamp DESC LIMIT %s
-                    """, (src_ip, days, limit))
-                else:
-                    cur.execute("""
-                        SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name, raw_message
-                        FROM events
-                        WHERE timestamp > NOW() - INTERVAL '%s days'
-                        ORDER BY timestamp DESC LIMIT %s
-                    """, (days, limit))
-                
-                rows = cur.fetchall()
-                cur.close()
-                logs = []
-                for row in rows:
-                    logs.append({
-                        "timestamp": str(row[0]),
-                        "src_ip": row[1],
-                        "dst_ip": row[2],
-                        "dst_port": row[3],
-                        "proto": row[4],
-                        "action": row[5],
-                        "rule_name": row[6],
-                        "raw_message": row[7][:200] if row[7] else ""
-                    })
-                self._send_json({"logs": logs, "count": len(logs)})
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/rules":
-            # Query rule_name distribution from PG for ML analysis
-            # Only counts firewall events (action IN ('PASS','BLOCK'))
-            try:
-                conn = get_db()
-                cur = conn.cursor()
-                
-                # Get total firewall events only (exclude system logs with no action)
-                cur.execute("SELECT COUNT(*) FROM events WHERE action IN ('PASS','BLOCK')")
-                total_firewall_events = cur.fetchone()[0]
-                
-                # Get total system log events (no valid action)
-                cur.execute("SELECT COUNT(*) FROM events WHERE action IS NULL OR action = ''")
-                system_log_events = cur.fetchone()[0]
-                
-                # Get rule statistics grouped by rule_name and action (firewall only)
-                cur.execute("""
-                    SELECT rule_name, action, COUNT(*) as cnt
-                    FROM events
-                    WHERE rule_name IS NOT NULL 
-                      AND rule_name != '' 
-                      AND rule_name != 'N/A'
-                      AND action IN ('PASS','BLOCK')
-                    GROUP BY rule_name, action
-                    ORDER BY cnt DESC
-                """)
-                rows = cur.fetchall()
-                cur.close()
-                
-                # Build rule summary
-                rules = {}
-                for rule_name, action, count in rows:
-                    if rule_name not in rules:
-                        rules[rule_name] = {'events': 0, 'actions': {}}
-                    rules[rule_name]['events'] += count
-                    rules[rule_name]['actions'][action] = count
-                
-                # Enrich with cached OPNsense rule descriptions
-                # Uses background cache that refreshes every 5 minutes
-                opnsense_rules = get_cached_opnsense_rules()
-                if not opnsense_rules:
-                    print("[Rules] OPNsense cache empty, fetching directly...")
-                    try:
-                        opnsense_rules = query_opnsense_firewall_rules()
-                    except Exception as e:
-                        print(f"[Rules] Failed to fetch OPNsense rules: {e}")
-                        opnsense_rules = {}
-                
-                # Normalize: remove hyphens from UUIDs for consistent matching
-                normalized_opnsense_rules = {}
-                for key, val in opnsense_rules.items():
-                    normalized_opnsense_rules[key] = val  # Keep original
-                    # Also create hyphen-less version for RUID matching
-                    clean_key = key.replace("-", "")
-                    if clean_key != key:
-                        normalized_opnsense_rules[clean_key] = val
-                
-                # Build response
-                rules_list = []
-                for rule_hash, info in sorted(rules.items(), key=lambda x: -x[1]['events'])[:50]:
-                    # Enrich with OPNsense description or generated name
-                    display_name = None
-                    enabled = True
-                    
-                    # Try multiple match strategies
-                    meta = None
-                    
-                    # 1. Try exact match (hash or UUID)
-                    meta = normalized_opnsense_rules.get(rule_hash)
-                    
-                    # 2. Try short ID match (first 8 chars)
-                    if not meta:
-                        short_id = rule_hash[:8]
-                        meta = normalized_opnsense_rules.get(short_id)
-                    
-                    # 3. Try with hyphens (if hash has no hyphens)
-                    if not meta and "-" not in rule_hash:
-                        # Try adding hyphens to match UUID format
-                        try:
-                            uuid_hyphenated = f"{rule_hash[:8]}-{rule_hash[8:12]}-{rule_hash[12:16]}-{rule_hash[16:20]}-{rule_hash[20:]}"
-                            meta = normalized_opnsense_rules.get(uuid_hyphenated)
-                        except:
-                            pass
-                    
-                    # 4. Try removing hyphens (if hash has hyphens)
-                    if not meta and "-" in rule_hash:
-                        clean_hash = rule_hash.replace("-", "")
-                        meta = normalized_opnsense_rules.get(clean_hash)
-                    
-                    # 5. Try short ID with hyphens
-                    if not meta:
-                        short_id = rule_hash[:8]
-                        try:
-                            short_id_hyphenated = short_id  # Short ID doesn't need hyphens
-                            meta = normalized_opnsense_rules.get(short_id_hyphenated)
-                        except:
-                            pass
-                    
-                    if meta:
-                        if meta.get('description'):
-                            # Use OPNsense description
-                            display_name = meta['description']
-                        else:
-                            # Generate name from rule attributes if available
-                            generated = generate_rule_name(meta)
-                            if generated:
-                                display_name = generated
-                        
-                        enabled = meta.get('enabled', '1') == '1'
-                    
-                    if not display_name:
-                        # Last resort: try to generate name from event data
-                        # Count actions to determine if permit or deny
-                        total = info['events']
-                        block_count = info['actions'].get('BLOCK', 0)
-                        pass_count = info['actions'].get('PASS', 0)
-                        
-                        if block_count > pass_count * 2:
-                            # Rule blocks most traffic
-                            display_name = f"Rule: {rule_hash[:8]}... (DENY dominant)"
-                        elif pass_count > block_count * 2:
-                            # Rule permits most traffic
-                            display_name = f"Rule: {rule_hash[:8]}... (PERMIT dominant)"
-                        else:
-                            # Fallback to short hash
-                            display_name = rule_hash[:12]
-                    # Classify rule: if mostly BLOCK = DENY, mostly PASS = PERMIT
-                    total = info['events']
-                    block_count = info['actions'].get('BLOCK', 0)
-                    pass_count = info['actions'].get('PASS', 0)
-                    
-                    if block_count > pass_count:
-                        rule_type = 'DENY'
-                    elif pass_count > block_count:
-                        rule_type = 'PERMIT'
-                    else:
-                        rule_type = 'MIXED'
-                    
-                    rules_list.append({
-                        'name': display_name,
-                        'rule_hash': rule_hash,
-                        'events': total,
-                        'actions': info['actions'],
-                        'type': rule_type,
-                        'enabled': enabled,
-                    })
-                
-                # Count rules by type
-                deny_rules = sum(1 for r in rules_list if r['type'] == 'DENY')
-                permit_rules = sum(1 for r in rules_list if r['type'] == 'PERMIT')
-                mixed_rules = sum(1 for r in rules_list if r['type'] == 'MIXED')
-                
-                # Get events without rule_name
-                cur2 = conn.cursor()
-                cur2.execute("SELECT COUNT(*) FROM events WHERE rule_name IS NULL OR rule_name = '' OR rule_name = 'N/A'")
-                no_rule_count = cur2.fetchone()[0]
-                cur2.close()
-                
-                # Events without rule_name (firewall events only)
-                cur4 = conn.cursor()
-                cur4.execute("SELECT COUNT(*) FROM events WHERE (rule_name IS NULL OR rule_name = '' OR rule_name = 'N/A') AND action IN ('PASS','BLOCK')")
-                no_rule_firewall_count = cur4.fetchone()[0]
-                cur4.close()
-                
-                data = {
-                    'total_rules': len(rules_list),
-                    'total_firewall_events': total_firewall_events,
-                    'firewall_events_without_rule': no_rule_firewall_count,
-                    'system_log_events': system_log_events,
-                    'rules_by_type': {
-                        'deny': deny_rules,
-                        'permit': permit_rules,
-                        'mixed': mixed_rules,
-                    },
-                    'rules': rules_list,
-                }
-                self._send_json(data)
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/system_logs":
-            # Read system log classifier state from state.json
-            try:
-                state_path = os.path.join(DATA_DIR, "state.json")
-                slog_data = {}
-                if os.path.exists(state_path):
-                    with open(state_path) as f:
-                        state = json.load(f)
-                    slog_data = state.get("system_log_classifier", {})
-                
-                if slog_data:
-                    # Build response
-                    services = slog_data.get("services", {})
-                    services_by_volume = sorted(
-                        [{"service": k, "total": v} for k, v in slog_data.get("events_by_service", {}).items()],
-                        key=lambda x: x["total"],
-                        reverse=True,
-                    )
-                    data = {
-                        "services_tracked": len(services),
-                        "services_by_volume": {k: v for k, v in sorted(
-                            slog_data.get("events_by_service", {}).items(),
-                            key=lambda x: x[1],
-                            reverse=True,
-                        )[:50]},
-                        "services_by_level": slog_data.get("events_by_level", {}),
-                        "total_events_classified": slog_data.get("total_events", 0),
-                        "new_services": slog_data.get("new_services", []),
-                        "services": services,
-                        "anomalies": slog_data.get("anomaly_log", []),
-                    }
-                    # Add log_type breakdown from PG for full picture
-                    conn = get_db()
-                    if conn:
-                        try:
-                            cur = conn.cursor()
-                            cur.execute("SELECT log_type, COUNT(*) FROM events GROUP BY log_type ORDER BY COUNT(*) DESC LIMIT 20")
-                            data['pg_log_type_breakdown'] = dict(cur.fetchall())
-                            cur.execute("SELECT COUNT(*) FROM events WHERE action IS NULL OR action = ''")
-                            data['system_log_events'] = cur.fetchone()[0]
-                            cur.execute("SELECT COUNT(*) FROM events WHERE action IN ('PASS','BLOCK')")
-                            data['firewall_events'] = cur.fetchone()[0]
-                            # Get recent log entries for the table
-                            cur.execute("SELECT timestamp, log_type, src_ip, interface, raw_message FROM events WHERE log_type IS NOT NULL AND log_type != '' ORDER BY timestamp DESC LIMIT 100")
-                            rows = cur.fetchall()
-                            data['recent_logs'] = [{'timestamp': r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0]), 'log_type': r[1], 'source': r[2] or '-', 'interface': r[3] or '-', 'message': (r[4] or '')[0:200]} for r in rows]
-                            cur.close()
-                        except Exception:
-                            pass
+                    data = api_ml_summary()
                     self._send_json(data)
-                else:
-                    self._send_json({"message": "No system log classifier data yet", "services_tracked": 0, "services_by_volume": {}})
-            except Exception as e:
-                self._send_json({'error': str(e)}, 500)
-        elif path == "/api/flows":
-            # Get top flow pairs (src_ip -> dst_ip) - ntopng-style Sankey data
-            conn = get_db()
-            if conn:
-                try:
-                    cur = conn.cursor()
-                    # Top flow pairs
-                    cur.execute("""
-                        SELECT src_ip, dst_ip, COUNT(*) as cnt
-                        FROM events
-                        WHERE src_ip IS NOT NULL AND dst_ip IS NOT NULL
-                        AND src_ip != '0.0.0.0'
-                        GROUP BY src_ip, dst_ip
-                        ORDER BY cnt DESC
-                        LIMIT 50
-                    """)
-                    flows = []
-                    for r in cur.fetchall():
-                        flows.append({
-                            'src_ip': r[0],
-                            'dst_ip': r[1],
-                            'events': r[2]
-                        })
-                    # Top talkers (unique IPs)
-                    cur.execute("""
-                        SELECT ip, COUNT(*) as cnt
-                        FROM (
-                            SELECT src_ip as ip FROM events WHERE src_ip IS NOT NULL
-                            UNION ALL
-                            SELECT dst_ip as ip FROM events WHERE dst_ip IS NOT NULL
-                        ) t
-                        GROUP BY ip ORDER BY cnt DESC LIMIT 50
-                    """)
-                    talkers = []
-                    for r in cur.fetchall():
-                        talkers.append({
-                            'ip': r[0],
-                            'events': r[1]
-                        })
-                    # Protocol distribution
-                    cur.execute("SELECT proto, COUNT(*) FROM events WHERE proto IS NOT NULL AND proto != '' GROUP BY proto ORDER BY COUNT(*) DESC")
-                    proto_dist = dict(cur.fetchall())
-                    # Action distribution
-                    cur.execute("SELECT COALESCE(action, 'none') as action, COUNT(*) FROM events GROUP BY action ORDER BY COUNT(*) DESC")
-                    action_dist = dict(cur.fetchall())
-                    cur.close()
-                    self._send_json({
-                        'flows': flows,
-                        'talkers': talkers,
-                        'protocols': proto_dist,
-                        'actions': action_dist,
-                        'total_flows': len(flows)
-                    })
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
+            elif path == "/api/active-learning-queue":
+                try:
+                    data = api_active_learning_queue()
+                    self._send_json(data)
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            elif path == "/api/active-learning/feedback":
+                try:
+                    data = api_active_learning_feedback()
+                    self._send_json(data)
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            elif path == "/api/sse-stats":
+                self._send_json(query_sse_stats())
+            elif path == "/api/rules-classified":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                force_refresh = query.get("refresh", [False])[0] == "true"
+                cache_key = "rules-classified"
+                redis_client = get_redis()
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_rules_classified()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
+            elif path == "/api/zenarmor":
+                self._send_json(query_zenarmor_summary())
+            elif path == "/api/zenarmor-policies":
+                self._send_json(query_zenarmor_policies())
+            elif path == "/api/zenarmor-events":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                limit = int(query.get("limit", [100])[0])
+                offset = int(query.get("offset", [0])[0])
+                self._send_json(query_zenarmor_events(limit=limit, offset=offset))
+            elif path == "/api/zenarmor-anomalies":
+                self._send_json(query_zenarmor_anomalies())
+            elif path == "/api/zenarmor-summary":
+                self._send_json(query_zenarmor_summary())
+            elif path == "/api/ids-summary":
+                self._send_json(query_ids_summary())
+            elif path == "/api/ids-signatures":
+                self._send_json(query_ids_signatures())
+            elif path == "/api/ids-events":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                limit = int(query.get("limit", [100])[0])
+                offset = int(query.get("offset", [0])[0])
+                self._send_json(query_ids_events(limit=limit, offset=offset))
+            elif path == "/api/ids-anomalies":
+                self._send_json(query_ids_anomalies())
+            elif path == "/api/wan-flap":
+                self._send_json(query_wan_flap())
+            elif path == "/api/wan-flap-status":
+                try:
+                    import importlib
+                    wan_detector = importlib.import_module("wan_flap_detector")
+                    detector = wan_detector.WANFlapDetector()
+                    status = detector.get_flap_status()
+                    self._send_json({"flap_status": status})
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            elif path == "/api/wan-flap-history":
+                try:
+                    import importlib
+                    wan_detector = importlib.import_module("wan_flap_detector")
+                    detector = wan_detector.WANFlapDetector()
+                    flaps = detector.get_recent_flaps(hours=24)
+                    self._send_json({"recent_flaps": flaps})
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            elif path == "/api/service-status":
+                self._send_json(query_service_status())
+            elif path == "/api/pfelk/events":
+                self._pfelk_query_events()
+            elif path == "/api/settings":
+                self._handle_settings_get()
+            elif path == "/api/heartbeat":
+                state = load_state()
+                counters = state.get("agent_counters", {}) if state else {}
+                self._send_json({
+                    "ok": True,
+                    "timestamp": time.time(),
+                    "events_processed": counters.get("event_count", 0),
+                    "anomalies_detected": counters.get("anomaly_count", 0),
+                })
+            elif path.startswith("/api/rule-detail/"):
+                rule_name = urllib.parse.unquote(path.split("/api/rule-detail/")[-1])
+                if rule_name:
+                    self._send_json(query_rule_detail(rule_name))
+                else:
+                    self._send_json({"error": "No rule name specified"}, 400)
             else:
-                self._send_json({'error': 'No database connection'})
-        else:
-            self.send_response(404)
-            self.end_headers()
+                self.send_response(404)
+                self.end_headers()
+            return
+        
+        # Catch-all for SPA: serve index.html for client-side routing
+        self._serve_html()
 
     def do_POST(self):
         if self.path == "/api/mutes":
