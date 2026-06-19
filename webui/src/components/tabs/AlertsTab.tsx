@@ -85,8 +85,8 @@ export default function AlertsTab() {
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Type</th>
                 <th>Severity</th>
+                <th>Type</th>
                 <th>Source</th>
                 <th>Destination</th>
                 <th>Details</th>
