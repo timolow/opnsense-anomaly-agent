@@ -7,6 +7,9 @@ import type {
   GeoData, HealthData, AlertsData, OpnsenseStatusData,
   ZenArmorData, IdsData, ServiceStatusData, RulesClassifiedData,
   PfelkEvent, PfelkStats, RuleFeedback,
+  PfelkTrafficFlow, PfelkProtocolDistribution, PfelkActionDistribution,
+  PfelkTimeline, PfelkBlockedIps, PfelkTopPorts, PfelkRuleHeatmap,
+  PfelkDirectionDistribution, PfelkRuleActionBreakdown,
 } from './types';
 
 const BASE = '/api';
@@ -141,10 +144,10 @@ function mapStats(raw: unknown): StatsData {
     events_24h: (counters.events_processed as number) || 0,
     anomalies_detected: (counters.anomalies_detected as number) || 0,
     alerts_sent: (counters.alerts_sent as number) || 0,
-    rules_classified: 0,
+    rules_classified: (r.rules_classified as number) || 0,
     mutes_active: (r.active_mutes as number) || 0,
-    blocked_24h: 0,
-    passed_24h: 0,
+    blocked_24h: (r.blocked_24h as number) || 0,
+    passed_24h: (r.passed_24h as number) || 0,
     unique_ips: (r.unique_ips as number) || (r.ip_classifications as number) || 0,
     threat_critical: (bySeverity.CRITICAL as number) || 0,
     threat_high: (bySeverity.HIGH as number) || 0,
@@ -440,6 +443,17 @@ export const api = {
     const raw = await json<Array<unknown>>('/active-learning-queue');
     return Array.isArray(raw) ? raw.map((q: any) => ({ id: q.id || '', rule: q.rule || '', state: q.state || '' })) : [];
   },
+
+  // ── PFELK-style visualizations ──
+  trafficFlow: () => json<PfelkTrafficFlow>('/pfelk/traffic-flow'),
+  protocolDistribution: () => json<PfelkProtocolDistribution>('/pfelk/protocols'),
+  actionDistribution: () => json<PfelkActionDistribution>('/pfelk/actions'),
+  timeline: () => json<PfelkTimeline>('/pfelk/timeline'),
+  blockedIps: () => json<PfelkBlockedIps>('/pfelk/blocked-ips'),
+  topPorts: () => json<PfelkTopPorts>('/pfelk/top-ports'),
+  ruleHeatmap: () => json<PfelkRuleHeatmap>('/pfelk/rule-heatmap'),
+  directionDistribution: () => json<PfelkDirectionDistribution>('/pfelk/directions'),
+  ruleActionBreakdown: () => json<PfelkRuleActionBreakdown>('/pfelk/rule-actions'),
 
   // Mutes
   mutes: () => json<MutesData[]>('/mutes'),
