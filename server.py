@@ -1213,9 +1213,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Remove leading /assets/ prefix
         clean_path = path
         if clean_path.startswith("/assets/"):
-            clean_path = clean_path[8:]
+            clean_path = clean_path[8:]  # Strip "/assets/"
         
-        file_path = os.path.join(dist_path, clean_path)
+        # Look in assets subdirectory
+        file_path = os.path.join(dist_path, "assets", clean_path)
         
         # Security: prevent path traversal (simple check)
         if '..' in clean_path or clean_path.startswith('/'):
@@ -2020,7 +2021,7 @@ def run_server(host=None, port=8766):
     
     # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
     import traceback as tb
-    marker = "/app/agent_data/server_debug.txt"
+    marker = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "server_debug.txt")
     logger.info("Creating marker at %s", marker)
     try:
         os.makedirs(os.path.dirname(marker), exist_ok=True)
