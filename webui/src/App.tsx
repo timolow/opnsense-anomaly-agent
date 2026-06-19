@@ -90,26 +90,46 @@ export default function App() {
   const { activeTab, sidebarCollapsed, setActiveTab } = useStore();
   
   useEffect(() => {
-    // Sync URL hash with store
-    const hash = window.location.hash.slice(1);
-    if (hash && hash !== activeTab) {
-      setActiveTab(hash);
+    // Normalize URL hash to match tab IDs
+    const urlToTab = (url: string) => {
+      const hash = window.location.hash.slice(1);
+      const map: Record<string, string> = {
+        'firewall-rules': 'rules',
+        'rules-ml': 'rules-classified',
+        'wan-flap': 'wan-flap',
+        'network-topology': 'network',
+        'threat-alerts': 'alerts',
+        'traffic-heatmap': 'heatmap',
+        'flow-map': 'flows',
+        'ip-flow': 'ipflow',
+        'geo': 'geo',
+        'opnsense-status': 'opnsense',
+        'system-health': 'settings',
+      };
+      return map[hash] || hash;
+    };
+    
+    // Sync URL hash with store on mount
+    const tab = urlToTab(window.location.href);
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab);
     }
     
     const handleHashChange = () => {
-      const hash = window.location.hash.slice(1);
-      if (hash) {
-        setActiveTab(hash);
+      const tab = urlToTab(window.location.href);
+      if (tab) {
+        setActiveTab(tab);
       }
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
   
-  // Sync store with URL hash (avoid infinite loop by checking if already synced)
+  // Sync store with URL hash (update URL when activeTab changes)
   useEffect(() => {
     const currentHash = window.location.hash.slice(1);
-    if (currentHash !== activeTab) {
+    // Only update if different from activeTab (avoid loop)
+    if (currentHash !== activeTab && activeTab) {
       window.history.replaceState(null, '', '#' + activeTab);
     }
   }, [activeTab]);
