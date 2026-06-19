@@ -2340,7 +2340,12 @@ def run_server(host=None, port=8766):
     accessible on the network. Override with DASHBOARD_BIND env var to
     restrict to a specific interface (e.g. '127.0.0.1' for localhost-only).
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("run_server starting: host=%s, port=%s", host, port)
+    
     bind_host = host or os.getenv("DASHBOARD_BIND", "0.0.0.0")
+    logger.info("bind_host=%s", bind_host)
     
     # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
     import traceback as tb
