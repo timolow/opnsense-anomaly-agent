@@ -1133,43 +1133,87 @@ def query_zenarmor_anomalies():
 # ──────────────────────────────────────────────────────────────────────
 
 def query_ids_summary():
-    """Return IDS signature summary matching frontend types."""
+    """Return IDS signature summary — from DB + state file."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM events WHERE log_type = 'ids'")
+        db_total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM events WHERE log_type = 'ids' AND timestamp > NOW() - INTERVAL '24 hours'")
+        db_24h = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT rule_name) FROM events WHERE log_type = 'ids' AND rule_name IS NOT NULL AND rule_name != ''")
+        db_signatures = cur.fetchone()[0]
+        cur.close()
+    except Exception:
+        db_total = 0
+        db_24h = 0
+        db_signatures = 0
+    finally:
+        if conn:
+            close_db(conn)
+
     state = load_json_state(IDS_STATE_FILE)
-    if not state:
-        return {
-            "total_events": 0,
-            "signatures": 0,
-            "anomalies_detected": 0,
-            "events_24h": 0,
-        }
-    signatures_count = len(state.get("signatures", {}))
-    anomalies = state.get("summary", {}).get("anomalies_detected", 0)
-    total_events = state.get("summary", {}).get("total_events", state.get("total_events", 0))
+    sig_count = len(state.get("signatures", {})) if state else 0
+    anomalies = state.get("summary", {}).get("anomalies_detected", 0) if state else 0
+
     return {
-        "total_events": total_events,
-        "signatures": signatures_count,
+        "total_events": max(db_total, sig_count),
+        "signatures": max(db_signatures, sig_count),
         "anomalies_detected": anomalies,
-        "events_24h": total_events,  # fallback: same as total
+        "events_24h": db_24h,
     }
 
 def query_ids_signatures():
-    """Return all known IDS signatures matching frontend types."""
+    """Return all known IDS signatures — from DB + state file."""
+    conn = get_db()
+    db_sigs = {}
+    try:
+        cur = conn.cursor()
+        # Group events by rule_name (signature name)
+        cur.execute("""
+            SELECT rule_name, COUNT(*) as cnt, MAX(timestamp) as last_seen
+            FROM events
+            WHERE log_type = 'ids' AND rule_name IS NOT NULL AND rule_name != ''
+            GROUP BY rule_name
+            ORDER BY cnt DESC
+        """)
+        for row in cur.fetchall():
+            db_sigs[row[0]] = {
+                "id": row[0][:8],
+                "name": row[0],
+                "category": "IDS_ALERT",
+                "severity": "MEDIUM",
+                "triggered_count": row[1],
+                "last_triggered": row[2].isoformat() if row[2] else "",
+            }
+        cur.close()
+    except Exception:
+        pass
+    finally:
+        if conn:
+            close_db(conn)
+
+    # Merge with state file signatures (state file may have more details)
     state = load_json_state(IDS_STATE_FILE)
-    if not state:
-        return []
-    sigs = []
-    for name, data in state.get("signatures", {}).items():
-        priority = data.get("priority", 0)
-        sigs.append({
-            "id": data.get("id", name[:8]),
-            "name": data.get("name", name),
-            "category": data.get("category", "unknown"),
-            "severity": "HIGH" if priority <= 1 else "MEDIUM" if priority <= 3 else "LOW",
-            "description": data.get("description", ""),
-            "triggered_count": data.get("trigger_count", 0),
-            "last_triggered": data.get("last_seen", ""),
-        })
-    return sorted(sigs, key=lambda x: -x["triggered_count"])
+    if state:
+        for name, data in state.get("signatures", {}).items():
+            if name in db_sigs:
+                # Update with state file details if available
+                pri = data.get("priority", 0)
+                db_sigs[name]["priority"] = pri
+                db_sigs[name]["severity"] = "HIGH" if pri <= 1 else "MEDIUM" if pri <= 3 else "LOW"
+            else:
+                pri = data.get("priority", 0)
+                db_sigs[name] = {
+                    "id": data.get("id", name[:8]),
+                    "name": data.get("name", name),
+                    "category": data.get("category", "unknown"),
+                    "severity": "HIGH" if pri <= 1 else "MEDIUM" if pri <= 3 else "LOW",
+                    "triggered_count": data.get("trigger_count", 0),
+                    "last_triggered": data.get("last_seen", ""),
+                }
+
+    return sorted(db_sigs.values(), key=lambda x: -x["triggered_count"])
 
 def query_ids_events(limit=100, offset=0):
     """Return recent IDS events from the database."""
