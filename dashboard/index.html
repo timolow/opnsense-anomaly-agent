@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OPNsense Anomaly Detection Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background: #0a0a0f;
+            color: #e0e0e0;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass-panel {
+            background: rgba(20, 20, 30, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+        .neon-text {
+            color: #00ffff;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+        }
+        .neon-border {
+            border-color: #00ffff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+        }
+        .threat-critical { color: #ff0000; }
+        .threat-high { color: #ff6600; }
+        .threat-medium { color: #ffff00; }
+        .threat-low { color: #00ff00; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="app" class="p-6">
+        <div class="mb-6">
+            <h1 class="text-3xl font-bold neon-text mb-2">OPNsense Anomaly Detection</h1>
+            <div class="text-sm text-gray-400">
+                Real-time threat analysis | <span id="event-count">0</span> events processed
+            </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="glass-panel p-4">
+                <div class="text-sm text-gray-400">Total Events</div>
+                <div class="text-2xl font-bold neon-text" id="total-events">0</div>
+            </div>
+            <div class="glass-panel p-4">
+                <div class="text-sm text-gray-400">Anomalies</div>
+                <div class="text-2xl font-bold threat-high" id="total-anomalies">0</div>
+            </div>
+            <div class="glass-panel p-4">
+                <div class="text-sm text-gray-400">Unique IPs</div>
+                <div class="text-2xl font-bold" id="unique-ips">0</div>
+            </div>
+            <div class="glass-panel p-4">
+                <div class="text-sm text-gray-400">Baselines</div>
+                <div class="text-2xl font-bold" id="total-baselines">0</div>
+            </div>
+        </div>
+
+        <!-- Volume Chart -->
+        <div class="glass-panel p-4 mb-6">
+            <h2 class="text-xl font-bold neon-text mb-4">Event Volume Timeline</h2>
+            <canvas id="volume-chart" height="200"></canvas>
+        </div>
+
+        <!-- Anomalies Table -->
+        <div class="glass-panel p-4">
+            <h2 class="text-xl font-bold neon-text mb-4">Recent Anomalies</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="text-gray-400 border-b border-gray-700">
+                            <th class="pb-2">Time</th>
+                            <th class="pb-2">Type</th>
+                            <th class="pb-2">Severity</th>
+                            <th class="pb-2">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="anomalies-table">
+                        <tr><td colspan="4" class="text-center text-gray-500 py-4">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Dashboard state
+        let volumeChart = null;
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            initVolumeChart();
+            loadDashboardData();
+            setInterval(loadDashboardData, 5000); // Refresh every 5 seconds
+        });
+
+        function initVolumeChart() {
+            const ctx = document.getElementById('volume-chart').getContext('2d');
+            volumeChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Events/minute',
+                        data: [],
+                        borderColor: '#00ffff',
+                        backgroundColor: 'rgba(0, 255, 255, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { 
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        },
+                        y: { 
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('/api/dashboard');
+                const data = await response.json();
+
+                // Update stats
+                document.getElementById('total-events').textContent = data.total_events.toLocaleString();
+                document.getElementById('total-anomalies').textContent = data.total_anomalies.toLocaleString();
+                document.getElementById('unique-ips').textContent = data.unique_ips.toLocaleString();
+                document.getElementById('total-baselines').textContent = data.total_baselines.toLocaleString();
+                document.getElementById('event-count').textContent = data.total_events.toLocaleString();
+
+                // Update volume chart
+                if (data.volume_history) {
+                    volumeChart.data.labels = data.volume_history.map(v => v.time);
+                    volumeChart.data.datasets[0].data = data.volume_history.map(v => v.count);
+                    volumeChart.update();
+                }
+
+                // Update anomalies table
+                updateAnomaliesTable(data.anomalies);
+            } catch (error) {
+                console.error('Failed to load dashboard data:', error);
+            }
+        }
+
+        function updateAnomaliesTable(anomalies) {
+            const tbody = document.getElementById('anomalies-table');
+            if (!anomalies || anomalies.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-500 py-4">No anomalies detected</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = anomalies.map(a => `
+                <tr class="border-b border-gray-800 hover:bg-gray-800/50">
+                    <td class="py-2">${a.timestamp}</td>
+                    <td class="py-2">${a.type}</td>
+                    <td class="py-2 threat-${a.severity.toLowerCase()}">${a.severity}</td>
+                    <td class="py-2">${a.description}</td>
+                </tr>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
