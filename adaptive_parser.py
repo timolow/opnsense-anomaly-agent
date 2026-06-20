@@ -101,6 +101,10 @@ class AdaptiveParser:
         if not raw_line:
             return None
         
+        # Skip syslog-ng internal statistics messages (noise)
+        if 'Log statistics' in raw_line or "processed='" in raw_line:
+            return None
+        
         # Step 1: Extract syslog header
         header = self._parse_header(raw_line)
         if not header:
