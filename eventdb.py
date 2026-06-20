@@ -135,12 +135,12 @@ CREATE TABLE IF NOT EXISTS rule_baselines (
 CREATE TABLE IF NOT EXISTS rule_temporal_patterns (
     id SERIAL PRIMARY KEY,
     rule_name TEXT NOT NULL UNIQUE,
-    hour_distribution JSONB DEFAULT '{}',  -- {hour: percentage}
+    hour_distribution JSONB DEFAULT '{}',
     total_samples INTEGER DEFAULT 0,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-|-- Indexes for self-learning tables
+-- Indexes for self-learning tables
 CREATE INDEX IF NOT EXISTS idx_rule_feedback_rule_name ON rule_feedback(rule_name);
 CREATE INDEX IF NOT EXISTS idx_rule_feedback_timestamp ON rule_feedback(timestamp);
 CREATE INDEX IF NOT EXISTS idx_rule_feedback_label ON rule_feedback(label);
@@ -151,22 +151,22 @@ CREATE TABLE IF NOT EXISTS nginx_events (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
     src_ip TEXT,
-    method TEXT,              -- GET, POST, PUT, DELETE, etc.
-    path TEXT,                -- URL path requested
-    status_code INTEGER,      -- HTTP status code (200, 404, 403, etc.)
-    bytes_sent INTEGER,       -- Response size
-    request TEXT,             -- Full request string
-    user_agent TEXT,          -- Browser/client identifier
+    method TEXT,
+    path TEXT,
+    status_code INTEGER,
+    bytes_sent INTEGER,
+    request TEXT,
+    user_agent TEXT,
     raw_message TEXT,
     ingested_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Nginx anomalies table: web-specific attack detections
+-- Nginx anomalies table
 CREATE TABLE IF NOT EXISTS nginx_anomalies (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
-    attack_type TEXT NOT NULL,  -- PATH_TRAVERSAL, BRUTE_FORCE, DDOS, SCAN, INVALID_UA
-    severity TEXT NOT NULL,     -- LOW, MEDIUM, HIGH, CRITICAL
+    attack_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
     src_ip TEXT,
     path TEXT,
     status_code INTEGER,
