@@ -3,6 +3,27 @@
 import json
 from collections import defaultdict
 
+# Whitelisted internal IPs and ranges (never alert on these)
+INTERNAL_IP_PREFIXES = [
+    "127.",              # localhost
+    "192.168.1.",        # OPNsense LAN
+    "192.168.222.",      # OPNsense OPT1
+    "192.168.255.",      # OPNsense OPT2
+    "10.1.1.",           # VPN LAN
+    "10.1.2.",           # VPN OPT
+    "fe80::",            # IPv6 link-local
+    "ff02::",            # IPv6 multicast
+]
+
+def is_internal_ip(ip: str) -> bool:
+    """Check if an IP is whitelisted as internal."""
+    if not ip:
+        return True  # Empty IPs are internal/noise
+    for prefix in INTERNAL_IP_PREFIXES:
+        if ip.startswith(prefix):
+            return True
+    return False
+
 def main():
     from eventdb import EventDatabase
     db = EventDatabase()
@@ -128,7 +149,7 @@ def main():
 
     known_ips = set(b["ip"] for b in baselines.values() if b["ip"])
     new_ips = [(ip, cnt) for ip, cnt in ip_counts.items()
-               if ip not in known_ips and cnt > 3 and ip not in ("", None)]
+               if ip not in known_ips and cnt > 3 and not is_internal_ip(ip)]
     new_ips.sort(key=lambda x: -x[1])
 
     if new_ips:
