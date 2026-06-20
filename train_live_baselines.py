@@ -12,9 +12,10 @@ def main():
     # Get recent events (last 7 days for training)
     print("Training baselines from live events...")
     cur.execute("""
-        SELECT rule_name, src_ip, dst_ip, src_port, dst_port, proto, action, timestamp
+        SELECT rule_name, proto, action, timestamp
         FROM events
         WHERE timestamp > NOW() - INTERVAL '7 days'
+          AND rule_name IS NOT NULL
         ORDER BY timestamp ASC
     """)
     events = cur.fetchall()
@@ -23,9 +24,7 @@ def main():
     # Group by rule
     rule_events = defaultdict(list)
     for e in events:
-        rule = e[0] or ""
-        if rule:
-            rule_events[rule].append(e)
+        rule_events[e[0]].append(e)
 
     print(f"Rules to train: {len(rule_events)}")
 
@@ -38,43 +37,24 @@ def main():
         # Calculate metrics
         hours = defaultdict(int)
         proto_counts = defaultdict(int)
-        dst_ports = set()
-        src_ports = set()
-        dst_ips = set()
         blocks = 0
 
         for e in evts:
-            ts = e[7]  # timestamp
-            if ts:
-                hours[ts.hour] += 1
-            if e[5]:  # proto
-                proto_counts[e[5]] += 1
-            if e[4]:  # dst_port
-                dst_ports.add(e[4])
-            if e[3]:  # src_port
-                src_ports.add(e[3])
-            if e[2]:  # dst_ip
-                dst_ips.add(e[2])
-            if e[6] == "block":
+            if e[3]:  # timestamp
+                hours[e[3].hour] += 1
+            if e[1]:  # proto
+                proto_counts[e[1]] += 1
+            if e[2] == "block":
                 blocks += 1
 
         total = len(evts)
-        avg_dst = len(dst_ports)
-        avg_src = len(src_ports)
-        avg_dst_ips = len(dst_ips)
-        pass_r = (total - blocks) / total if total > 0 else 0
-        block_r = blocks / total if total > 0 else 0
+        avg = total / 7  # per day
+        std = avg * 0.5  # estimate
+        pass_r = (total - blocks) / total
+        block_r = blocks / total
 
-        # Protocol distribution
-        proto_dist = {}
-        for p, c in proto_counts.items():
-            proto_dist[p] = c / total
-
-        # Hourly distribution
-        hourly_dist = [hours.get(h, 0) for h in range(24)]
-        max_h = max(hourly_dist) if hourly_dist else 0
-        min_h = min(hourly_dist) if hourly_dist else 0
-        avg_h = total / 24 if total > 0 else 0
+        proto_dist = {k: v/total for k, v in proto_counts.items()}
+        hourly_dist = [hours.get(i, 0) for i in range(24)]
 
         # Save to DB
         cur.execute("""
@@ -82,38 +62,29 @@ def main():
                                       max_events_per_hour, min_events_per_hour, protocol_distribution,
                                       avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio,
                                       block_ratio, hourly_distribution, sample_count, last_updated)
-            VALUES (%s, NULL, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            VALUES (%s, NULL, NULL, %s, %s, %s, %s, %s, 0, 0, 0, %s, %s, %s, %s, NOW())
             ON CONFLICT (rule, ip, hour) DO UPDATE SET
                 avg_events_per_hour = EXCLUDED.avg_events_per_hour,
                 std_events_per_hour = EXCLUDED.std_events_per_hour,
                 max_events_per_hour = EXCLUDED.max_events_per_hour,
                 min_events_per_hour = EXCLUDED.min_events_per_hour,
                 protocol_distribution = EXCLUDED.protocol_distribution,
-                avg_dst_ports = EXCLUDED.avg_dst_ports,
-                avg_src_ports = EXCLUDED.avg_src_ports,
-                avg_unique_dst_ips = EXCLUDED.avg_unique_dst_ips,
                 pass_ratio = EXCLUDED.pass_ratio,
                 block_ratio = EXCLUDED.block_ratio,
                 hourly_distribution = EXCLUDED.hourly_distribution,
-                sample_count = EXCLUDED.sample_count,
-                last_updated = NOW()
+                sample_count = EXCLUDED.sample_count
         """, (
             rule,
-            avg_h,
-            avg_h * 0.5,  # std estimate
-            max_h,
-            min_h,
+            avg, std,
+            max(hourly_dist) if hourly_dist else 0,
+            min(hourly_dist) if hourly_dist else 0,
             proto_dist,
-            avg_dst,
-            avg_src,
-            avg_dst_ips,
-            pass_r,
-            block_r,
-            hourly_dist,
+            pass_r, block_r,
+            json.dumps(hourly_dist),
             total
         ))
         saved += 1
-        print(f"  Rule {rule}: {total} events | avg={avg_h:.0f}/hr std={avg_h*0.5:.0f} | "
+        print(f"  Rule {rule}: {total} events | avg={avg:.0f}/day std={std:.0f} | "
               f"pass={pass_r:.0%} block={block_r:.0%}")
 
     cur.execute("COMMIT")
