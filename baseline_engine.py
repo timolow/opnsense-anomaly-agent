@@ -91,13 +91,13 @@ class BaselineEngine:
                     std_events_per_hour=row[4] or 0,
                     max_events_per_hour=row[5] or 0,
                     min_events_per_hour=row[6] or 0,
-                    protocol_distribution=json.loads(row[7]) if row[7] else {},
+                    protocol_distribution=row[7] if isinstance(row[7], dict) else (json.loads(row[7]) if row[7] else {}),
                     avg_dst_ports=row[8] or 0,
                     avg_src_ports=row[9] or 0,
                     avg_unique_dst_ips=row[10] or 0,
                     pass_ratio=row[11] or 0,
                     block_ratio=row[12] or 0,
-                    hourly_distribution=json.loads(row[13]) if row[13] else [],
+                    hourly_distribution=row[13] if isinstance(row[13], list) else (json.loads(row[13]) if row[13] else []),
                     sample_count=row[14] or 0,
                     last_updated=datetime.fromisoformat(row[15]) if row[15] else None
                 )
