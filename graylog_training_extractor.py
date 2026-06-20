@@ -31,7 +31,9 @@ DEFAULT_ES_HOSTS = [
     "http://192.168.1.35:9200"
 ]
 DEFAULT_ES_USER = "elastic"
-DEFAULT_ES_PASSWORD=*** ── Index patterns by data type
+DEFAULT_ES_PASSWORD="changeme"
+
+# Index patterns by data type
 INDEX_PATTERNS = {
     "firewall": "opnsense_filterlog-*",
     "http": "http-*",
