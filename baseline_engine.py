@@ -99,7 +99,7 @@ class BaselineEngine:
                     block_ratio=row[12] or 0,
                     hourly_distribution=(row[13] if isinstance(row[13], list) else (json.loads(row[13]) if isinstance(row[13], str) else [])),
                     sample_count=row[14] or 0,
-                    last_updated=datetime.fromisoformat(row[15]) if row[15] else None
+                    last_updated=row[15] if row[15] else None
                 )
             cur.close()
         except Exception as e:
