@@ -185,6 +185,49 @@ CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_attack_type ON nginx_anomalies(at
 CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_severity ON nginx_anomalies(severity);
 CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_created_at ON nginx_anomalies(created_at);
 CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_src_ip ON nginx_anomalies(src_ip) WHERE src_ip IS NOT NULL;
+
+-- Rule baselines table: learned traffic patterns per rule
+CREATE TABLE IF NOT EXISTS rule_baselines (
+    id SERIAL PRIMARY KEY,
+    rule TEXT NOT NULL,
+    ip TEXT,
+    hour INTEGER,
+    avg_events_per_hour DOUBLE PRECISION DEFAULT 0,
+    std_events_per_hour DOUBLE PRECISION DEFAULT 0,
+    max_events_per_hour INTEGER DEFAULT 0,
+    min_events_per_hour INTEGER DEFAULT 0,
+    protocol_distribution JSONB DEFAULT '{}',
+    avg_dst_ports DOUBLE PRECISION DEFAULT 0,
+    avg_src_ports DOUBLE PRECISION DEFAULT 0,
+    avg_unique_dst_ips DOUBLE PRECISION DEFAULT 0,
+    pass_ratio DOUBLE PRECISION DEFAULT 0,
+    block_ratio DOUBLE PRECISION DEFAULT 0,
+    hourly_distribution JSONB DEFAULT '[]',
+    sample_count INTEGER DEFAULT 0,
+    last_updated TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- IP threat profiles table: unified threat scores per IP
+CREATE TABLE IF NOT EXISTS ip_threat_profiles (
+    id SERIAL PRIMARY KEY,
+    ip TEXT NOT NULL UNIQUE,
+    unified_score DOUBLE PRECISION DEFAULT 0,
+    total_events INTEGER DEFAULT 0,
+    firewall_events INTEGER DEFAULT 0,
+    http_events INTEGER DEFAULT 0,
+    ids_events INTEGER DEFAULT 0,
+    zenarmor_events INTEGER DEFAULT 0,
+    nginx_events INTEGER DEFAULT 0,
+    baseline_deviations JSONB DEFAULT '[]',
+    geo_info JSONB,
+    first_seen TIMESTAMPTZ,
+    last_seen TIMESTAMPTZ
+);
+
+-- Indexes for baseline tables
+CREATE INDEX IF NOT EXISTS idx_rule_baselines_rule ON rule_baselines(rule);
+CREATE INDEX IF NOT EXISTS idx_rule_baselines_ip ON rule_baselines(ip) WHERE ip IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ip_threat_profiles_score ON ip_threat_profiles(unified_score DESC);
 """
 
 
