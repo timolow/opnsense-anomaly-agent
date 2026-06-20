@@ -34,23 +34,33 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install playwright psycopg2-binary
-          npx playwright install chromium
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
 
-      - name: Build test Docker image
+      - name: Run unit tests (adaptive_parser)
         run: |
-          cd tests
-          docker compose -f docker-compose.test.yml build test-agent
+          python -m pytest tests/test_adaptive_parser.py -v --tb=short
 
-      - name: Run E2E tests
+      - name: Run unit tests (reverse_dns)
         run: |
-          cd tests
-          python3 test_e2e_pipeline.py
-        env:
-          DEMO_MODE: "true"
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          OPN_API_KEY: ${{ secrets.OPN_API_KEY }}
-          OPN_API_SECRET: ${{ secrets.OPN_API_SECRET }}
+          python -m pytest tests/test_reverse_dns.py -v --tb=short
+
+      - name: Run unit tests (ml_learning)
+        run: |
+          python -m pytest tests/test_ml_learning.py -v --tb=short
+
+      - name: Run unit tests (rule_classify)
+        run: |
+          python -m pytest tests/test_rule_classify.py -v --tb=short
+
+      - name: Run unit tests (statistical_model)
+        run: |
+          python -m pytest tests/test_statistical_model.py -v --tb=short
+
+      - name: Run integration tests (full pipeline + embeds)
+        run: |
+          python -m pytest tests/test_integration.py -v --tb=short
 
       - name: Upload test results
         if: always()
