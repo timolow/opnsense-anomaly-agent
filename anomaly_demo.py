@@ -121,13 +121,14 @@ def main():
     else:
         print("No port scan patterns detected")
 
-    # 3. New IP detection
+    # 3. New IP detection (skip internal IPs)
     print("\n" + "-" * 80)
-    print("NEW IP DETECTION")
+    print("NEW IP DETECTION (external only)")
     print("-" * 80)
 
     known_ips = set(b["ip"] for b in baselines.values() if b["ip"])
-    new_ips = [(ip, cnt) for ip, cnt in ip_counts.items() if ip not in known_ips and cnt > 3]
+    new_ips = [(ip, cnt) for ip, cnt in ip_counts.items()
+               if ip not in known_ips and cnt > 3 and ip not in ("", None)]
     new_ips.sort(key=lambda x: -x[1])
 
     if new_ips:

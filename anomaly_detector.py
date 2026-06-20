@@ -15,6 +15,27 @@ NEW_IP_MIN = 5           # events from new IP to alert
 PROTOCOL_SHIFT = 0.15    # 15% protocol shift threshold
 TEMPORAL_ZSCORE = 2.0    # z-score for temporal anomalies
 
+# Whitelisted internal IPs and ranges (never alert on these)
+INTERNAL_IP_PREFIXES = [
+    "127.",              # localhost
+    "192.168.1.",        # OPNsense LAN
+    "192.168.222.",      # OPNsense OPT1
+    "192.168.255.",      # OPNsense OPT2
+    "10.1.1.",           # VPN LAN
+    "10.1.2.",           # VPN OPT
+    "fe80::",            # IPv6 link-local
+    "ff02::",            # IPv6 multicast
+]
+
+def is_internal_ip(ip: str) -> bool:
+    """Check if an IP is whitelisted as internal."""
+    if not ip:
+        return True  # Empty IPs are internal/noise
+    for prefix in INTERNAL_IP_PREFIXES:
+        if ip.startswith(prefix):
+            return True
+    return False
+
 
 class AnomalyDetector:
     """Detects anomalies by comparing events against learned baselines."""
@@ -63,6 +84,9 @@ class AnomalyDetector:
 
     def check_new_ip(self, ip: str, count: int) -> Optional[Dict]:
         """Check for IPs without baselines."""
+        # Skip internal/whitelisted IPs
+        if is_internal_ip(ip):
+            return None
         if count < NEW_IP_MIN:
             return None
         # Check if IP has any baseline (handle both dict and TrafficBaseline)
@@ -80,7 +104,7 @@ class AnomalyDetector:
             return {
                 "type": "new_ip", "severity": "MEDIUM", "rule": "any",
                 "src_ip": ip, "event_count": count,
-                "description": f"New IP {ip} with {count} events (no baseline)"
+                "description": f"New external IP {ip} with {count} events (no baseline)"
             }
         return None
 
