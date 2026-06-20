@@ -1265,6 +1265,175 @@ def query_ids_anomalies():
         return []
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Nginx query helpers
+# ──────────────────────────────────────────────────────────────────────
+
+def query_nginx_summary():
+    """Return nginx traffic summary from DB."""
+    conn = get_db()
+    if not conn:
+        return {
+            'total_requests': 0, 'by_method': {}, 'by_status': {},
+            'status_ok': 0, 'status_client_err': 0, 'status_server_err': 0,
+            'unique_ips': 0, 'top_ips': [], 'top_paths': [],
+            'not_found_404': 0, 'anomalies_by_type': {},
+        }
+    try:
+        cur = conn.cursor()
+        cutoff = datetime.now(timezone.utc).isoformat()
+        
+        # Total requests
+        cur.execute(
+            "SELECT COUNT(*) FROM nginx_events WHERE timestamp > %s",
+            (cutoff,)
+        )
+        total_requests = cur.fetchone()[0]
+        
+        # By method
+        cur.execute(
+            "SELECT method, COUNT(*) FROM nginx_events WHERE timestamp > %s AND method IS NOT NULL GROUP BY method ORDER BY COUNT(*) DESC",
+            (cutoff,)
+        )
+        by_method = {r[0]: r[1] for r in cur.fetchall()}
+        
+        # By status code
+        cur.execute(
+            "SELECT status_code, COUNT(*) FROM nginx_events WHERE timestamp > %s AND status_code IS NOT NULL GROUP BY status_code ORDER BY COUNT(*) DESC",
+            (cutoff,)
+        )
+        by_status = {str(r[0]): r[1] for r in cur.fetchall()}
+        
+        # Status categories
+        cur.execute(
+            "SELECT COUNT(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 END), COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END), COUNT(CASE WHEN status_code >= 500 THEN 1 END) FROM nginx_events WHERE timestamp > %s",
+            (cutoff,)
+        )
+        ok, client_err, server_err = cur.fetchone()
+        
+        # Unique IPs
+        cur.execute(
+            "SELECT COUNT(DISTINCT src_ip) FROM nginx_events WHERE timestamp > %s AND src_ip IS NOT NULL",
+            (cutoff,)
+        )
+        unique_ips = cur.fetchone()[0]
+        
+        # Top IPs
+        cur.execute(
+            "SELECT src_ip, COUNT(*) FROM nginx_events WHERE timestamp > %s AND src_ip IS NOT NULL GROUP BY src_ip ORDER BY COUNT(*) DESC LIMIT 10",
+            (cutoff,)
+        )
+        top_ips = [{"ip": r[0], "requests": r[1]} for r in cur.fetchall()]
+        
+        # Top paths
+        cur.execute(
+            "SELECT path, COUNT(*) FROM nginx_events WHERE timestamp > %s AND path IS NOT NULL GROUP BY path ORDER BY COUNT(*) DESC LIMIT 10",
+            (cutoff,)
+        )
+        top_paths = [{"path": r[0], "requests": r[1]} for r in cur.fetchall()]
+        
+        # 404s
+        cur.execute(
+            "SELECT COUNT(*) FROM nginx_events WHERE timestamp > %s AND status_code = 404",
+            (cutoff,)
+        )
+        not_found = cur.fetchone()[0]
+        
+        # Anomalies by type
+        cur.execute(
+            "SELECT attack_type, severity, COUNT(*) FROM nginx_anomalies WHERE created_at > %s GROUP BY attack_type, severity ORDER BY COUNT(*) DESC",
+            (cutoff,)
+        )
+        anomalies_by_type = {}
+        for at, sev, cnt in cur.fetchall():
+            if at not in anomalies_by_type:
+                anomalies_by_type[at] = {}
+            anomalies_by_type[at][sev] = cnt
+        
+        return {
+            'total_requests': total_requests,
+            'by_method': by_method,
+            'by_status': by_status,
+            'status_ok': ok or 0,
+            'status_client_err': client_err or 0,
+            'status_server_err': server_err or 0,
+            'unique_ips': unique_ips,
+            'top_ips': top_ips,
+            'top_paths': top_paths,
+            'not_found_404': not_found,
+            'anomalies_by_type': anomalies_by_type,
+        }
+    except Exception as e:
+        close_db(conn)
+        return {'total_requests': 0, 'error': str(e)}
+    finally:
+        close_db(conn)
+
+
+def query_nginx_anomalies():
+    """Return recent nginx anomalies."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT timestamp, attack_type, severity, src_ip, path, status_code, description, detail
+            FROM nginx_anomalies
+            ORDER BY created_at DESC LIMIT 100
+        """)
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        close_db(conn)
+        return []
+    finally:
+        close_db(conn)
+
+
+def query_nginx_top_paths():
+    """Return top requested paths."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT path, COUNT(*) as cnt, 
+                   COUNT(CASE WHEN status_code >= 400 THEN 1 END) as errors
+            FROM nginx_events 
+            WHERE path IS NOT NULL
+            GROUP BY path ORDER BY cnt DESC LIMIT 20
+        """)
+        return [{"path": r[0], "requests": r[1], "errors": r[2]} for r in cur.fetchall()]
+    except Exception as e:
+        close_db(conn)
+        return []
+    finally:
+        close_db(conn)
+
+
+def query_nginx_timeline(hours=24):
+    """Return nginx request counts by hour for timeline chart."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT date_trunc('hour', timestamp)::text as hour, COUNT(*) as count
+            FROM nginx_events 
+            WHERE timestamp > NOW() - INTERVAL '%s hours'
+            GROUP BY hour ORDER BY hour ASC
+        """, (hours,))
+        return [{"hour": r[0], "requests": r[1]} for r in cur.fetchall()]
+    except Exception as e:
+        close_db(conn)
+        return []
+    finally:
+        close_db(conn)
+
+
 # Request Handler
 class DashboardHandler(BaseHTTPRequestHandler):
     def _send_json(self, data, code=200):
@@ -1477,6 +1646,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_ids_events(limit=limit, offset=offset))
             elif path == "/api/ids-anomalies":
                 self._send_json(query_ids_anomalies())
+            # ═══════════════════════════════════════════════
+            # Nginx web server monitoring
+            # ═══════════════════════════════════════════════
+            elif path == "/api/nginx-summary":
+                self._send_json(query_nginx_summary())
+            elif path == "/api/nginx-anomalies":
+                self._send_json(query_nginx_anomalies())
+            elif path == "/api/nginx-top-paths":
+                self._send_json(query_nginx_top_paths())
+            elif path == "/api/nginx-timeline":
+                self._send_json(query_nginx_timeline())
             elif path == "/api/wan-flap":
                 self._send_json(query_wan_flap())
             elif path == "/api/wan-flap-status":

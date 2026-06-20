@@ -10,6 +10,7 @@ import type {
   PfelkTrafficFlow, PfelkProtocolDistribution, PfelkActionDistribution,
   PfelkTimeline, PfelkBlockedIps, PfelkTopPorts, PfelkRuleHeatmap,
   PfelkDirectionDistribution, PfelkRuleActionBreakdown,
+  NginxSummary, NginxAnomaly,
 } from './types';
 
 const BASE = '/api';
@@ -471,4 +472,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     }),
+
+  // ── Nginx web server monitoring ──
+  getNginxSummary: () => json<NginxSummary>('/nginx-summary'),
+  getNginxAnomalies: () => json<NginxAnomaly[]>('/nginx-anomalies'),
+  getNginxTopPaths: () => json<any[]>('/nginx-top-paths'),
+  getNginxTimeline: () => json<any[]>('/nginx-timeline'),
 };
