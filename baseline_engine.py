@@ -4,18 +4,6 @@ Baseline Engine for OPNsense Anomaly Detection
 
 Learns traffic baselines from historical data (Graylog training data + live events).
 Tracks per-rule, per-IP, per-time-of-day patterns to establish what is "normal".
-
-Architecture:
-- Ingests historical firewall/HTTP/alert events
-- Builds statistical baselines per rule, IP, and time period
-- Provides baseline queries to threat engine for anomaly scoring
-- Updates baselines incrementally as new data arrives
-
-Usage:
-    from baseline_engine import BaselineEngine
-    engine = BaselineEngine(db_connection)
-    engine.learn_from_training_data(training_events)
-    baseline = engine.get_baseline(rule_name, ip=None, hour=None)
 """
 
 import json
@@ -28,7 +16,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# ── Configuration ──
+# Configuration
 HOURS_IN_DAY = 24
 BASELINE_WINDOW_HOURS = 24
 MIN_EVENTS_FOR_BASELINE = 10
@@ -83,7 +71,9 @@ class BaselineEngine:
     def _load_baselines(self):
         """Load existing baselines from database."""
         try:
-            cursor = self.db.execute("""
+            conn = self.db.connect()
+            cur = conn.cursor()
+            cur.execute("""
                 SELECT rule, ip, hour, avg_events_per_hour, std_events_per_hour,
                        max_events_per_hour, min_events_per_hour, protocol_distribution,
                        avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio, 
@@ -91,7 +81,7 @@ class BaselineEngine:
                 FROM rule_baselines
             """)
             
-            for row in cursor.fetchall():
+            for row in cur.fetchall():
                 key = self._make_baseline_key(row[0], row[1], row[2])
                 self._baselines[key] = TrafficBaseline(
                     rule=row[0],
@@ -111,6 +101,7 @@ class BaselineEngine:
                     sample_count=row[14] or 0,
                     last_updated=datetime.fromisoformat(row[15]) if row[15] else None
                 )
+            cur.close()
         except Exception as e:
             logger.error(f"Failed to load baselines: {e}")
     
@@ -337,34 +328,79 @@ class BaselineEngine:
     
     def save_baselines(self):
         """Save baselines to database."""
-        for key, baseline in self._baselines.items():
-            try:
-                self.db.execute("""
-                    INSERT OR REPLACE INTO rule_baselines 
-                    (rule, ip, hour, avg_events_per_hour, std_events_per_hour,
-                     max_events_per_hour, min_events_per_hour, protocol_distribution,
-                     avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio, 
-                     block_ratio, hourly_distribution, sample_count, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    baseline.rule,
-                    baseline.ip,
-                    baseline.hour,
-                    baseline.avg_events_per_hour,
-                    baseline.std_events_per_hour,
-                    baseline.max_events_per_hour,
-                    baseline.min_events_per_hour,
-                    json.dumps(baseline.protocol_distribution),
-                    baseline.avg_dst_ports,
-                    baseline.avg_src_ports,
-                    baseline.avg_unique_dst_ips,
-                    baseline.pass_ratio,
-                    baseline.block_ratio,
-                    json.dumps(baseline.hourly_distribution),
-                    baseline.sample_count,
-                    baseline.last_updated.isoformat() if baseline.last_updated else None
-                ))
-            except Exception as e:
-                logger.error(f"Failed to save baseline for {baseline.rule}: {e}")
-        
-        self.db.commit()
+        try:
+            conn = self.db.connect()
+            cur = conn.cursor()
+            
+            # Create table if not exists
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS rule_baselines (
+                    id SERIAL PRIMARY KEY,
+                    rule TEXT NOT NULL,
+                    ip TEXT,
+                    hour INTEGER,
+                    avg_events_per_hour DOUBLE PRECISION,
+                    std_events_per_hour DOUBLE PRECISION,
+                    max_events_per_hour INTEGER,
+                    min_events_per_hour INTEGER,
+                    protocol_distribution JSONB,
+                    avg_dst_ports DOUBLE PRECISION,
+                    avg_src_ports DOUBLE PRECISION,
+                    avg_unique_dst_ips DOUBLE PRECISION,
+                    pass_ratio DOUBLE PRECISION,
+                    block_ratio DOUBLE PRECISION,
+                    hourly_distribution JSONB,
+                    sample_count INTEGER,
+                    last_updated TIMESTAMPTZ,
+                    UNIQUE(rule, ip, hour)
+                )
+            """)
+            
+            for key, baseline in self._baselines.items():
+                try:
+                    cur.execute("""
+                        INSERT INTO rule_baselines 
+                        (rule, ip, hour, avg_events_per_hour, std_events_per_hour,
+                         max_events_per_hour, min_events_per_hour, protocol_distribution,
+                         avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio, 
+                         block_ratio, hourly_distribution, sample_count, last_updated)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (rule, ip, hour) DO UPDATE SET
+                            avg_events_per_hour = EXCLUDED.avg_events_per_hour,
+                            std_events_per_hour = EXCLUDED.std_events_per_hour,
+                            max_events_per_hour = EXCLUDED.max_events_per_hour,
+                            min_events_per_hour = EXCLUDED.min_events_per_hour,
+                            protocol_distribution = EXCLUDED.protocol_distribution,
+                            avg_dst_ports = EXCLUDED.avg_dst_ports,
+                            avg_src_ports = EXCLUDED.avg_src_ports,
+                            avg_unique_dst_ips = EXCLUDED.avg_unique_dst_ips,
+                            pass_ratio = EXCLUDED.pass_ratio,
+                            block_ratio = EXCLUDED.block_ratio,
+                            hourly_distribution = EXCLUDED.hourly_distribution,
+                            sample_count = EXCLUDED.sample_count,
+                            last_updated = EXCLUDED.last_updated
+                    """, (
+                        baseline.rule,
+                        baseline.ip,
+                        baseline.hour,
+                        baseline.avg_events_per_hour,
+                        baseline.std_events_per_hour,
+                        baseline.max_events_per_hour,
+                        baseline.min_events_per_hour,
+                        json.dumps(baseline.protocol_distribution),
+                        baseline.avg_dst_ports,
+                        baseline.avg_src_ports,
+                        baseline.avg_unique_dst_ips,
+                        baseline.pass_ratio,
+                        baseline.block_ratio,
+                        json.dumps(baseline.hourly_distribution),
+                        baseline.sample_count,
+                        baseline.last_updated
+                    ))
+                except Exception as e:
+                    logger.error(f"Failed to save baseline for {baseline.rule}: {e}")
+            
+            cur.close()
+            logger.info(f"Saved {len(self._baselines)} baselines to database")
+        except Exception as e:
+            logger.error(f"Failed to save baselines: {e}")
