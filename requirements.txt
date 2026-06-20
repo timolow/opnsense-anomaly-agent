@@ -18,8 +18,6 @@ discord.py>=2.0.0
 # Apprise notifications
 apprise>=1.5.0
 
-# Elasticsearch (pfelk integration)
-elasticsearch>=8.0.0
 
 # Web server (dashboard)
 flask>=2.3.0

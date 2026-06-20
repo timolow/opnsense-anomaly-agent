@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_PFELK_HOST?: string;
+  readonly VITE__HOST?: string;
 }
 
 interface ImportMeta {

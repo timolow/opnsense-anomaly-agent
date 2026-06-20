@@ -111,9 +111,9 @@ export default function SettingsTab() {
         <Save size={14} /> Save Settings
       </button>
 
-      {/* pfelk Settings */}
+      {/*  Settings */}
       <div className="cyber-card p-4 scanlines">
-        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">pfelk Integration</h3>
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4"> Integration</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-xs text-cyber-textMuted block mb-1">Elasticsearch Host</label>
@@ -127,7 +127,7 @@ export default function SettingsTab() {
             <label className="text-xs text-cyber-textMuted block mb-1">Index Pattern</label>
             <input
               type="text"
-              value="pfelk-firewall-*"
+              value="-firewall-*"
               disabled
               className="cyber-input font-mono text-xs bg-cyber-darker text-cyber-textMuted"
             />

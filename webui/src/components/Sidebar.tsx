@@ -30,7 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
     name: 'Analytics',
     icon: <Flame size={16} />,
     items: [
-      { id: 'pfelk', label: 'PFELK Analytics', icon: <Flame size={14} /> },
+      { id: '', label: ' Analytics', icon: <Flame size={14} /> },
       { id: 'heatmap', label: 'Heatmap', icon: <Flame size={14} /> },
       { id: 'flows', label: 'Flow Map', icon: <GitMerge size={14} /> },
       { id: 'ipflow', label: 'IP Flow', icon: <Network size={14} /> },

@@ -4,12 +4,12 @@
 
 import { useState } from 'react';
 import { Database, Search, Filter } from 'lucide-react';
-import type { PfelkEvent } from '@/types';
+import type { Event } from '@/types';
 
 export default function LogsQueryTab() {
   const [srcIp, setSrcIp] = useState('');
   const [days, setDays] = useState('7');
-  const [results, setResults] = useState<PfelkEvent[]>([]);
+  const [results, setResults] = useState<Event[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -19,7 +19,7 @@ export default function LogsQueryTab() {
     setResults([]);
     
     try {
-      const res = await fetch('/api/pfelk/events', {
+      const res = await fetch('/api//events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
