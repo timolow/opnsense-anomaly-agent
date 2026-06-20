@@ -35,7 +35,7 @@ DEFAULT_ES_PASSWORD="changeme"
 
 # Index patterns by data type
 INDEX_PATTERNS = {
-    "firewall": "opnsense_filterlog-*",
+    "firewall": "opnsense_filterlog_*",
     "http": "http-*",
     "connections": "conn-*",
     "alerts": "alert-*",
