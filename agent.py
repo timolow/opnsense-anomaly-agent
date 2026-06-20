@@ -1033,7 +1033,18 @@ class OPNsenseAgent:
                                 logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
                                 # Save anomaly to database
                                 try:
-                                    self.db.insert_anomaly(anomaly)
+                                    # Map anomaly detector output to database schema
+                                    db_anomaly = {
+                                        "attack_type": anomaly.get("type", "unknown"),
+                                        "severity": anomaly.get("severity", "MEDIUM"),
+                                        "src_ip": anomaly.get("src_ip"),
+                                        "dst_ip": anomaly.get("dst_ip"),
+                                        "dst_port": anomaly.get("dst_port"),
+                                        "proto": anomaly.get("proto"),
+                                        "description": anomaly.get("description", ""),
+                                        "detail": {k: v for k, v in anomaly.items() if k not in ("attack_type", "severity", "src_ip", "dst_ip", "dst_port", "proto", "description")}
+                                    }
+                                    self.db.insert_anomaly(db_anomaly)
                                 except Exception as e:
                                     logger.warning("Failed to save anomaly to DB: %s", e)
                                 self.discord_bot.send_alert(anomaly)
