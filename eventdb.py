@@ -140,11 +140,51 @@ CREATE TABLE IF NOT EXISTS rule_temporal_patterns (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for self-learning tables
+|-- Indexes for self-learning tables
 CREATE INDEX IF NOT EXISTS idx_rule_feedback_rule_name ON rule_feedback(rule_name);
 CREATE INDEX IF NOT EXISTS idx_rule_feedback_timestamp ON rule_feedback(timestamp);
 CREATE INDEX IF NOT EXISTS idx_rule_feedback_label ON rule_feedback(label);
 CREATE INDEX IF NOT EXISTS idx_rule_temporal_patterns_rule_name ON rule_temporal_patterns(rule_name);
+
+-- Nginx web server events table
+CREATE TABLE IF NOT EXISTS nginx_events (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL,
+    src_ip TEXT,
+    method TEXT,              -- GET, POST, PUT, DELETE, etc.
+    path TEXT,                -- URL path requested
+    status_code INTEGER,      -- HTTP status code (200, 404, 403, etc.)
+    bytes_sent INTEGER,       -- Response size
+    request TEXT,             -- Full request string
+    user_agent TEXT,          -- Browser/client identifier
+    raw_message TEXT,
+    ingested_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Nginx anomalies table: web-specific attack detections
+CREATE TABLE IF NOT EXISTS nginx_anomalies (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL,
+    attack_type TEXT NOT NULL,  -- PATH_TRAVERSAL, BRUTE_FORCE, DDOS, SCAN, INVALID_UA
+    severity TEXT NOT NULL,     -- LOW, MEDIUM, HIGH, CRITICAL
+    src_ip TEXT,
+    path TEXT,
+    status_code INTEGER,
+    description TEXT,
+    detail JSONB,
+    alert_sent BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for nginx tables
+CREATE INDEX IF NOT EXISTS idx_nginx_events_timestamp ON nginx_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_nginx_events_src_ip ON nginx_events(src_ip) WHERE src_ip IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_nginx_events_path ON nginx_events(path) WHERE path IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_nginx_events_status_code ON nginx_events(status_code);
+CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_attack_type ON nginx_anomalies(attack_type);
+CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_severity ON nginx_anomalies(severity);
+CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_created_at ON nginx_anomalies(created_at);
+CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_src_ip ON nginx_anomalies(src_ip) WHERE src_ip IS NOT NULL;
 """
 
 
@@ -856,6 +896,202 @@ class EventDatabase:
             cur.close()
             conn.close()
     
+    # ── Nginx Monitoring Methods ─────────────────────────────────────────
+
+    def insert_nginx_event(self, event_data: Dict[str, Any]):
+        """Insert a single nginx web request event."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO nginx_events
+                   (timestamp, src_ip, method, path, status_code, bytes_sent, request, user_agent, raw_message)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    event_data.get('timestamp'),
+                    event_data.get('src_ip'),
+                    event_data.get('method'),
+                    event_data.get('path'),
+                    event_data.get('status_code'),
+                    event_data.get('bytes'),
+                    event_data.get('request'),
+                    event_data.get('user_agent'),
+                    event_data.get('raw'),
+                )
+            )
+            return cur.fetchone()[0]
+        finally:
+            cur.close()
+
+    def insert_nginx_anomaly(self, anomaly_data: Dict[str, Any]) -> int:
+        """Insert a detected nginx anomaly."""
+        cur = self._new_cursor()
+        try:
+            detail = anomaly_data.pop('detail', None)
+            cur.execute(
+                """INSERT INTO nginx_anomalies
+                   (timestamp, attack_type, severity, src_ip, path, status_code, description, detail, alert_sent)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (
+                    anomaly_data.get('timestamp'),
+                    anomaly_data.get('attack_type'),
+                    anomaly_data.get('severity'),
+                    anomaly_data.get('src_ip'),
+                    anomaly_data.get('path'),
+                    anomaly_data.get('status_code'),
+                    anomaly_data.get('description'),
+                    json.dumps(detail) if detail else None,
+                    anomaly_data.get('alert_sent', False),
+                )
+            )
+            return cur.fetchone()[0]
+        finally:
+            cur.close()
+
+    def get_nginx_summary(self, since_hours: int = 24) -> Dict[str, Any]:
+        """Get nginx traffic summary for the given window."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+            
+            # Total requests
+            cur.execute(
+                "SELECT COUNT(*) FROM nginx_events WHERE timestamp > %s",
+                (cutoff,)
+            )
+            total_requests = cur.fetchone()[0]
+            
+            # Requests by method
+            cur.execute(
+                """SELECT method, COUNT(*) as cnt FROM nginx_events 
+                   WHERE timestamp > %s AND method IS NOT NULL 
+                   GROUP BY method ORDER BY cnt DESC""",
+                (cutoff,)
+            )
+            by_method = {r[0]: r[1] for r in cur.fetchall()}
+            
+            # Requests by status code
+            cur.execute(
+                """SELECT status_code, COUNT(*) as cnt FROM nginx_events 
+                   WHERE timestamp > %s AND status_code IS NOT NULL 
+                   GROUP BY status_code ORDER BY cnt DESC""",
+                (cutoff,)
+            )
+            by_status = {str(r[0]): r[1] for r in cur.fetchall()}
+            
+            # Status category breakdown
+            cur.execute(
+                """SELECT 
+                   COUNT(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 END) as ok,
+                   COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END) as client_err,
+                   COUNT(CASE WHEN status_code >= 500 THEN 1 END) as server_err
+                   FROM nginx_events WHERE timestamp > %s""",
+                (cutoff,)
+            )
+            row = cur.fetchone()
+            
+            # Unique source IPs
+            cur.execute(
+                "SELECT COUNT(DISTINCT src_ip) FROM nginx_events WHERE timestamp > %s AND src_ip IS NOT NULL",
+                (cutoff,)
+            )
+            unique_ips = cur.fetchone()[0]
+            
+            # Top source IPs
+            cur.execute(
+                """SELECT src_ip, COUNT(*) as cnt FROM nginx_events 
+                   WHERE timestamp > %s AND src_ip IS NOT NULL 
+                   GROUP BY src_ip ORDER BY cnt DESC LIMIT 10""",
+                (cutoff,)
+            )
+            top_ips = [{"ip": r[0], "requests": r[1]} for r in cur.fetchall()]
+            
+            # Top paths
+            cur.execute(
+                """SELECT path, COUNT(*) as cnt FROM nginx_events 
+                   WHERE timestamp > %s AND path IS NOT NULL 
+                   GROUP BY path ORDER BY cnt DESC LIMIT 10""",
+                (cutoff,)
+            )
+            top_paths = [{"path": r[0], "requests": r[1]} for r in cur.fetchall()]
+            
+            # 404 errors (potential scanning)
+            cur.execute(
+                """SELECT COUNT(*) FROM nginx_events 
+                   WHERE timestamp > %s AND status_code = 404""",
+                (cutoff,)
+            )
+            not_found_count = cur.fetchone()[0]
+            
+            # Recent nginx anomalies
+            cur.execute(
+                """SELECT attack_type, severity, COUNT(*) as cnt 
+                   FROM nginx_anomalies 
+                   WHERE created_at > %s 
+                   GROUP BY attack_type, severity ORDER BY cnt DESC""",
+                (cutoff,)
+            )
+            anomaly_by_type = {}
+            for at, sev, cnt in cur.fetchall():
+                if at not in anomaly_by_type:
+                    anomaly_by_type[at] = {}
+                anomaly_by_type[at][sev] = cnt
+            
+            return {
+                'total_requests': total_requests,
+                'by_method': by_method,
+                'by_status': by_status,
+                'status_ok': row[0] or 0,
+                'status_client_err': row[1] or 0,
+                'status_server_err': row[2] or 0,
+                'unique_ips': unique_ips,
+                'top_ips': top_ips,
+                'top_paths': top_paths,
+                'not_found_404': not_found_count,
+                'anomalies_by_type': anomaly_by_type,
+            }
+        finally:
+            cur.close()
+
+    def get_nginx_anomalies(self, limit: int = 50) -> List[Dict]:
+        """Get recent nginx anomalies."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """SELECT id, timestamp, attack_type, severity, src_ip, path, 
+                          status_code, description, detail
+                   FROM nginx_anomalies
+                   ORDER BY created_at DESC
+                   LIMIT %s""",
+                (limit,)
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        finally:
+            cur.close()
+
+    def get_nginx_top_paths_timeline(self, hours: int = 24) -> List[Dict]:
+        """Get top path request counts over time (for heatmap)."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cur.execute(
+                """SELECT date_trunc('hour', timestamp) as hour, 
+                          path, COUNT(*) as cnt 
+                   FROM nginx_events 
+                   WHERE timestamp > %s AND path IS NOT NULL
+                   GROUP BY hour, path 
+                   ORDER BY hour DESC, cnt DESC""",
+                (cutoff,)
+            )
+            return [dict(zip(['hour', 'path', 'count'], r)) for r in cur.fetchall()]
+        finally:
+            cur.close()
+            conn.close()
+
     # ── Utility Methods ─────────────────────────────────────────────────
     
     def get_ml_summary_stats(self) -> Dict[str, Any]:

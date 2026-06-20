@@ -43,6 +43,7 @@ COPY ml_learning.py .
 COPY wan_flap_detector.py .
 COPY zenarmor_classifier.py .
 COPY ids_signature_analyzer.py .
+COPY nginx_monitor.py .
 
 # Copy built webui from build stage
 COPY --from=webui-build /build/dist webui/dist

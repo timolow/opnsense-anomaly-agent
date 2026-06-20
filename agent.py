@@ -77,6 +77,7 @@ from service_monitor import ServiceMonitor
 from apprise_notifier import AppriseNotifier
 from zenarmor_classifier import ZenArmorClassifier
 from ids_signature_analyzer import IDSSignatureAnalyzer
+from nginx_monitor import NginxMonitor
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -495,6 +496,12 @@ class OPNsenseAgent:
         self.ids_analyzer = IDSSignatureAnalyzer()
         self.ids_analyzer.load_state()
         
+        # Nginx web server monitor — tracks requests, detects attacks
+        self.nginx_monitor = NginxMonitor()
+        self.nginx_monitor.db = self.db
+        self.nginx_monitor.state_file = str(DATA_DIR / 'nginx_state.json')
+        self.nginx_monitor.load_state()
+        
         # State persistence
         self.persistence.load(self)
         
@@ -634,6 +641,10 @@ class OPNsenseAgent:
         # IDS signature analyzer — tracks IDS/Snort/Suricata signatures
         if log_type == 'ids':
             self.ids_analyzer.process_event(event)
+        
+        # Nginx web server monitor — tracks requests, detects attacks
+        if log_type == 'nginx':
+            self.nginx_monitor.process_event(event)
 
         # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
         self.service_monitor.process_event(event)
@@ -928,6 +939,7 @@ class OPNsenseAgent:
                         self.service_monitor.save()
                         self.zenarmor_classifier.save_state()
                         self.ids_analyzer.save_state()
+                        self.nginx_monitor.save_state()
 
                     # Periodic status (time-based every 60s)
                     now = time.time()

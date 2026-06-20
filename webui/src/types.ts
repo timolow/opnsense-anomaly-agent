@@ -410,3 +410,42 @@ export interface PfelkDirectionDistribution {
 export interface PfelkRuleActionBreakdown {
   rules: Array<{ name: string; pass: number; block: number; total: number }>;
 }
+
+// ═══════════════════════════════════════════════════
+// Nginx monitoring types
+// ═══════════════════════════════════════════════════
+
+export interface NginxSummary {
+  total_requests: number;
+  by_method: Record<string, number>;
+  by_status: Record<string, number>;
+  status_ok: number;
+  status_client_err: number;
+  status_server_err: number;
+  unique_ips: number;
+  top_ips: Array<{ ip: string; requests: number }>;
+  top_paths: Array<{ path: string; requests: number }>;
+  not_found_404: number;
+  anomalies_by_type: Record<string, Record<string, number>>;
+}
+
+export interface NginxAnomaly {
+  timestamp: string;
+  attack_type: string;
+  severity: string;
+  src_ip: string;
+  path?: string;
+  status_code?: number;
+  description: string;
+}
+
+export interface NginxTopPath {
+  path: string;
+  requests: number;
+  errors: number;
+}
+
+export interface NginxTimelinePoint {
+  hour: string;
+  requests: number;
+}

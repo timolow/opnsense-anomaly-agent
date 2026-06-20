@@ -1,0 +1,556 @@
+// ═══════════════════════════════════════════════════
+// Nginx Tab - Web Server Traffic Monitoring
+// ═══════════════════════════════════════════════════
+
+import React, { useState, useEffect } from 'react';
+import { api } from '../../api';
+import type { NginxSummary, NginxAnomaly } from '../../types';
+
+// Severity badge colors (cyberpunk theme)
+const severityColors: Record<string, { bg: string; text: string; glow: string }> = {
+  CRITICAL: { bg: 'rgba(255, 0, 64, 0.15)', text: '#ff0040', glow: 'rgba(255, 0, 64, 0.6)' },
+  HIGH: { bg: 'rgba(255, 165, 0, 0.15)', text: '#ffa500', glow: 'rgba(255, 165, 0, 0.6)' },
+  MEDIUM: { bg: 'rgba(255, 255, 0, 0.15)', text: '#ffff00', glow: 'rgba(255, 255, 0, 0.5)' },
+  LOW: { bg: 'rgba(0, 255, 170, 0.15)', text: '#00ffaa', glow: 'rgba(0, 255, 170, 0.5)' },
+};
+
+// Attack type icon mapping
+const attackIcons: Record<string, string> = {
+  PATH_TRAVERSAL: '⚠️',
+  BRUTE_FORCE: '🔓',
+  DDOS: '🌊',
+  SCAN: '🔍',
+  INVALID_UA: '🤖',
+};
+
+// ── Summary Card Component ──
+function SummaryCard({ title, value, color, description }: { title: string; value: string | number; color: string; description?: string }) {
+  return (
+    <div style={{
+      background: 'rgba(10, 15, 30, 0.7)',
+      border: '1px solid rgba(0, 255, 170, 0.15)',
+      borderRadius: '8px',
+      padding: '16px',
+      backdropFilter: 'blur(10px)',
+      boxShadow: `0 0 20px ${color}15, inset 0 1px 0 rgba(255,255,255,0.05)`,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+    }}>
+      <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: '#8899aa' }}>
+        {title}
+      </div>
+      <div style={{ fontSize: '28px', fontWeight: '700', color, fontFamily: 'monospace' }}>
+        {value}
+      </div>
+      {description && (
+        <div style={{ fontSize: '11px', color: '#667788', marginTop: '2px' }}>
+          {description}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Status Code Chart ──
+function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
+  const total = Object.values(by_status).reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+
+  const sorted = Object.entries(by_status)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+
+  return (
+    <div style={{
+      background: 'rgba(10, 15, 30, 0.7)',
+      border: '1px solid rgba(0, 255, 170, 0.15)',
+      borderRadius: '8px',
+      padding: '16px',
+      backdropFilter: 'blur(10px)',
+    }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        Response Codes
+      </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {sorted.map(([code, count]) => {
+          const pct = total > 0 ? (count / total) * 100 : 0;
+          const isOk = Number(code) < 400;
+          const isErr = Number(code) >= 400 && Number(code) < 500;
+          const isServer = Number(code) >= 500;
+          const color = isOk ? '#00ffaa' : isErr ? '#ffa500' : '#ff0040';
+          
+          return (
+            <div key={code} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{
+                fontSize: '13px', fontFamily: 'monospace', color, minWidth: '50px',
+                textShadow: `0 0 8px ${color}50`,
+              }}>
+                {code}
+              </div>
+              <div style={{
+                flex: 1, height: '8px', background: 'rgba(255,255,255,0.05)',
+                borderRadius: '4px', overflow: 'hidden',
+              }}>
+                <div style={{
+                  width: `${pct}%`, height: '100%',
+                  background: `linear-gradient(90deg, ${color}80, ${color})`,
+                  borderRadius: '4px',
+                  boxShadow: `0 0 8px ${color}40`,
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+              <div style={{ fontSize: '12px', color: '#8899aa', minWidth: '60px', textAlign: 'right', fontFamily: 'monospace' }}>
+                {count.toLocaleString()} ({pct.toFixed(1)}%)
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Methods Distribution ──
+function MethodChart({ by_method }: { by_method: Record<string, number> }) {
+  const total = Object.values(by_method).reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+
+  const sorted = Object.entries(by_method).sort((a, b) => b[1] - a[1]);
+  const colors = ['#00ffaa', '#00ccff', '#ff00ff', '#ffff00', '#ff8800', '#88ff00'];
+
+  return (
+    <div style={{
+      background: 'rgba(10, 15, 30, 0.7)',
+      border: '1px solid rgba(0, 255, 170, 0.15)',
+      borderRadius: '8px',
+      padding: '16px',
+      backdropFilter: 'blur(10px)',
+    }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        HTTP Methods
+      </h3>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        {sorted.map(([method, count], i) => {
+          const pct = total > 0 ? (count / total) * 100 : 0;
+          const color = colors[i % colors.length];
+          return (
+            <div key={method} style={{
+              background: `${color}15`,
+              border: `1px solid ${color}40`,
+              borderRadius: '6px',
+              padding: '8px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '2px',
+              flex: '1 1 80px',
+              minWidth: '80px',
+            }}>
+              <div style={{ fontSize: '12px', fontWeight: '700', color, fontFamily: 'monospace',
+                textShadow: `0 0 8px ${color}40`,
+              }}>{method}</div>
+              <div style={{ fontSize: '16px', fontWeight: '700', color, fontFamily: 'monospace' }}>
+                {count.toLocaleString()}
+              </div>
+              <div style={{ fontSize: '10px', color: '#8899aa' }}>{pct.toFixed(1)}%</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Top IPs Table ──
+function TopIPsTable({ ips }: { ips: Array<{ ip: string; requests: number }> }) {
+  if (ips.length === 0) return (
+    <div style={{ color: '#667788', textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+      No data yet — nginx events will populate here as traffic flows.
+    </div>
+  );
+
+  return (
+    <div style={{
+      background: 'rgba(10, 15, 30, 0.7)',
+      border: '1px solid rgba(0, 255, 170, 0.15)',
+      borderRadius: '8px',
+      padding: '16px',
+      backdropFilter: 'blur(10px)',
+      overflowX: 'auto',
+    }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        Top Source IPs
+      </h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid rgba(0,255,170,0.1)' }}>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>IP Address</th>
+            <th style={{ padding: '8px', textAlign: 'right', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Requests</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ips.slice(0, 10).map((item, i) => (
+            <tr key={item.ip} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+              <td style={{ padding: '8px', fontFamily: 'monospace', color: '#aabbcc' }}>
+                {item.ip}
+              </td>
+              <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#00ffaa' }}>
+                {item.requests.toLocaleString()}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Top Paths Table ──
+function TopPathsTable({ paths }: { paths: Array<{ path: string; requests: number }> }) {
+  if (paths.length === 0) return null;
+
+  return (
+    <div style={{
+      background: 'rgba(10, 15, 30, 0.7)',
+      border: '1px solid rgba(0, 255, 170, 0.15)',
+      borderRadius: '8px',
+      padding: '16px',
+      backdropFilter: 'blur(10px)',
+      overflowX: 'auto',
+    }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        Top Requested Paths
+      </h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid rgba(0,255,170,0.1)' }}>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Path</th>
+            <th style={{ padding: '8px', textAlign: 'right', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Requests</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paths.slice(0, 10).map((item) => (
+            <tr key={item.path} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+              <td style={{ padding: '8px', fontFamily: 'monospace', color: '#aabbcc' }}>
+                {item.path}
+              </td>
+              <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#00ffaa' }}>
+                {item.requests.toLocaleString()}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Anomalies Table ──
+function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
+  if (anomalies.length === 0) return (
+    <div style={{ color: '#667788', textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+      No nginx anomalies detected — traffic looks clean.
+    </div>
+  );
+
+  return (
+    <div style={{
+      background: 'rgba(10, 15, 30, 0.7)',
+      border: '1px solid rgba(0, 255, 170, 0.15)',
+      borderRadius: '8px',
+      padding: '16px',
+      backdropFilter: 'blur(10px)',
+      overflowX: 'auto',
+    }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        Recent Anomalies
+      </h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid rgba(0,255,170,0.1)' }}>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Time</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Type</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Severity</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Source IP</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {anomalies.slice(0, 20).map((a, i) => {
+            const sev = severityColors[a.severity] || { bg: '#333', text: '#888', glow: 'transparent' };
+            const icon = attackIcons[a.attack_type] || '🔔';
+            return (
+              <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                <td style={{ padding: '8px', fontFamily: 'monospace', color: '#8899aa' }}>
+                  {new Date(a.timestamp).toLocaleTimeString()}
+                </td>
+                <td style={{ padding: '8px', color: '#aabbcc' }}>
+                  {icon} {a.attack_type}
+                </td>
+                <td style={{ padding: '8px' }}>
+                  <span style={{
+                    background: sev.bg,
+                    color: sev.text,
+                    border: `1px solid ${sev.text}30`,
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    textShadow: `0 0 6px ${sev.glow}`,
+                    boxShadow: `0 0 10px ${sev.bg}`,
+                  }}>
+                    {a.severity}
+                  </span>
+                </td>
+                <td style={{ padding: '8px', fontFamily: 'monospace', color: '#aabbcc', fontSize: '12px' }}>
+                  {a.src_ip}
+                </td>
+                <td style={{ padding: '8px', color: '#778899', fontSize: '11px', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {a.description}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Main NginxTab Component ──
+export const NginxTab: React.FC = () => {
+  const [summary, setSummary] = useState<NginxSummary | null>(null);
+  const [anomalies, setAnomalies] = useState<NginxAnomaly[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [summaryData, anomalyData] = await Promise.all([
+          api.getNginxSummary(),
+          api.getNginxAnomalies(),
+        ]);
+        setSummary(summaryData);
+        setAnomalies(anomalyData);
+        setLoading(false);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to load nginx data');
+        setLoading(false);
+      }
+    };
+    fetchData();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ fontSize: '24px', color: '#00ffaa', animation: 'pulse 1.5s ease-in-out infinite' }}>
+          ⚡ Loading nginx data...
+        </div>
+        <div style={{ fontSize: '12px', color: '#667788' }}>Fetching traffic metrics from database</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{
+        background: 'rgba(255, 0, 64, 0.1)',
+        border: '1px solid rgba(255, 0, 64, 0.3)',
+        borderRadius: '8px',
+        padding: '20px',
+        textAlign: 'center',
+        color: '#ff0040',
+      }}>
+        <div style={{ fontSize: '18px', marginBottom: '8px' }}>⚠️ Error</div>
+        <div style={{ fontSize: '13px', color: '#ff8888' }}>{error}</div>
+      </div>
+    );
+  }
+
+  const s = summary;
+  if (!s) {
+    return (
+      <div style={{
+        background: 'rgba(10, 15, 30, 0.7)',
+        border: '1px solid rgba(0, 255, 170, 0.15)',
+        borderRadius: '8px',
+        padding: '40px',
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: '16px', color: '#8899aa', marginBottom: '12px' }}>
+          🟢 Nginx monitoring initialized
+        </div>
+        <div style={{ fontSize: '12px', color: '#667788', maxWidth: '400px', margin: '0 auto' }}>
+          No nginx events recorded yet. Once OPNsense nginx logs start flowing through the syslog pipeline, 
+          traffic data and anomaly detection will appear here in real-time.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Header */}
+      <div style={{
+        background: 'rgba(10, 15, 30, 0.7)',
+        border: '1px solid rgba(0, 255, 170, 0.15)',
+        borderRadius: '8px',
+        padding: '20px',
+        backdropFilter: 'blur(10px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '16px',
+      }}>
+        <div style={{ fontSize: '32px' }}>🌐</div>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '20px', color: '#00ffaa', textShadow: '0 0 12px rgba(0,255,170,0.4)' }}>
+            Nginx Web Server Monitor
+          </h1>
+          <div style={{ fontSize: '12px', color: '#8899aa', marginTop: '4px' }}>
+            Traffic analysis, threat detection, and attack monitoring
+          </div>
+        </div>
+        <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+          <div style={{
+            background: 'rgba(0, 255, 170, 0.15)',
+            border: '1px solid rgba(0, 255, 170, 0.3)',
+            borderRadius: '16px',
+            padding: '4px 12px',
+            fontSize: '11px',
+            color: '#00ffaa',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}>
+            <span style={{
+              width: '6px', height: '6px', borderRadius: '50%',
+              background: '#00ffaa',
+              boxShadow: '0 0 8px #00ffaa',
+              animation: 'pulse 2s ease-in-out infinite',
+            }} />
+            LIVE
+          </div>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+        <SummaryCard
+          title="Total Requests"
+          value={s.total_requests.toLocaleString()}
+          color="#00ffaa"
+          description="Last 24 hours"
+        />
+        <SummaryCard
+          title="Unique IPs"
+          value={s.unique_ips.toLocaleString()}
+          color="#00ccff"
+        />
+        <SummaryCard
+          title="Status OK"
+          value={s.status_ok.toLocaleString()}
+          color="#00ffaa"
+          description={`${s.total_requests > 0 ? ((s.status_ok / s.total_requests) * 100).toFixed(1) : 0}% of total`}
+        />
+        <SummaryCard
+          title="Client Errors"
+          value={s.status_client_err.toLocaleString()}
+          color="#ffa500"
+          description="4xx responses"
+        />
+        <SummaryCard
+          title="Server Errors"
+          value={s.status_server_err.toLocaleString()}
+          color="#ff0040"
+          description="5xx responses"
+        />
+        <SummaryCard
+          title="404 Not Found"
+          value={s.not_found_404.toLocaleString()}
+          color="#ffff00"
+          description="Potential scanning"
+        />
+      </div>
+
+      {/* Charts Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
+        <MethodChart by_method={s.by_method} />
+        <StatusCodeChart by_status={s.by_status} />
+      </div>
+
+      {/* Top IPs + Top Paths */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
+        <TopIPsTable ips={s.top_ips} />
+        <TopPathsTable paths={s.top_paths} />
+      </div>
+
+      {/* Anomalies by Type */}
+      {Object.keys(s.anomalies_by_type).length > 0 && (
+        <div style={{
+          background: 'rgba(10, 15, 30, 0.7)',
+          border: '1px solid rgba(255, 0, 64, 0.15)',
+          borderRadius: '8px',
+          padding: '16px',
+          backdropFilter: 'blur(10px)',
+        }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#ff0040', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            Detected Anomalies by Type
+          </h3>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {Object.entries(s.anomalies_by_type).map(([type, severities]) => (
+              <div key={type} style={{
+                background: 'rgba(255, 0, 64, 0.1)',
+                border: '1px solid rgba(255, 0, 64, 0.2)',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+              }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#ff0040', fontFamily: 'monospace' }}>
+                  {attackIcons[type] || '🔔'} {type}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {Object.entries(severities).map(([sev, count]) => {
+                    const c = severityColors[sev] || { text: '#888', glow: 'transparent' };
+                    return (
+                      <span key={sev} style={{
+                        fontSize: '10px',
+                        color: c.text,
+                        textShadow: `0 0 4px ${c.glow}`,
+                      }}>
+                        {sev}: {count}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Anomalies Table */}
+      <AnomaliesTable anomalies={anomalies} />
+
+      {/* Footer */}
+      <div style={{
+        textAlign: 'center',
+        padding: '12px',
+        fontSize: '11px',
+        color: '#667788',
+      }}>
+        Nginx monitoring tracks web requests, detects path traversal, brute force, DDoS, and scanner activity.
+        Refreshes every 30s.
+      </div>
+    </div>
+  );
+};
+
+export default NginxTab;

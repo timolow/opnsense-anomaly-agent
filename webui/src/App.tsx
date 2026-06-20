@@ -26,6 +26,7 @@ import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
 import PfelkDashboard from './components/tabs/PfelkDashboard';
+import NginxTab from './components/tabs/NginxTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Overview',
@@ -47,6 +48,7 @@ const TAB_TITLE: Record<string, string> = {
   'wan-flap': 'WAN Flap Detection',
   'rules-classified': 'Rules ML',
   pfelk: 'PFELK Analytics',
+  nginx: 'Nginx Monitor',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -70,6 +72,7 @@ function TabContent({ tab }: { tab: string }) {
     case 'wan-flap': return <WanFlapTab />;
     case 'rules-classified': return <RulesClassifiedTab />;
     case 'pfelk': return <PfelkDashboard />;
+    case 'nginx': return <NginxTab />;
     default: return <OverviewTab />;
   }
 }
