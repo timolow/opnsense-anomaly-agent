@@ -60,7 +60,7 @@ def main():
     # Pull recent events
     cur = db.connect().cursor()
     cur.execute("""
-        SELECT rule_name, src_ip, dst_port, protocol, action
+        SELECT rule_name, src_ip, dst_port, proto, action
         FROM events WHERE timestamp > NOW() - INTERVAL '5 minutes'
         ORDER BY timestamp DESC
     """)
