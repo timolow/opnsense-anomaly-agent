@@ -25,6 +25,7 @@ class AnomalyDetector:
         self.ip_counts: Dict[str, int] = defaultdict(int)
         self.rule_counts: Dict[str, int] = defaultdict(int)
         self.detected: List[Dict[str, Any]] = []
+        self.detected_ips: set = set()  # Track IPs we've already alerted on
 
     def check_volume(self, rule: str, count_5min: int) -> Optional[Dict]:
         """Check if event volume deviates from baseline."""
@@ -72,6 +73,10 @@ class AnomalyDetector:
                 known = True
                 break
         if not known:
+            # Deduplication: only alert once per IP
+            if ip in self.detected_ips:
+                return None
+            self.detected_ips.add(ip)
             return {
                 "type": "new_ip", "severity": "MEDIUM", "rule": "any",
                 "src_ip": ip, "event_count": count,
