@@ -61,7 +61,7 @@ def main():
     cur = db.connect().cursor()
     cur.execute("""
         SELECT rule_name, src_ip, dst_port, proto, action
-        FROM events WHERE timestamp > NOW() - INTERVAL '5 minutes'
+        FROM events WHERE timestamp > NOW() - INTERVAL '30 minutes'
         ORDER BY timestamp DESC
     """)
     events = [{"rule": r[0] or "", "src_ip": r[1] or "", "dst_port": r[2], "proto": r[3] or "", "action": r[4] or ""} for r in cur.fetchall()]
