@@ -268,22 +268,22 @@ export const api = {
   zenarmorSummary: async (): Promise<ZenArmorData['summary']> => {
     const raw = await json<Record<string, unknown>>('/zenarmor-summary');
     return {
-      total_events: raw.total_events || 0,
-      policies_count: (raw.known_policies_count as number) || 0,
-      anomalies_detected: 0,
-      events_24h: raw.total_events || 0,
+      total_events: (raw.total_events as number) || 0,
+      policies_count: (raw.policies_count as number) || (raw.known_policies_count as number) || 0,
+      anomalies_detected: (raw.anomalies_detected as number) || 0,
+      events_24h: (raw.events_24h as number) || (raw.total_events as number) || 0,
     };
   },
   zenarmorPolicies: async (): Promise<ZenArmorData['policies'][]> => {
-    const raw = await json<Record<string, unknown>>('/zenarmor-policies');
+    const raw = await json<Array<unknown>>('/zenarmor-policies');
     return Array.isArray(raw) ? raw.map((p: any) => ({
-      id: '',
-      name: p.name || '',
+      id: p.id || '',
+      name: p.name || p.policy_name || '',
       category: p.category || '',
-      status: 'active',
+      status: p.status || 'active',
       action: p.action || '',
-      description: '',
-      events: p.events || 0,
+      description: p.description || '',
+      events: p.events || p.total_events || 0,
     })) : [];
   },
   zenarmorEvents: (limit = 100, offset = 0) =>
@@ -303,26 +303,24 @@ export const api = {
   // IDS
   idsSummary: async (): Promise<IdsData['summary']> => {
     const raw = await json<Record<string, unknown>>('/ids-summary');
-    const topSigs = Array.isArray(raw.top_signatures) ? raw.top_signatures : [];
     return {
-      total_events: raw.total_events || 0,
-      signatures: (raw.known_signatures_count as number) || 0,
-      anomalies_detected: 0,
-      events_24h: raw.total_events || 0,
+      total_events: (raw.total_events as number) || 0,
+      signatures: (raw.signatures as number) || (raw.known_signatures_count as number) || 0,
+      anomalies_detected: (raw.anomalies_detected as number) || 0,
+      events_24h: (raw.events_24h as number) || (raw.total_events as number) || 0,
     };
   },
   idsSignatures: async (): Promise<IdsData['signatures'][]> => {
-    const raw = await json<Record<string, unknown>>('/ids-signatures');
-    const topSigs = Array.isArray(raw.top_signatures) ? raw.top_signatures : [];
-    return topSigs.map((s: any) => ({
-      id: s.id || '',
-      name: s.name || s.name || 'unknown',
-      category: s.classification || 'unknown',
-      severity: s.priority <= 1 ? 'HIGH' : 'MEDIUM',
+    const raw = await json<Array<unknown>>('/ids-signatures');
+    return Array.isArray(raw) ? raw.map((s: any) => ({
+      id: s.id || (s.signature || '').substring(0, 8),
+      name: s.name || s.signature || 'unknown',
+      category: s.category || s.classification || 'unknown',
+      severity: s.severity || (s.priority !== undefined ? (s.priority <= 1 ? 'HIGH' : 'MEDIUM') : 'MEDIUM'),
       description: s.description || '',
-      triggered_count: s.triggers || 0,
-      last_triggered: '',
-    }));
+      triggered_count: s.triggered_count || s.triggers || s.trigger_count || 0,
+      last_triggered: s.last_triggered || s.last_seen || '',
+    })) : [];
   },
   idsEvents: (limit = 100, offset = 0) =>
     json<IdsData['events'][]>(`/ids-events?limit=${limit}&offset=${offset}`),

@@ -1039,28 +1039,45 @@ def load_json_state(filepath):
         return {}
 
 def query_zenarmor_summary():
-    """Return ZenArmor policy summary from state file."""
+    """Return ZenArmor policy summary matching frontend types."""
     state = load_json_state(ZENARMOR_STATE_FILE)
     if not state:
-        return {"total_events": 0, "known_policies_count": 0, "policies_by_classification": {}, "top_policies": []}
-    return state.get("summary", {})
+        return {
+            "total_events": 0,
+            "policies_count": 0,
+            "anomalies_detected": 0,
+            "events_24h": 0,
+        }
+    policies_count = len(state.get("policies", {}))
+    anomalies = state.get("summary", {}).get("anomalies_detected", 0)
+    total_events = state.get("summary", {}).get("total_events", state.get("total_events", 0))
+    return {
+        "total_events": total_events,
+        "policies_count": policies_count,
+        "anomalies_detected": anomalies,
+        "events_24h": total_events,  # fallback: same as total
+    }
 
 def query_zenarmor_policies():
-    """Return all known ZenArmor policies."""
+    """Return all known ZenArmor policies matching frontend types."""
     state = load_json_state(ZENARMOR_STATE_FILE)
     if not state:
         return []
     policies = []
     for name, data in state.get("policies", {}).items():
+        total_events = data.get("total_events", 0)
+        actions = data.get("actions", {})
+        action = "block" if actions.get("BLOCK", 0) > actions.get("PASS", 0) else "pass"
         policies.append({
-            "policy_name": name,
-            "total_events": data.get("total_events", 0),
-            "actions": data.get("actions", {}),
-            "first_seen": data.get("first_seen"),
-            "last_seen": data.get("last_seen"),
-            "action_history": data.get("action_history", []),
+            "id": data.get("policy_id", name[:8]),
+            "name": data.get("policy_name", name),
+            "category": data.get("category", "general"),
+            "status": "active" if data.get("enabled", True) else "inactive",
+            "action": action,
+            "description": data.get("description", ""),
+            "events": total_events,
         })
-    return sorted(policies, key=lambda x: -x["total_events"])
+    return sorted(policies, key=lambda x: -x["events"])
 
 def query_zenarmor_events(limit=100, offset=0):
     """Return recent ZenArmor events from the database."""
@@ -1116,28 +1133,43 @@ def query_zenarmor_anomalies():
 # ──────────────────────────────────────────────────────────────────────
 
 def query_ids_summary():
-    """Return IDS signature summary from state file."""
+    """Return IDS signature summary matching frontend types."""
     state = load_json_state(IDS_STATE_FILE)
     if not state:
-        return {"total_events": 0, "known_signatures_count": 0, "signatures_by_classification": {}, "top_signatures": []}
-    return state.get("summary", {})
+        return {
+            "total_events": 0,
+            "signatures": 0,
+            "anomalies_detected": 0,
+            "events_24h": 0,
+        }
+    signatures_count = len(state.get("signatures", {}))
+    anomalies = state.get("summary", {}).get("anomalies_detected", 0)
+    total_events = state.get("summary", {}).get("total_events", state.get("total_events", 0))
+    return {
+        "total_events": total_events,
+        "signatures": signatures_count,
+        "anomalies_detected": anomalies,
+        "events_24h": total_events,  # fallback: same as total
+    }
 
 def query_ids_signatures():
-    """Return all known IDS signatures."""
+    """Return all known IDS signatures matching frontend types."""
     state = load_json_state(IDS_STATE_FILE)
     if not state:
         return []
     sigs = []
     for name, data in state.get("signatures", {}).items():
+        priority = data.get("priority", 0)
         sigs.append({
-            "signature": name,
-            "priority": data.get("priority", 0),
-            "trigger_count": data.get("trigger_count", 0),
-            "first_seen": data.get("first_seen"),
-            "last_seen": data.get("last_seen"),
-            "trigger_history": data.get("trigger_history", []),
+            "id": data.get("id", name[:8]),
+            "name": data.get("name", name),
+            "category": data.get("category", "unknown"),
+            "severity": "HIGH" if priority <= 1 else "MEDIUM" if priority <= 3 else "LOW",
+            "description": data.get("description", ""),
+            "triggered_count": data.get("trigger_count", 0),
+            "last_triggered": data.get("last_seen", ""),
         })
-    return sorted(sigs, key=lambda x: -x["trigger_count"])
+    return sorted(sigs, key=lambda x: -x["triggered_count"])
 
 def query_ids_events(limit=100, offset=0):
     """Return recent IDS events from the database."""
