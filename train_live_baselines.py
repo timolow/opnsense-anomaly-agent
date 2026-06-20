@@ -78,7 +78,7 @@ def main():
             avg, std,
             max(hourly_dist) if hourly_dist else 0,
             min(hourly_dist) if hourly_dist else 0,
-            proto_dist,
+            json.dumps(proto_dist),
             pass_r, block_r,
             json.dumps(hourly_dist),
             total
