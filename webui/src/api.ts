@@ -6,10 +6,10 @@ import type {
   StatsData, HeatmapData, IpFlowData, EventsData, MutesData,
   GeoData, HealthData, AlertsData, OpnsenseStatusData,
   ZenArmorData, IdsData, ServiceStatusData, RulesClassifiedData,
-  PfelkEvent, PfelkStats, RuleFeedback,
-  PfelkTrafficFlow, PfelkProtocolDistribution, PfelkActionDistribution,
-  PfelkTimeline, PfelkBlockedIps, PfelkTopPorts, PfelkRuleHeatmap,
-  PfelkDirectionDistribution, PfelkRuleActionBreakdown,
+  Event, Stats, RuleFeedback,
+  TrafficFlow, ProtocolDistribution, ActionDistribution,
+  Timeline, BlockedIps, TopPorts, RuleHeatmap,
+  DirectionDistribution, RuleActionBreakdown,
   NginxSummary, NginxAnomaly,
 } from './types';
 
@@ -56,18 +56,18 @@ async function json<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── pfelk/Elasticsearch ──
-const PFELK_BASE = import.meta.env.VITE_PFELK_HOST
-  ? `${import.meta.env.VITE_PFELK_HOST}/_search`
+// ── /Elasticsearch ──
+const _BASE = import.meta.env.VITE__HOST
+  ? `${import.meta.env.VITE__HOST}/_search`
   : null;
 
-export async function fetchPfelkEvents(params: {
+export async function fetchEvents(params: {
   query?: Record<string, unknown>;
   size?: number;
   sort?: string;
   hours?: number;
-}): Promise<{ hits: PfelkEvent[]; total: number }> {
-  if (!PFELK_BASE) {
+}): Promise<{ hits: Event[]; total: number }> {
+  if (!_BASE) {
     return { hits: [], total: 0 };
   }
 
@@ -99,7 +99,7 @@ export async function fetchPfelkEvents(params: {
     _source: true,
   };
 
-  const res = await fetch(PFELK_BASE, {
+  const res = await fetch(_BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -107,14 +107,14 @@ export async function fetchPfelkEvents(params: {
 
   if (!res.ok) return { hits: [], total: 0 };
   const data = await res.json();
-  const hits = data.hits.hits.map((h: { _source: PfelkEvent }) => h._source);
+  const hits = data.hits.hits.map((h: { _source: Event }) => h._source);
   return { hits, total: data.hits.total.value };
 }
 
-export async function fetchPfelkStats(): Promise<PfelkStats | null> {
-  if (!PFELK_BASE) return null;
+export async function fetchStats(): Promise<Stats | null> {
+  if (!_BASE) return null;
   try {
-    const res = await fetch(`${import.meta.env.VITE_PFELK_HOST}/pfelk-firewall-*/_stats`);
+    const res = await fetch(`${import.meta.env.VITE__HOST}/-firewall-*/_stats`);
     if (!res.ok) return null;
     const data = await res.json();
     const idxStats = data.indices;
@@ -443,16 +443,16 @@ export const api = {
     return Array.isArray(raw) ? raw.map((q: any) => ({ id: q.id || '', rule: q.rule || '', state: q.state || '' })) : [];
   },
 
-  // ── PFELK-style visualizations ──
-  trafficFlow: () => json<PfelkTrafficFlow>('/pfelk/traffic-flow'),
-  protocolDistribution: () => json<PfelkProtocolDistribution>('/pfelk/protocols'),
-  actionDistribution: () => json<PfelkActionDistribution>('/pfelk/actions'),
-  timeline: () => json<PfelkTimeline>('/pfelk/timeline'),
-  blockedIps: () => json<PfelkBlockedIps>('/pfelk/blocked-ips'),
-  topPorts: () => json<PfelkTopPorts>('/pfelk/top-ports'),
-  ruleHeatmap: () => json<PfelkRuleHeatmap>('/pfelk/rule-heatmap'),
-  directionDistribution: () => json<PfelkDirectionDistribution>('/pfelk/directions'),
-  ruleActionBreakdown: () => json<PfelkRuleActionBreakdown>('/pfelk/rule-actions'),
+  // ── -style visualizations ──
+  trafficFlow: () => json<TrafficFlow>('//traffic-flow'),
+  protocolDistribution: () => json<ProtocolDistribution>('//protocols'),
+  actionDistribution: () => json<ActionDistribution>('//actions'),
+  timeline: () => json<Timeline>('//timeline'),
+  blockedIps: () => json<BlockedIps>('//blocked-ips'),
+  topPorts: () => json<TopPorts>('//top-ports'),
+  ruleHeatmap: () => json<RuleHeatmap>('//rule-heatmap'),
+  directionDistribution: () => json<DirectionDistribution>('//directions'),
+  ruleActionBreakdown: () => json<RuleActionBreakdown>('//rule-actions'),
 
   // Mutes
   mutes: () => json<MutesData[]>('/mutes'),

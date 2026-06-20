@@ -307,8 +307,8 @@ export interface RuleFeedback {
   user_id: string;
 }
 
-// ── pfelk/Elasticsearch types ──
-export interface PfelkEvent {
+// ── /Elasticsearch types ──
+export interface Event {
   rule: {
     id: string;
     uuid: string;
@@ -358,56 +358,56 @@ export interface PfelkEvent {
   _index?: string;
 }
 
-export interface PfelkStats {
+export interface Stats {
   indices: string[];
   total_documents: number;
   total_store_bytes: number;
   total_store_mb: number;
 }
 
-// ── PFELK Dashboard visualization types ──
-export interface PfelkTrafficFlow {
+// ──  Dashboard visualization types ──
+export interface TrafficFlow {
   flow: Array<{ source: string; target: string; value: number }>;
   time_range: string;
 }
 
-export interface PfelkProtocolDistribution {
+export interface ProtocolDistribution {
   protocols: Array<{ protocol: string; count: number; percent: number }>;
   total: number;
 }
 
-export interface PfelkActionDistribution {
+export interface ActionDistribution {
   actions: Array<{ action: string; count: number; percent: number }>;
   total: number;
 }
 
-export interface PfelkTimeline {
+export interface Timeline {
   timeline: Array<{ time: string; count: number }>;
   blocked_timeline: Array<{ time: string; count: number }>;
   period: string;
 }
 
-export interface PfelkBlockedIps {
+export interface BlockedIps {
   blocked_ips: Array<{ ip: string; count: number; unique_targets: number; unique_ports: number }>;
   total_blocked: number;
 }
 
-export interface PfelkTopPorts {
+export interface TopPorts {
   ports: Array<{ port: number; name: string; count: number; unique_sources: number; block_count: number; percent: number }>;
   total: number;
 }
 
-export interface PfelkRuleHeatmap {
+export interface RuleHeatmap {
   heatmap: Array<{ rule: string; hourly: Array<{ time: string; count: number }> }>;
   rules: string[];
 }
 
-export interface PfelkDirectionDistribution {
+export interface DirectionDistribution {
   directions: Array<{ direction: string; count: number; percent: number }>;
   total: number;
 }
 
-export interface PfelkRuleActionBreakdown {
+export interface RuleActionBreakdown {
   rules: Array<{ name: string; pass: number; block: number; total: number }>;
 }
 

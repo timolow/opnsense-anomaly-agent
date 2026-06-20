@@ -1570,26 +1570,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/stats":
                 self._send_json(query_stats())
             # ═══════════════════════════════════════════════
-            # PFELK-style visualizations (read from PostgreSQL)
+            # -style visualizations (read from PostgreSQL)
             # ═══════════════════════════════════════════════
-            elif path == "/api/pfelk/traffic-flow":
-                self._send_json(query_pfelk_traffic_flow())
-            elif path == "/api/pfelk/protocols":
-                self._send_json(query_pfelk_protocol_distribution())
-            elif path == "/api/pfelk/actions":
-                self._send_json(query_pfelk_action_distribution())
-            elif path == "/api/pfelk/timeline":
-                self._send_json(query_pfelk_timeline())
-            elif path == "/api/pfelk/blocked-ips":
-                self._send_json(query_pfelk_blocked_ips())
-            elif path == "/api/pfelk/top-ports":
-                self._send_json(query_pfelk_top_ports())
-            elif path == "/api/pfelk/rule-heatmap":
-                self._send_json(query_pfelk_rule_heatmap())
-            elif path == "/api/pfelk/directions":
-                self._send_json(query_pfelk_direction_distribution())
-            elif path == "/api/pfelk/rule-actions":
-                self._send_json(query_pfelk_rule_action_breakdown())
+            elif path == "/api//traffic-flow":
+                self._send_json(query__traffic_flow())
+            elif path == "/api//protocols":
+                self._send_json(query__protocol_distribution())
+            elif path == "/api//actions":
+                self._send_json(query__action_distribution())
+            elif path == "/api//timeline":
+                self._send_json(query__timeline())
+            elif path == "/api//blocked-ips":
+                self._send_json(query__blocked_ips())
+            elif path == "/api//top-ports":
+                self._send_json(query__top_ports())
+            elif path == "/api//rule-heatmap":
+                self._send_json(query__rule_heatmap())
+            elif path == "/api//directions":
+                self._send_json(query__direction_distribution())
+            elif path == "/api//rule-actions":
+                self._send_json(query__rule_action_breakdown())
             elif path == "/api/heatmap":
                 self._send_json(query_heatmap())
             elif path == "/api/ip-flow":
@@ -1710,8 +1710,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({'error': str(e)}, 500)
             elif path == "/api/service-status":
                 self._send_json(query_service_status())
-            elif path == "/api/pfelk/events":
-                self._pfelk_query_events()
+            elif path == "/api//events":
+                self.__query_events()
             elif path == "/api/settings":
                 self._handle_settings_get()
             elif path == "/api/heartbeat":
@@ -2344,11 +2344,11 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 # ═══════════════════════════════════════════════
-# PFELK-style visualization queries
+# -style visualization queries
 # Read from PostgreSQL and return data formatted
 # for the React dashboard visualizations
 # ═══════════════════════════════════════════════
-def query_pfelk_traffic_flow(hours=24, limit=50):
+def query__traffic_flow(hours=24, limit=50):
     """Top src→dst pairs for Sankey diagram."""
     conn = get_db()
     if not conn:
@@ -2378,7 +2378,7 @@ def query_pfelk_traffic_flow(hours=24, limit=50):
         return {"flow": []}
 
 
-def query_pfelk_protocol_distribution(hours=24):
+def query__protocol_distribution(hours=24):
     """Protocol distribution (TCP, UDP, ICMP, etc.)."""
     conn = get_db()
     if not conn:
@@ -2407,7 +2407,7 @@ def query_pfelk_protocol_distribution(hours=24):
         return {"protocols": [], "total": 0}
 
 
-def query_pfelk_action_distribution(hours=24):
+def query__action_distribution(hours=24):
     """Action distribution (PASS vs BLOCK, etc.)."""
     conn = get_db()
     if not conn:
@@ -2436,7 +2436,7 @@ def query_pfelk_action_distribution(hours=24):
         return {"actions": [], "total": 0}
 
 
-def query_pfelk_timeline(period="7d", granularity="hour"):
+def query__timeline(period="7d", granularity="hour"):
     """Traffic volume over time (line chart)."""
     conn = get_db()
     if not conn:
@@ -2491,7 +2491,7 @@ def query_pfelk_timeline(period="7d", granularity="hour"):
         return {"timeline": [], "blocked_timeline": []}
 
 
-def query_pfelk_blocked_ips(hours=24, limit=20):
+def query__blocked_ips(hours=24, limit=20):
     """Top source IPs by blocked count (bar chart)."""
     conn = get_db()
     if not conn:
@@ -2525,7 +2525,7 @@ def query_pfelk_blocked_ips(hours=24, limit=20):
         return {"blocked_ips": [], "total_blocked": 0}
 
 
-def query_pfelk_top_ports(hours=24, limit=20):
+def query__top_ports(hours=24, limit=20):
     """Top destination ports (bar chart)."""
     conn = get_db()
     if not conn:
@@ -2570,7 +2570,7 @@ def query_pfelk_top_ports(hours=24, limit=20):
         return {"ports": [], "total": 0}
 
 
-def query_pfelk_rule_heatmap(hours=24, limit=30):
+def query__rule_heatmap(hours=24, limit=30):
     """Rule activity heatmap (rules × hours)."""
     conn = get_db()
     if not conn:
@@ -2613,7 +2613,7 @@ def query_pfelk_rule_heatmap(hours=24, limit=30):
         return {"heatmap": [], "rules": []}
 
 
-def query_pfelk_direction_distribution(hours=24):
+def query__direction_distribution(hours=24):
     """Network direction distribution (in/out)."""
     conn = get_db()
     if not conn:
@@ -2642,7 +2642,7 @@ def query_pfelk_direction_distribution(hours=24):
         return {"directions": [], "total": 0}
 
 
-def query_pfelk_rule_action_breakdown(hours=24, limit=30):
+def query__rule_action_breakdown(hours=24, limit=30):
     """Top rules with pass/block breakdown."""
     conn = get_db()
     if not conn:

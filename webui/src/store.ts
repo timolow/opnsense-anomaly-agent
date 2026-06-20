@@ -29,9 +29,9 @@ interface AppState {
   quickFilterType: string;
   setQuickFilterType: (type: string) => void;
 
-  // pfelk connection status
-  pfelkConnected: boolean;
-  setPfelkConnected: (connected: boolean) => void;
+  //  connection status
+  Connected: boolean;
+  setConnected: (connected: boolean) => void;
 }
 
 const DEFAULT_TABS = [
@@ -55,6 +55,6 @@ export const useStore = create<AppState>((set) => ({
   setQuickFilter: (filter) => set({ quickFilter: filter }),
   quickFilterType: 'all',
   setQuickFilterType: (type) => set({ quickFilterType: type }),
-  pfelkConnected: false,
-  setPfelkConnected: (connected) => set({ pfelkConnected: connected }),
+  Connected: false,
+  setConnected: (connected) => set({ Connected: connected }),
 }));
