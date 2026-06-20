@@ -78,6 +78,8 @@ from apprise_notifier import AppriseNotifier
 from zenarmor_classifier import ZenArmorClassifier
 from ids_signature_analyzer import IDSSignatureAnalyzer
 from nginx_monitor import NginxMonitor
+from threat_engine import ThreatEngine
+from baseline_engine import BaselineEngine
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -417,6 +419,11 @@ class OPNsenseAgent:
         # vLLM (optional)
         self.vllm_client = VLLMClient(self.config)
 
+        # Unified threat engine + baseline engine (from Graylog training data)
+        self.baseline_engine = BaselineEngine(self.db)
+        self.threat_engine = ThreatEngine(self.db, self.baseline_engine)
+        logger.info("Initialized threat_engine and baseline_engine")
+
         # Syslog listener (built-in UDP)
         self.syslog_listener = SyslogListener(self.config, event_callback=self._on_event)
 
@@ -475,6 +482,16 @@ class OPNsenseAgent:
         self.last_status = time.time()
         self.last_syslog_anomaly_check = time.time()
         self.last_wan_flap_check = time.time()
+
+        # Unified threat engine + baseline engine (new architecture)
+        try:
+            self.baseline_engine = BaselineEngine(self.db)
+            self.threat_engine = ThreatEngine(self.db, baseline_engine=self.baseline_engine)
+            logger.info("Unified threat engine initialized")
+        except Exception as e:
+            logger.warning("Failed to initialize threat/baseline engines: %s", e)
+            self.baseline_engine = None
+            self.threat_engine = None
         self._adapt_cycle = 0
 
         # Shutdown
@@ -680,6 +697,11 @@ class OPNsenseAgent:
             logger.info(
                 "New country detected: %s — %s events", cc, self.geo_lookup.country_events.get(cc, 0)
             )
+
+        # Unified threat engine — ingest events and update baselines
+        if log_type == 'firewall' and self.baseline_engine and self.threat_engine:
+            self.baseline_engine.update_baseline(event.get('rule_name', ''), [event])
+            self.threat_engine.ingest_firewall_event(event)
 
     def _process_batch(self, events: list[dict]):
         """Process a batch of events."""
