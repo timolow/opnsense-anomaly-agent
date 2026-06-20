@@ -1,96 +1,112 @@
-// ═══════════════════════════════════════════════════
-// Heatmap Tab - IP × Hour activity heatmap
-// ═══════════════════════════════════════════════════
-
+// Heatmap Tab - IP x Hour activity heatmap
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
-import { Map, Flame } from 'lucide-react';
+import { Flame } from 'lucide-react';
 
 export default function HeatmapTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; row: string; col: string } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string } | null>(null);
   
-  const { data } = useQuery<HeatmapData>({
+  const { data, isLoading } = useQuery<HeatmapData>({
     queryKey: ['heatmap'],
-    queryFn: api.heatmap,
-    refetchInterval: 30000,
+    queryFn: () => api.heatmap(),
+    refetchInterval: 60000,
   });
 
   useEffect(() => {
     if (!data || !canvasRef.current) return;
-    
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const { matrix, labels, rowLabels } = data;
-    const cellW = canvas.width / (matrix[0]?.length || 1);
-    const cellH = canvas.height / (matrix.length || 1);
+    const numCols = labels.length;
+    const numRows = rowLabels.length;
+    
+    if (numCols === 0 || numRows === 0) return;
+
+    canvas.width = 1200;
+    canvas.height = Math.max(400, numRows * 20);
+    const cellW = canvas.width / numCols;
+    const cellH = canvas.height / numRows;
+
+    // Find max value
+    let maxVal = 0;
+    for (const row of matrix) {
+      for (const v of row) {
+        if (v > maxVal) maxVal = v;
+      }
+    }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Draw cells
-    matrix.forEach((row, i) => {
-      row.forEach((val, j) => {
-        const intensity = Math.min(val / 100, 1);
-        // Cyberpunk cyan-to-purple gradient based on intensity
-        const r = Math.round(0 + intensity * 255);
-        const g = Math.round(229 * (1 - intensity) + 0 * intensity);
-        const b = Math.round(255);
-        const alpha = 0.3 + intensity * 0.7;
-        
+    for (let i = 0; i < matrix.length; i++) {
+      for (let j = 0; j < matrix[i].length; j++) {
+        const val = matrix[i][j];
+        const intensity = maxVal > 0 ? val / maxVal : 0;
+        const r = Math.round(intensity * 255);
+        const g = Math.round(255 * (1 - intensity));
+        const b = 255;
+        const alpha = 0.2 + intensity * 0.8;
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
         ctx.fillRect(j * cellW, i * cellH, cellW - 1, cellH - 1);
-
-        // Glow effect for high intensity
-        if (intensity > 0.7) {
-          ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.8)`;
-          ctx.shadowBlur = 8;
+        if (intensity > 0.8) {
+          ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.6)`;
+          ctx.shadowBlur = 4;
           ctx.fillRect(j * cellW, i * cellH, cellW - 1, cellH - 1);
           ctx.shadowBlur = 0;
         }
-      });
-    });
+      }
+    }
 
-    // Row labels
+    // Draw labels
     ctx.fillStyle = '#64748b';
-    ctx.font = '10px monospace';
-    rowLabels.forEach((label, i) => {
-      ctx.fillText(label, 4, i * cellH + cellH / 2 + 3);
-    });
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    for (let i = 0; i < rowLabels.length; i++) {
+      const short = rowLabels[i].length > 18 ? rowLabels[i].substring(0, 15) + '...' : rowLabels[i];
+      ctx.fillText(short, cellW - 4, i * cellH + cellH / 2 + 3);
+    }
 
-    // Column labels
-    labels.forEach((label, j) => {
-      ctx.fillText(label, j * cellW + 4, canvas.height - 4);
-    });
+    ctx.textAlign = 'center';
+    for (let j = 0; j < labels.length; j++) {
+      ctx.fillText(labels[j], j * cellW + cellW / 2, canvas.height - 2);
+    }
   }, [data]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!data || !canvasRef.current) return;
-    
     const rect = canvasRef.current.getBoundingClientRect();
     const { matrix, labels, rowLabels } = data;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    const cellW = rect.width / (matrix[0]?.length || 1);
-    const cellH = rect.height / (matrix.length || 1);
-    
-    const col = Math.floor(x / cellW);
-    const row = Math.floor(y / cellH);
-    
-    if (row >= 0 && row < matrix.length && col >= 0 && col < matrix[0].length) {
+    const numCols = labels.length;
+    const numRows = rowLabels.length;
+    const cellW = rect.width / numCols;
+    const cellH = rect.height / numRows;
+    const col = Math.floor((e.clientX - rect.left) / cellW);
+    const row = Math.floor((e.clientY - rect.top) / cellH);
+    if (row >= 0 && row < numRows && col >= 0 && col < numCols) {
       setTooltip({
         x: e.clientX,
         y: e.clientY,
         val: matrix[row][col],
-        row: rowLabels[row] || '',
-        col: labels[col] || '',
+        ip: rowLabels[row],
+        hour: labels[col],
       });
+    } else {
+      setTooltip(null);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -99,48 +115,35 @@ export default function HeatmapTab() {
           <Flame size={16} className="text-cyber-accent" />
         </div>
         <h2 className="text-lg font-bold">Traffic Heatmap</h2>
-        <span className="text-xs text-cyber-textMuted font-mono">IP × Hour Activity</span>
+        <span className="text-xs text-cyber-textMuted font-mono">IP x Hour Activity</span>
       </div>
 
       <div className="cyber-card p-4 scanlines relative">
         <canvas
           ref={canvasRef}
-          width={1200}
-          height={500}
           className="w-full h-auto rounded cursor-crosshair"
           onMouseMove={handleMouseMove}
           onMouseLeave={() => setTooltip(null)}
         />
 
-        {/* Tooltip */}
         {tooltip && (
           <div
-            className="fixed pointer-events-none z-50 cyber-card px-3 py-2"
-            style={{
-              left: tooltip.x + 10,
-              top: tooltip.y - 40,
-              minWidth: 120,
-            }}
+            className="fixed pointer-events-none z-50 cyber-card px-3 py-2 text-xs font-mono"
+            style={{ left: tooltip.x + 10, top: tooltip.y - 40, minWidth: 150 }}
           >
-            <div className="text-xs font-mono text-cyber-textMuted">{tooltip.row} @ {tooltip.col}:00</div>
-            <div className="text-lg font-bold font-mono text-cyber-accent" style={{ textShadow: '0 0 10px rgba(0,229,255,0.5)' }}>
-              {tooltip.val.toLocaleString()} events
-            </div>
+            <div className="font-semibold">{tooltip.ip}</div>
+            <div className="text-cyber-textMuted">{tooltip.hour}</div>
+            <div className="text-cyber-accent">{tooltip.val.toLocaleString()} events</div>
           </div>
         )}
+      </div>
 
-        {/* Legend */}
-        <div className="flex items-center gap-4 mt-4 pt-3 border-t border-cyber-border">
-          <span className="text-xs text-cyber-textMuted">Low</span>
-          <div className="flex gap-0.5">
-            {[0, 0.25, 0.5, 0.75, 1].map((v, i) => (
-              <div key={i} className="w-4 h-4 rounded-sm" style={{
-                backgroundColor: `rgba(${Math.round(v * 255)}, ${Math.round(229 * (1 - v))}, 255, 0.8)`,
-              }} />
-            ))}
-          </div>
-          <span className="text-xs text-cyber-textMuted">High</span>
-        </div>
+      <div className="flex items-center gap-4 text-xs text-cyber-textMuted">
+        <span>Low</span>
+        <div className="flex-1 h-2 rounded" style={{
+          background: 'linear-gradient(to right, rgba(0,255,255,0.2), rgba(255,0,255,0.9))'
+        }} />
+        <span>High</span>
       </div>
     </div>
   );

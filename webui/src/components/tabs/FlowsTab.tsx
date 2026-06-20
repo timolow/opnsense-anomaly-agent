@@ -76,14 +76,16 @@ export default function FlowsTab() {
 
           {/* Draw edges */}
           {edges.map((edge, i) => {
-            const srcNode = nodes.find(n => n.id === edge.source);
-            const tgtNode = nodes.find(n => n.id === edge.target);
-            if (!srcNode || !tgtNode) return null;
+            const srcIdx = nodes.findIndex(n => n.id === edge.source);
+            const tgtIdx = nodes.findIndex(n => n.id === edge.target);
+            if (srcIdx === -1 || tgtIdx === -1) return null;
 
-            const x1 = 100 + srcNode.size * 10;
-            const y1 = 50 + i * 20;
-            const x2 = 1100 - tgtNode.size * 10;
-            const y2 = 50 + i * 20;
+            const srcNode = nodes[srcIdx];
+            const tgtNode = nodes[tgtIdx];
+            const x1 = 150;
+            const y1 = 50 + srcIdx * 22;
+            const x2 = 1050;
+            const y2 = 50 + tgtIdx * 22;
 
             return (
               <line
@@ -93,36 +95,59 @@ export default function FlowsTab() {
                 x2={x2}
                 y2={y2}
                 stroke={categoryColors[srcNode.category] || '#64748b'}
-                strokeWidth={Math.min(edge.value / 10, 3)}
-                opacity={0.4 + Math.min(edge.value / 100, 0.6)}
+                strokeWidth={Math.max(Math.min(edge.value / 5, 4), 1)}
+                opacity={0.3 + Math.min(edge.value / 50, 0.5)}
                 filter="url(#glow)"
               />
             );
           })}
 
-          {/* Draw nodes */}
+          {/* Draw source nodes (left) */}
           {nodes.map((node, i) => (
-            <g key={`node-${i}`}>
+            <g key={`src-${i}`} className="cursor-pointer">
               <circle
-                cx="100"
-                cy={50 + i * 20}
-                r={Math.min(node.size, 24)}
+                cx={150}
+                cy={50 + i * 22}
+                r={Math.max(Math.min(node.count / 10, 16), 6)}
                 fill={categoryColors[node.category] || '#64748b'}
-                opacity={0.3 + Math.min(node.count / 100, 0.7)}
+                opacity={0.8}
                 filter="url(#glow)"
-                className="cursor-pointer"
               />
               <text
-                x="100"
-                y={50 + i * 20}
-                fill="#0a0e17"
-                fontSize="10"
-                textAnchor="middle"
+                x={130}
+                y={50 + i * 22}
+                fill="#64748b"
+                fontSize="9"
+                textAnchor="end"
                 dominantBaseline="middle"
                 fontFamily="monospace"
-                fontWeight="bold"
               >
-                {node.label.length > 8 ? node.label.slice(0, 7) + '…' : node.label}
+                {node.label.length > 12 ? node.label.slice(0, 10) + '…' : node.label}
+              </text>
+            </g>
+          ))}
+
+          {/* Draw target nodes (right) */}
+          {nodes.map((node, i) => (
+            <g key={`tgt-${i}`} className="cursor-pointer">
+              <circle
+                cx={1050}
+                cy={50 + i * 22}
+                r={Math.max(Math.min(node.count / 10, 16), 6)}
+                fill={categoryColors[node.category] || '#64748b'}
+                opacity={0.8}
+                filter="url(#glow)"
+              />
+              <text
+                x={1070}
+                y={50 + i * 22}
+                fill="#64748b"
+                fontSize="9"
+                textAnchor="start"
+                dominantBaseline="middle"
+                fontFamily="monospace"
+              >
+                {node.label.length > 12 ? node.label.slice(0, 10) + '…' : node.label}
               </text>
             </g>
           ))}
