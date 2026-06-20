@@ -37,8 +37,17 @@ def _validate_ip(ip_str: str) -> Optional[str]:
         return None
 
 # ── Syslog header patterns ──────────────────────────────────────────────
+# Standard BSD syslog WITH priority prefix: <134>Jun 20 01:00:00 host process[pid]: msg
 SYSLOG_HEADER_RE = re.compile(
     r'<(\d+)>'              # priority
+    r'(\w{3}\s+\d{1,2}\s+\d+:\d+:\d+)\s+'  # timestamp
+    r'(\S+)\s+'             # hostname
+    r'(\S+?)(?:\[(\d+)\])?:\s+'  # process[pid]:
+    r'(.*)'                 # message
+)
+
+# Alternate BSD syslog WITHOUT priority prefix: Jun 20 01:00:00 host process[pid]: msg
+SYSLOG_HEADER_ALT_RE = re.compile(
     r'(\w{3}\s+\d{1,2}\s+\d+:\d+:\d+)\s+'  # timestamp
     r'(\S+)\s+'             # hostname
     r'(\S+?)(?:\[(\d+)\])?:\s+'  # process[pid]:
@@ -50,7 +59,9 @@ TYPE_PATTERNS = [
     ('filterlog', re.compile(r'filterlog\[\d+\]:')),
     ('zenarmor', re.compile(r'zenarmor|zen[ _]?guard', re.IGNORECASE)),
     ('nginx', re.compile(r'nginx|/usr/sbin/cron.*nginx|ngx_autoblock', re.IGNORECASE)),
-    ('ids', re.compile(r'suricata|snort|ids\.\w+\.rule|ids\.list\.rule', re.IGNORECASE)),
+    # IDS: match Suricata/Snort alert format — [sid:rev:prio] or [sid:rev]
+    # Also catch "Classification:" or "Priority:" keywords that appear in Suricata alerts
+    ('ids', re.compile(r'\[\d+:\d+(:\d+)?\]|\[Classification:|\[Priority:', re.IGNORECASE)),
 ]
 
 # ── IP extraction ───────────────────────────────────────────────────────
@@ -136,18 +147,31 @@ class AdaptiveParser:
     
     def _parse_header(self, raw: str) -> Optional[Dict[str, Any]]:
         """Extract syslog header components."""
+        # Try standard format WITH priority first
         m = SYSLOG_HEADER_RE.match(raw)
-        if not m:
-            return None
-        pri, ts, host, process, pid, message = m.groups()
-        return {
-            'priority': pri,
-            'timestamp': ts,
-            'hostname': host,
-            'process': process.split('/')[-1],  # Just the program name
-            'pid': int(pid) if pid else None,
-            'message': message,
-        }
+        if m:
+            pri, ts, host, process, pid, message = m.groups()
+            return {
+                'priority': pri,
+                'timestamp': ts,
+                'hostname': host,
+                'process': process.split('/')[-1],  # Just the program name
+                'pid': int(pid) if pid else None,
+                'message': message,
+            }
+        # Fall back to format WITHOUT priority prefix
+        m = SYSLOG_HEADER_ALT_RE.match(raw)
+        if m:
+            ts, host, process, pid, message = m.groups()
+            return {
+                'priority': None,
+                'timestamp': ts,
+                'hostname': host,
+                'process': process.split('/')[-1],  # Just the program name
+                'pid': int(pid) if pid else None,
+                'message': message,
+            }
+        return None
     
     def _detect_type(self, raw: str, process: str) -> str:
         """Detect log type from content and process name."""
