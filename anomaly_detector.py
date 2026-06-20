@@ -1,268 +1,146 @@
 #!/usr/bin/env python3
 """
-Anomaly Detection Engine for OPNsense Anomaly Agent.
-
-Detects deviations from learned baselines including:
-- Volume spikes (z-score based)
-- Protocol distribution shifts
-- Port scan patterns
-- New IP detection
-- Temporal anomalies
+Anomaly Detector - integrated with agent.py
+Detects: volume spikes, port scans, new IPs, protocol shifts, temporal anomalies
 """
 import json
-import math
-import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
-logger = logging.getLogger(__name__)
-
 # Thresholds
-VOLUME_ZSCORE_THRESHOLD = 3.0
-PROTOCOL_SHIFT_THRESHOLD = 0.15  # 15% shift
-PORT_SCAN_THRESHOLD = 10  # Unique ports
-TEMPORAL_ANOMALY_THRESHOLD = 2.0  # z-score for hourly patterns
-
-
-class AnomalyEvent:
-    """Represents a detected anomaly."""
-    def __init__(self, anomaly_type: str, severity: str, rule: str, details: Dict[str, Any]):
-        self.type = anomaly_type
-        self.severity = severity  # LOW, MEDIUM, HIGH, CRITICAL
-        self.rule = rule
-        self.details = details
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.type,
-            "severity": self.severity,
-            "rule": self.rule,
-            "description": self.generate_description(),
-            **self.details
-        }
-
-    def generate_description(self) -> str:
-        if self.type == "volume_spike":
-            return (f"Volume spike: {self.details.get('current_count', 0)} events "
-                    f"(baseline avg: {self.details.get('baseline_avg', 0):.0f}, "
-                    f"std: {self.details.get('baseline_std', 0):.0f}, "
-                    f"z-score: {self.details.get('z_score', 0):.1f})")
-        elif self.type == "protocol_shift":
-            return (f"Protocol shift: {self.details.get('protocol', '')} "
-                    f"actual={self.details.get('actual_ratio', 0):.1%} "
-                    f"vs baseline={self.details.get('baseline_ratio', 0):.1%} "
-                    f"(shift={self.details.get('shift', 0):.1%})")
-        elif self.type == "port_scan":
-            return (f"Port scan: {self.details.get('src_ip', '')} "
-                    f"hit {self.details.get('ports_count', 0)} unique ports")
-        elif self.type == "new_ip":
-            return (f"New IP: {self.details.get('src_ip', '')} "
-                    f"({self.details.get('event_count', 0)} events, no baseline)")
-        elif self.type == "temporal_anomaly":
-            return (f"Temporal anomaly: hour {self.details.get('hour', 0)}:00 "
-                    f"actual={self.details.get('current_count', 0)} events "
-                    f"vs baseline={self.details.get('baseline_hourly', 0):.0f}")
-        return f"{self.type}: {self.details}"
+VOLUME_ZSCORE = 3.0      # z-score for volume spikes
+PORT_SCAN_MIN = 10       # unique ports to trigger port scan alert
+NEW_IP_MIN = 5           # events from new IP to alert
+PROTOCOL_SHIFT = 0.15    # 15% protocol shift threshold
+TEMPORAL_ZSCORE = 2.0    # z-score for temporal anomalies
 
 
 class AnomalyDetector:
     """Detects anomalies by comparing events against learned baselines."""
 
-    def __init__(self, baselines: Dict[str, Any]):
-        """
-        Initialize anomaly detector.
-
-        Args:
-            baselines: Dict mapping rule/IP to baseline objects
-        """
+    def __init__(self, baselines):
         self.baselines = baselines
-        self.ip_port_tracker: Dict[str, set] = defaultdict(set)
-        self.ip_event_counts: Dict[str, int] = defaultdict(int)
-        self.rule_event_counts: Dict[str, int] = defaultdict(int)
-        self.detected_anomalies: List[AnomalyEvent] = []
+        self.ip_ports: Dict[str, set] = defaultdict(set)
+        self.ip_counts: Dict[str, int] = defaultdict(int)
+        self.rule_counts: Dict[str, int] = defaultdict(int)
+        self.detected: List[Dict[str, Any]] = []
 
-    def detect_volume_anomaly(self, rule: str, current_count: int, baseline_avg: float,
-                               baseline_std: float) -> Optional[AnomalyEvent]:
-        """Detect volume spikes using z-score."""
-        if baseline_std == 0:
+    def check_volume(self, rule: str, count_5min: int) -> Optional[Dict]:
+        """Check if event volume deviates from baseline."""
+        b = self.baselines.get(rule)
+        if not b:
             return None
-
-        z_score = (current_count - baseline_avg) / baseline_std
-
-        if abs(z_score) >= VOLUME_ZSCORE_THRESHOLD:
-            severity = "CRITICAL" if abs(z_score) >= 5.0 else "HIGH" if abs(z_score) >= 4.0 else "MEDIUM"
-            return AnomalyEvent(
-                anomaly_type="volume_spike",
-                severity=severity,
-                rule=rule,
-                details={
-                    "current_count": current_count,
-                    "baseline_avg": baseline_avg,
-                    "baseline_std": baseline_std,
-                    "z_score": z_score
-                }
-            )
+        # Handle both dict and TrafficBaseline objects
+        avg = b.avg_events_per_hour if hasattr(b, 'avg_events_per_hour') else b.get("avg", 0)
+        std = b.std_events_per_hour if hasattr(b, 'std_events_per_hour') else b.get("std", 0)
+        if std == 0:
+            return None
+        hourly = count_5min * 12  # extrapolate
+        z = (hourly - avg) / std
+        if abs(z) >= VOLUME_ZSCORE:
+            sev = "CRITICAL" if abs(z) >= 5 else "HIGH" if abs(z) >= 4 else "MEDIUM"
+            return {
+                "type": "volume_spike", "severity": sev, "rule": rule,
+                "current_hourly": hourly, "baseline_avg": avg,
+                "baseline_std": std, "z_score": z,
+                "description": f"Volume anomaly on rule {rule}: {hourly:.0f}/hr (baseline {avg:.0f}/hr, z={z:.1f})"
+            }
         return None
 
-    def detect_protocol_anomaly(self, rule: str, protocol: str, actual_ratio: float,
-                                 baseline_ratio: float) -> Optional[AnomalyEvent]:
-        """Detect protocol distribution shifts."""
-        shift = abs(actual_ratio - baseline_ratio)
-
-        if shift >= PROTOCOL_SHIFT_THRESHOLD:
-            severity = "HIGH" if shift >= 0.3 else "MEDIUM"
-            return AnomalyEvent(
-                anomaly_type="protocol_shift",
-                severity=severity,
-                rule=rule,
-                details={
-                    "protocol": protocol,
-                    "actual_ratio": actual_ratio,
-                    "baseline_ratio": baseline_ratio,
-                    "shift": shift
-                }
-            )
+    def check_port_scan(self, ip: str) -> Optional[Dict]:
+        """Check for port scanning."""
+        ports = self.ip_ports.get(ip, set())
+        if len(ports) >= PORT_SCAN_MIN:
+            sev = "CRITICAL" if len(ports) > 20 else "HIGH" if len(ports) > 10 else "MEDIUM"
+            return {
+                "type": "port_scan", "severity": sev, "rule": "any",
+                "src_ip": ip, "ports_count": len(ports),
+                "description": f"Port scan from {ip}: {len(ports)} unique ports"
+            }
         return None
 
-    def detect_port_scan(self, src_ip: str, ports: set) -> Optional[AnomalyEvent]:
-        """Detect port scanning patterns."""
-        if len(ports) >= PORT_SCAN_THRESHOLD:
-            severity = "CRITICAL" if len(ports) > 20 else "HIGH" if len(ports) > 10 else "MEDIUM"
-            return AnomalyEvent(
-                anomaly_type="port_scan",
-                severity=severity,
-                rule="any",
-                details={
-                    "src_ip": src_ip,
-                    "ports_count": len(ports),
-                    "ports": list(ports)[:20]  # First 20 ports
-                }
-            )
-        return None
-
-    def detect_new_ip(self, src_ip: str, event_count: int) -> Optional[AnomalyEvent]:
-        """Detect IPs that don't have baselines."""
-        # Check if IP has any baseline
-        has_baseline = False
-        for key, baseline in self.baselines.items():
-            if hasattr(baseline, 'ip') and baseline.ip == src_ip:
-                has_baseline = True
+    def check_new_ip(self, ip: str, count: int) -> Optional[Dict]:
+        """Check for IPs without baselines."""
+        if count < NEW_IP_MIN:
+            return None
+        # Check if IP has any baseline (handle both dict and TrafficBaseline)
+        known = False
+        for b in self.baselines.values():
+            b_ip = b.ip if hasattr(b, 'ip') else b.get("ip")
+            if b_ip == ip:
+                known = True
                 break
-
-        if not has_baseline and event_count >= 5:
-            severity = "MEDIUM" if event_count > 10 else "LOW"
-            return AnomalyEvent(
-                anomaly_type="new_ip",
-                severity=severity,
-                rule="any",
-                details={
-                    "src_ip": src_ip,
-                    "event_count": event_count
-                }
-            )
+        if not known:
+            return {
+                "type": "new_ip", "severity": "MEDIUM", "rule": "any",
+                "src_ip": ip, "event_count": count,
+                "description": f"New IP {ip} with {count} events (no baseline)"
+            }
         return None
 
-    def detect_temporal_anomaly(self, rule: str, current_hour: int, current_count: int,
-                                  hourly_baseline: List[float]) -> Optional[AnomalyEvent]:
-        """Detect temporal anomalies (unusual activity for time of day)."""
-        if not hourly_baseline or len(hourly_baseline) != 24:
+    def check_temporal(self, rule: str, count_5min: int) -> Optional[Dict]:
+        """Check for temporal anomalies (unusual activity for time of day)."""
+        b = self.baselines.get(rule)
+        if not b:
             return None
-
-        baseline_hourly = hourly_baseline[current_hour]
-        if baseline_hourly == 0 and current_count > 0:
-            # Activity when there should be none
-            return AnomalyEvent(
-                anomaly_type="temporal_anomaly",
-                severity="HIGH",
-                rule=rule,
-                details={
-                    "hour": current_hour,
-                    "current_count": current_count,
-                    "baseline_hourly": baseline_hourly
-                }
-            )
-
-        # Check if current count is significantly higher than typical for this hour
-        if baseline_hourly > 0:
-            z_score = (current_count - baseline_hourly) / max(baseline_hourly * 0.5, 1)
-            if z_score >= TEMPORAL_ANOMALY_THRESHOLD:
-                return AnomalyEvent(
-                    anomaly_type="temporal_anomaly",
-                    severity="MEDIUM",
-                    rule=rule,
-                    details={
-                        "hour": current_hour,
-                        "current_count": current_count,
-                        "baseline_hourly": baseline_hourly,
-                        "z_score": z_score
-                    }
-                )
+        # Handle both dict and TrafficBaseline
+        hourly = b.hourly_distribution if hasattr(b, 'hourly_distribution') else b.get("hourly")
+        if not hourly:
+            return None
+        hour = datetime.now(timezone.utc).hour
+        baseline_hourly = hourly[hour]
+        if baseline_hourly == 0 and count_5min > 0:
+            return {
+                "type": "temporal_anomaly", "severity": "HIGH", "rule": rule,
+                "hour": hour, "current_count": count_5min,
+                "baseline_hourly": baseline_hourly,
+                "description": f"Temporal anomaly: rule {rule} at {hour}:00 (baseline: {baseline_hourly} events/hr)"
+            }
         return None
 
-    def analyze_events(self, events: List[Dict[str, Any]]) -> List[AnomalyEvent]:
-        """Analyze a batch of events against baselines."""
+    def analyze(self, events: List[Dict]) -> List[Dict]:
+        """Analyze a batch of events."""
+        # Reset counters
+        self.ip_ports.clear()
+        self.ip_counts.clear()
+        self.rule_counts.clear()
+
+        # Collect stats
+        for e in events:
+            rule = e.get("rule", "")
+            src_ip = e.get("src_ip", "")
+            dst_port = e.get("dst_port")
+            if rule:
+                self.rule_counts[rule] += 1
+            if src_ip:
+                self.ip_counts[src_ip] += 1
+            if src_ip and dst_port:
+                self.ip_ports[src_ip].add(dst_port)
+
         anomalies = []
 
-        # Reset counters
-        self.rule_event_counts.clear()
-        self.ip_port_tracker.clear()
-        self.ip_event_counts.clear()
-
-        # Collect event statistics
-        for event in events:
-            rule = event.get("rule", "")
-            src_ip = event.get("src_ip", "")
-            dst_port = event.get("dst_port")
-            protocol = event.get("protocol", "")
-
-            if rule:
-                self.rule_event_counts[rule] += 1
-            if src_ip:
-                self.ip_event_counts[src_ip] += 1
-            if src_ip and dst_port:
-                self.ip_port_tracker[src_ip].add(dst_port)
-
         # Check volume anomalies
-        for rule, count in self.rule_event_counts.items():
-            baseline = self.baselines.get(rule)
-            if baseline and hasattr(baseline, 'avg_events_per_hour'):
-                # Extrapolate count to hourly rate (assuming 5 min window)
-                hourly_count = count * 12
-                anomaly = self.detect_volume_anomaly(
-                    rule=rule,
-                    current_count=hourly_count,
-                    baseline_avg=baseline.avg_events_per_hour,
-                    baseline_std=baseline.std_events_per_hour
-                )
-                if anomaly:
-                    anomalies.append(anomaly)
+        for rule, count in self.rule_counts.items():
+            a = self.check_volume(rule, count)
+            if a:
+                anomalies.append(a)
+            # Check temporal
+            a = self.check_temporal(rule, count)
+            if a:
+                anomalies.append(a)
 
         # Check port scans
-        for src_ip, ports in self.ip_port_tracker.items():
-            anomaly = self.detect_port_scan(src_ip, ports)
-            if anomaly:
-                anomalies.append(anomaly)
+        for ip in self.ip_ports:
+            a = self.check_port_scan(ip)
+            if a:
+                anomalies.append(a)
 
-        # Check for new IPs
-        for src_ip, count in self.ip_event_counts.items():
-            anomaly = self.detect_new_ip(src_ip, count)
-            if anomaly:
-                anomalies.append(anomaly)
+        # Check new IPs
+        for ip, count in self.ip_counts.items():
+            a = self.check_new_ip(ip, count)
+            if a:
+                anomalies.append(a)
 
-        # Check temporal anomalies
-        from datetime import datetime, timezone
-        current_hour = datetime.now(timezone.utc).hour
-        for rule, count in self.rule_event_counts.items():
-            baseline = self.baselines.get(rule)
-            if baseline and hasattr(baseline, 'hourly_distribution'):
-                anomaly = self.detect_temporal_anomaly(
-                    rule=rule,
-                    current_hour=current_hour,
-                    current_count=count * 12,  # Extrapolate to hourly
-                    hourly_baseline=baseline.hourly_distribution
-                )
-                if anomaly:
-                    anomalies.append(anomaly)
-
-        self.detected_anomalies = anomalies
+        self.detected = anomalies
         return anomalies

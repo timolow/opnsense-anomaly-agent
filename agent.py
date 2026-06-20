@@ -80,6 +80,7 @@ from ids_signature_analyzer import IDSSignatureAnalyzer
 from nginx_monitor import NginxMonitor
 from threat_engine import ThreatEngine
 from baseline_engine import BaselineEngine
+from anomaly_detector import AnomalyDetector
 
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -488,6 +489,10 @@ class OPNsenseAgent:
             self.baseline_engine = BaselineEngine(self.db)
             self.threat_engine = ThreatEngine(self.db, baseline_engine=self.baseline_engine)
             logger.info("Unified threat engine initialized")
+
+            # Initialize anomaly detector with baselines
+            self.anomaly_detector = AnomalyDetector(self.baseline_engine._baselines)
+            logger.info("Anomaly detector initialized with %d baselines", len(self.baseline_engine._baselines))
         except Exception as e:
             logger.warning("Failed to initialize threat/baseline engines: %s", e)
             self.baseline_engine = None
@@ -933,7 +938,17 @@ class OPNsenseAgent:
 
                     # Detect anomalies on all events
                     self._process_batch(events)
-                    
+
+                    # Anomaly detection against baselines
+                    if self.anomaly_detector and self.baseline_engine:
+                        anomalies = self.anomaly_detector.analyze(events)
+                        if anomalies:
+                            for anomaly in anomalies:
+                                self.anomaly_count += 1
+                                logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
+                                self.discord_bot.send_alert(anomaly)
+                                self.apprise_notifier.send_alert(anomaly)
+
                     # Check WAN flap detection periodically
                     if now - self.last_wan_flap_check >= self.config.learn_interval:
                         self.last_wan_flap_check = now
