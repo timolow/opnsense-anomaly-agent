@@ -51,7 +51,6 @@ COPY graylog_training_pipeline.py .
 COPY baseline_engine.py .
 COPY threat_engine.py .
 COPY dashboard_api.py .
-COPY test_graylog_connection.py .
 
 # Copy built webui from build stage
 COPY --from=webui-build /build/dist webui/dist
