@@ -1031,6 +1031,11 @@ class OPNsenseAgent:
                             for anomaly in anomalies:
                                 self.anomaly_count += 1
                                 logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
+                                # Save anomaly to database
+                                try:
+                                    self.db.insert_anomaly(anomaly)
+                                except Exception as e:
+                                    logger.warning("Failed to save anomaly to DB: %s", e)
                                 self.discord_bot.send_alert(anomaly)
                                 self.apprise_notifier.send_alert(anomaly)
 
