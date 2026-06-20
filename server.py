@@ -920,6 +920,35 @@ def _fallback_alerts():
     alerts.sort(key=lambda a: a["count"], reverse=True)
     return alerts[:50]
 
+def query_anomalies():
+    """Query recent anomalies from database."""
+    conn = get_db()
+    if not conn: return []
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT id, type, severity, description, src_ip, timestamp
+            FROM anomalies
+            ORDER BY id DESC
+            LIMIT 50
+        """)
+        rows = cur.fetchall()
+        anomalies = []
+        for row in rows:
+            anomalies.append({
+                "id": row["id"],
+                "type": row["type"],
+                "severity": row["severity"],
+                "description": row["description"],
+                "src_ip": row.get("src_ip", ""),
+                "timestamp": str(row["timestamp"]) if row["timestamp"] else ""
+            })
+        return anomalies
+    except Exception as e:
+        print(f"Anomalies query failed: {e}")
+        return []
+    finally: close_db(conn)
+
 def query_service_status():
     """Read service monitor state from JSON file."""
     state_path = os.path.join(DATA_DIR, "service_monitor.json")
@@ -1575,6 +1604,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_health())
             elif path == "/api/alerts":
                 self._send_json(query_alerts())
+            elif path == "/api/anomalies":
+                self._send_json(query_anomalies())
             elif path == "/api/flows":
                 self._send_json(query_flows())
             elif path == "/api/logs":
