@@ -332,28 +332,31 @@ class BaselineEngine:
             conn = self.db.connect()
             cur = conn.cursor()
             
-            # Create table if not exists
+            # Migration: ensure new columns exist alongside legacy ones
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS rule_baselines (
-                    id SERIAL PRIMARY KEY,
-                    rule TEXT NOT NULL,
-                    ip TEXT,
-                    hour INTEGER,
-                    avg_events_per_hour DOUBLE PRECISION,
-                    std_events_per_hour DOUBLE PRECISION,
-                    max_events_per_hour INTEGER,
-                    min_events_per_hour INTEGER,
-                    protocol_distribution JSONB,
-                    avg_dst_ports DOUBLE PRECISION,
-                    avg_src_ports DOUBLE PRECISION,
-                    avg_unique_dst_ips DOUBLE PRECISION,
-                    pass_ratio DOUBLE PRECISION,
-                    block_ratio DOUBLE PRECISION,
-                    hourly_distribution JSONB,
-                    sample_count INTEGER,
-                    last_updated TIMESTAMPTZ,
-                    UNIQUE(rule, ip, hour)
-                )
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_name='rule_baselines' AND column_name='rule') THEN
+                        ALTER TABLE rule_baselines ADD COLUMN rule TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_name='rule_baselines' AND column_name='ip') THEN
+                        ALTER TABLE rule_baselines ADD COLUMN ip TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_name='rule_baselines' AND column_name='hour') THEN
+                        ALTER TABLE rule_baselines ADD COLUMN hour INTEGER;
+                    END IF;
+                    -- Drop conflicting unique constraint on legacy column
+                    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rule_baselines_rule_name_key') THEN
+                        ALTER TABLE rule_baselines DROP CONSTRAINT rule_baselines_rule_name_key;
+                    END IF;
+                    -- Add composite unique on new columns
+                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rule_baselines_rule_key') THEN
+                        ALTER TABLE rule_baselines ADD CONSTRAINT rule_baselines_rule_key UNIQUE (rule, ip, hour);
+                    END IF;
+                END $$;
             """)
             
             for key, baseline in self._baselines.items():
