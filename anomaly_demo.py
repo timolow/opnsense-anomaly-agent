@@ -44,7 +44,7 @@ def main():
     for b in top:
         protos = ", ".join(f"{k}={v:.0%}" for k, v in sorted(b["proto"].items(), key=lambda x: -x[1])[:3]) if b["proto"] else "N/A"
         peak_h = max(range(24), key=lambda h: b["hourly"][h]) if b["hourly"] and max(b["hourly"]) > 0 else 0
-        print(f"Rule {b['rule']:6s}: {b['samples']:6,} samples | avg={b['avg']:7.0f}/hr std={b['std']:6.0f} | pass={b['pass_r']:.0%}")
+        print(f"Rule {b['rule']:6s}: {b['samples']:6,} samples | avg={b['avg']:7.0f}/hr std={b['std']:6.0f}")
         print(f"         Protocols: {protos}")
         print(f"         Peak: {peak_h}:00 ({max(b['hourly'])} events)")
 
