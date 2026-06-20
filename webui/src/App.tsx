@@ -25,7 +25,7 @@ import LogsQueryTab from './components/tabs/LogsQueryTab';
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
-import Dashboard from './components/tabs/Dashboard';
+import OverviewTab from './components/tabs/OverviewTab';
 import NginxTab from './components/tabs/NginxTab';
 
 const TAB_TITLE: Record<string, string> = {
@@ -47,7 +47,6 @@ const TAB_TITLE: Record<string, string> = {
   network: 'Network Topology',
   'wan-flap': 'WAN Flap Detection',
   'rules-classified': 'Rules ML',
-  : ' Analytics',
   nginx: 'Nginx Monitor',
 };
 
@@ -71,7 +70,7 @@ function TabContent({ tab }: { tab: string }) {
     case 'network': return <NetworkTab />;
     case 'wan-flap': return <WanFlapTab />;
     case 'rules-classified': return <RulesClassifiedTab />;
-    case '': return <Dashboard />;
+    case '': return <OverviewTab />;
     case 'nginx': return <NginxTab />;
     default: return <OverviewTab />;
   }
