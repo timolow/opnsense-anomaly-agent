@@ -311,6 +311,7 @@ class OPNsenseClient:
 def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
     """Start HTTP server for chat commands."""
     import http.server
+    import os
 
     class Handler(http.server.BaseHTTPRequestHandler):
         agent_ref = None  # set below on construction
@@ -320,6 +321,12 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(obj).encode())
+
+        def _send_html(self, html: str):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(html.encode())
 
         def do_POST(self):
             if self.path != "/command":
@@ -335,6 +342,84 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
             self._send(200, self._handle(cmd))
 
         def do_GET(self):
+            # Serve dashboard
+            if self.path == "/dashboard":
+                dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard", "index.html")
+                if os.path.exists(dashboard_path):
+                    with open(dashboard_path, "r") as f:
+                        self._send_html(f.read())
+                else:
+                    self._send(404, {"error": "dashboard not found"})
+                return
+            # Serve dashboard assets
+            if self.path.startswith("/dashboard/"):
+                asset_path = os.path.join(os.path.dirname(__file__), self.path[1:])
+                if os.path.exists(asset_path):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/css" if asset_path.endswith(".css") else "application/javascript")
+                    self.end_headers()
+                    with open(asset_path, "r") as f:
+                        self.wfile.write(f.read().encode())
+                else:
+                    self._send(404, {"error": "asset not found"})
+                return
+            # API endpoints
+            if self.path.startswith("/api/"):
+                endpoint = self.path[5:]
+                a = self.agent_ref
+                if endpoint == "stats":
+                    self._send(200, {
+                        "event_count": a.event_count,
+                        "anomaly_count": a.anomaly_count,
+                        "uptime": int(time.time() - a.start_time),
+                        "unique_ips": len(a.stat_model.unique_ips),
+                        "baselines": len(a.baseline_engine._baselines) if a.baseline_engine else 0
+                    })
+                elif endpoint == "anomalies":
+                    # Get recent anomalies from DB
+                    try:
+                        cur = a.db.connect().cursor()
+                        cur.execute("""
+                            SELECT id, type, severity, description, timestamp
+                            FROM anomalies ORDER BY id DESC LIMIT 100
+                        """)
+                        anomalies = []
+                        for row in cur.fetchall():
+                            anomalies.append({
+                                "id": row[0],
+                                "type": row[1],
+                                "severity": row[2],
+                                "description": row[3],
+                                "timestamp": str(row[4]) if row[4] else ""
+                            })
+                        cur.close()
+                        self._send(200, {"anomalies": anomalies})
+                    except Exception as e:
+                        self._send(500, {"error": str(e)})
+                elif endpoint == "volume":
+                    # Get hourly volume for last 24 hours
+                    try:
+                        cur = a.db.connect().cursor()
+                        cur.execute("""
+                            SELECT DATE_TRUNC('hour', timestamp) as hour, COUNT(*)
+                            FROM events
+                            WHERE timestamp > NOW() - INTERVAL '24 hours'
+                            GROUP BY hour ORDER BY hour
+                        """)
+                        volume = []
+                        for row in cur.fetchall():
+                            volume.append({
+                                "hour": str(row[0]),
+                                "count": row[1]
+                            })
+                        cur.close()
+                        self._send(200, {"volume": volume})
+                    except Exception as e:
+                        self._send(500, {"error": str(e)})
+                else:
+                    self._send(404, {"error": f"unknown endpoint: {endpoint}"})
+                return
+            # Fallback to command handler
             self.do_POST()
 
         def _handle(self, cmd: str):
