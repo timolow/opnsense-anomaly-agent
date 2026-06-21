@@ -764,6 +764,12 @@ class OPNsenseAgent:
         if attacks:
             for attack in attacks:
                 attack.setdefault("timestamp", event.get("timestamp", ""))
+                # Check mute list before alerting
+                src_ip = attack.get("src_ip", "")
+                attack_type = attack.get("attack_type", "")
+                if self._is_muted(src_ip, attack_type):
+                    logger.info("Alert suppressed (muted): %s from %s", attack_type, src_ip)
+                    continue
                 self.anomaly_count += 1
                 llm_analysis = None
                 if self.vllm_client.enabled:
@@ -777,9 +783,13 @@ class OPNsenseAgent:
         # Geo lookup
         geo_result = self.geo_lookup.check_event(event)
         if geo_result:
-            self.anomaly_count += 1
-            self.discord_bot.send_alert(geo_result)
-            self.apprise_notifier.send_alert(geo_result)
+            src_ip = geo_result.get("src_ip", event.get("src_ip", ""))
+            if self._is_muted(src_ip, "GEO_ANOMALY"):
+                logger.info("Geo alert suppressed (muted): %s", src_ip)
+            else:
+                self.anomaly_count += 1
+                self.discord_bot.send_alert(geo_result)
+                self.apprise_notifier.send_alert(geo_result)
 
         # Track geo anomalies
         if geo_result and geo_result.get("type") == "geo_country_anomaly":
@@ -830,6 +840,38 @@ class OPNsenseAgent:
             logger.info("Service anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
+
+    # ── mute list helpers ────────────────────────────────────────────
+    def _load_mutes(self) -> list[dict]:
+        """Load active mutes from mutes.json."""
+        mutes_path = DATA_DIR / "mutes.json"
+        if not mutes_path.exists():
+            return []
+        try:
+            with open(mutes_path) as f:
+                data = json.load(f)
+            now = datetime.now(timezone.utc)
+            active = []
+            for m in data:
+                try:
+                    exp = datetime.fromisoformat(m["expires"])
+                    if exp > now:
+                        active.append(m)
+                except (KeyError, ValueError):
+                    pass
+            return active
+        except Exception:
+            return []
+
+    def _is_muted(self, src_ip: str, attack_type: str = "") -> bool:
+        """Check if an IP/attack_type combo is muted."""
+        mutes = self._load_mutes()
+        for m in mutes:
+            m_ip = m.get("ip", "")
+            m_type = m.get("attack_type", "")
+            if m_ip == src_ip and (m_type == "ALL" or m_type == attack_type):
+                return True
+        return False
     
     def _check_wan_flaps(self):
         """Check OPNsense gateway states for flapping and send alerts."""
@@ -1029,6 +1071,12 @@ class OPNsenseAgent:
                         anomalies = self.anomaly_detector.analyze(events)
                         if anomalies:
                             for anomaly in anomalies:
+                                src_ip = anomaly.get("src_ip", "")
+                                anomaly_type = anomaly.get("type", "")
+                                # Check mute list before alerting
+                                if self._is_muted(src_ip, anomaly_type):
+                                    logger.info("Anomaly alert suppressed (muted): %s from %s", anomaly_type, src_ip)
+                                    continue
                                 self.anomaly_count += 1
                                 logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
                                 # Save anomaly to database
@@ -1102,14 +1150,52 @@ class OPNsenseAgent:
                 time.sleep(5)
 
     def shutdown(self):
-        """Clean shutdown."""
+        """Clean shutdown: flush pending events, save state, stop services."""
+        logger.info("Shutting down agent...")
         self._shutdown.set()
+
+        # Flush any remaining events in the buffer
+        events_to_flush: list[dict] = []
+        with self._event_cond:
+            pending = len(self._event_buffer)
+            if pending:
+                logger.info("Processing %d pending events before shutdown...", pending)
+                events_to_flush = self._event_buffer[:]
+                del self._event_buffer[:]
+        # Process outside the lock to avoid deadlock
+        if events_to_flush:
+            self._process_batch(events_to_flush)
+
+        # Save final state
+        try:
+            baseline_summary = self.stat_model.get_baseline_summary()
+            if self.db:
+                self.db._save_baselines(baseline_summary)
+            self.persistence.save(self)
+            self.service_monitor.save()
+            self.zenarmor_classifier.save_state()
+            self.ids_analyzer.save_state()
+            self.nginx_monitor.save_state()
+            logger.info("State saved successfully")
+        except Exception as e:
+            logger.warning("Failed to save state during shutdown: %s", e)
+
+        # Stop services
         self.syslog_listener.stop()
         self._send_status()
         self.discord_bot.stop()
+        logger.info("Agent shutdown complete")
 
 
 # ── Main ───────────────────────────────────────────────────────────────
+def _signal_handler(signum, frame, agent_ref):
+    """Handle SIGTERM/SIGINT for graceful shutdown."""
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    logger.info("%s received — initiating graceful shutdown...", sig_name)
+    if agent_ref:
+        agent_ref.shutdown()
+
+
 def main():
     parser = argparse.ArgumentParser(description="OPNsense Anomaly Detection Agent")
     parser.add_argument("--config", type=str, default=None, help="Path to config.json")
@@ -1119,6 +1205,11 @@ def main():
 
     cfg = Config()
     agent = OPNsenseAgent(cfg)
+
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, lambda s, f: _signal_handler(s, f, agent))
+    signal.signal(signal.SIGINT, lambda s, f: _signal_handler(s, f, agent))
+
     agent.run()
 
 

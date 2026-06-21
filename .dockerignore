@@ -14,3 +14,10 @@ deploy-webui.sh
 pfelk/
 elasticsearch_client.py
 test*
+tests/
+docs/
+*.md
+LICENSE
+.dockerignore
+Dockerfile
+docker-compose.yml

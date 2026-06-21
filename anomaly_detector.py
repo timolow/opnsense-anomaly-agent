@@ -3,10 +3,14 @@
 Anomaly Detector - integrated with agent.py
 Detects: volume spikes, port scans, new IPs, protocol shifts, temporal anomalies
 """
+import os
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Thresholds
 VOLUME_ZSCORE = 3.0      # z-score for volume spikes
@@ -15,8 +19,9 @@ NEW_IP_MIN = 5           # events from new IP to alert
 PROTOCOL_SHIFT = 0.15    # 15% protocol shift threshold
 TEMPORAL_ZSCORE = 2.0    # z-score for temporal anomalies
 
-# Whitelisted internal IPs and ranges (never alert on these)
-INTERNAL_IP_PREFIXES = [
+# Default whitelisted internal IPs and ranges (never alert on these)
+# Override via INTERNAL_IP_PREFIXES env var (comma-separated)
+_DEFAULT_INTERNAL_PREFIXES = [
     "127.",              # localhost
     "192.168.1.",        # OPNsense LAN
     "192.168.222.",      # OPNsense OPT1
@@ -26,6 +31,18 @@ INTERNAL_IP_PREFIXES = [
     "fe80::",            # IPv6 link-local
     "ff02::",            # IPv6 multicast
 ]
+
+def _parse_internal_prefixes() -> List[str]:
+    """Parse INTERNAL_IP_PREFIXES from env var or return defaults."""
+    env_val = os.environ.get("INTERNAL_IP_PREFIXES", "")
+    if env_val:
+        prefixes = [p.strip() for p in env_val.split(",") if p.strip()]
+        logger.info("Using %d internal IP prefixes from env: %s", len(prefixes), prefixes)
+        return prefixes
+    return _DEFAULT_INTERNAL_PREFIXES.copy()
+
+
+INTERNAL_IP_PREFIXES = _parse_internal_prefixes()
 
 def is_internal_ip(ip: str) -> bool:
     """Check if an IP is whitelisted as internal."""
