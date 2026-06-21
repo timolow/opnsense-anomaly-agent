@@ -2,7 +2,7 @@
 // Overview Tab - Main dashboard with stats, threats, timeline
 // ═══════════════════════════════════════════════════
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { StatsData, AlertsData } from '@/types';
@@ -140,6 +140,7 @@ export default function OverviewTab() {
   const { timeRange, customTimeRange } = useStore();
   const [timelineData, setTimelineData] = useState<{ time: number; value: number }[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
+  const [sseTimelineData, setSSETimelineData] = useState<{ time: number; value: number }[]>([]);
 
   const { data: stats } = useQuery<StatsData>({
     queryKey: ['stats'],
@@ -154,6 +155,7 @@ export default function OverviewTab() {
   useEffect(() => {
     const fetchData = async () => {
       setTimelineLoading(true);
+      setSSETimelineData([]); // Clear SSE data when time range changes
       try {
         let start: number;
         let end: number;
@@ -194,6 +196,87 @@ export default function OverviewTab() {
     fetchData();
   }, [timeRange, customTimeRange]);
 
+  // SSE live updates - connect to SSE stream and merge with existing data
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let mounted = true;
+
+    // Only connect SSE for short time ranges where live updates make sense
+    if (timeRange === '1h' || timeRange === '6h') {
+      eventSource = new EventSource('/api/sse');
+
+      eventSource.onmessage = (event) => {
+        if (!mounted) return;
+
+        try {
+          const message = JSON.parse(event.data);
+          const timestamp = Math.floor(new Date(message.timestamp || Date.now()).getTime() / 1000);
+
+          setSSETimelineData(prevData => {
+            const newData = [...prevData];
+            const existingIndex = newData.findIndex(d => d.time === timestamp);
+
+            if (existingIndex >= 0) {
+              newData[existingIndex] = {
+                ...newData[existingIndex],
+                value: newData[existingIndex].value + 1,
+              };
+            } else {
+              newData.push({ time: timestamp, value: 1 });
+              newData.sort((a, b) => a.time - b.time);
+            }
+
+            // Keep only recent data
+            if (newData.length > 1000) {
+              newData.splice(0, newData.length - 1000);
+            }
+
+            return newData;
+          });
+        } catch (error) {
+          console.error('Failed to parse SSE message:', error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('SSE connection error:', error);
+      };
+    }
+
+    return () => {
+      mounted = false;
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [timeRange]);
+
+  // Merge static data with SSE live data
+  const combinedTimelineData = useMemo(() => {
+    if (sseTimelineData.length === 0) {
+      return timelineData;
+    }
+
+    // Create a map of all time buckets
+    const dataMap = new Map<number, number>();
+
+    // Add static data
+    timelineData.forEach(d => {
+      dataMap.set(d.time, d.value);
+    });
+
+    // Add/merge SSE data
+    sseTimelineData.forEach(d => {
+      const existing = dataMap.get(d.time) || 0;
+      dataMap.set(d.time, existing + d.value);
+    });
+
+    // Convert back to array
+    return Array.from(dataMap.entries())
+      .map(([time, value]) => ({ time, value }))
+      .sort((a, b) => a.time - b.time);
+  }, [timelineData, sseTimelineData]);
+
   if (!stats) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -217,12 +300,13 @@ export default function OverviewTab() {
         <StatBox value={stats.mutes_active} label="Active Mutes" />
       </div>
 
-      {/* Timeline Chart - uPlot time series */}
+      {/* Timeline Chart - uPlot time series with SSE live updates */}
       <TimelineChart
         title="Event Timeline"
-        data={timelineData}
+        data={combinedTimelineData}
         isLoading={timelineLoading}
         height={300}
+        isLive={sseTimelineData.length > 0}
       />
 
       <div className="grid grid-cols-3 gap-4">
