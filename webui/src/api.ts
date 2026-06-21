@@ -16,7 +16,7 @@ import type {
 const BASE = '/api';
 
 // Demo mode: mask IPs with placeholders
-const DEMO_MODE = true;
+const DEMO_MODE = false;
 
 function maskIp(ip: string): string {
   if (ip === '0.0.0.0' || !ip) return ip;

@@ -1689,7 +1689,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/nginx-timeline":
                 self._send_json(query_nginx_timeline())
             elif path == "/api/wan-flap":
-                self._send_json(query_wan_flap())
+                self._send_json(query_wan_flaps())
             elif path == "/api/wan-flap-status":
                 try:
                     import importlib
@@ -1890,6 +1890,32 @@ def save_active_learning_feedback(rule_name, feedback_type):
         json.dump(feedback, f, indent=2)
     
     return {"status": "saved", "rule_name": rule_name}
+
+
+def query_wan_flaps():
+    """Query WAN flap data from anomaly detector history."""
+    wan_flap_path = os.path.join(DATA_DIR, "wan_flap_history.json")
+    flaps = []
+    if os.path.exists(wan_flap_path):
+        try:
+            with open(wan_flap_path) as f:
+                flaps = json.load(f)
+        except Exception:
+            pass
+    
+    total_flaps = len(flaps)
+    last_flap = flaps[0].get("time", "N/A") if flaps else "N/A"
+    avg_duration = sum(f.get("duration", 0) for f in flaps) / total_flaps if total_flaps > 0 else 0
+    
+    return {
+        "flaps": flaps,
+        "stats": {
+            "total_flaps": total_flaps,
+            "last_flap": last_flap,
+            "avg_duration": round(avg_duration, 1),
+        }
+    }
+
 
 def query_opnsense_firewall_rules():
     """Fetch actual firewall rules from OPNsense with descriptions."""
