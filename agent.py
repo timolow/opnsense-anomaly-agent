@@ -474,6 +474,7 @@ class OPNsenseAgent:
                     user=self.config.db_user,
                     password=self.config.db_password,
                 )
+                self.db.ensure_rule_baselines_migration()
                 self.db.ensure_tables()
                 self.db.ensure_indexes()
                 self.db.ensure_hostnames_migration()
