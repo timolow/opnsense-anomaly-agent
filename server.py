@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Dashboard API server - reads from PostgreSQL + state file."""
 
+import base64
+import hmac
 import json
+import logging
 import os
+import queue
+import sys
 import time
 import urllib.parse
-import logging
-from datetime import datetime, timezone
+import threading as threading_lib
 from collections import defaultdict
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-
-import sys
 from typing import Any, Dict
+
 sys.path.insert(0, '/app')
 
 from eventdb import EventDatabase
@@ -40,6 +44,62 @@ class RateLimiter:
         return True
 
 rate_limiter = RateLimiter(max_requests=120, window=60)
+
+# ─── Basic Auth Configuration ─────────────────────────────────────
+DASHBOARD_API_USER = os.environ.get("DASHBOARD_API_USER", "")
+DASHBOARD_API_PASS = os.environ.get("DASHBOARD_API_PASS", "")
+_BASIC_AUTH_ENABLED = bool(DASHBOARD_API_USER and DASHBOARD_API_PASS)
+
+def _check_basic_auth(headers):
+    """Check HTTP Basic Auth credentials. Returns True if auth is not required or credentials are valid."""
+    if not _BASIC_AUTH_ENABLED:
+        return True
+    auth_header = headers.get("Authorization", "")
+    if not auth_header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+        user, _, password = decoded.partition(":")
+        # Constant-time comparison to prevent timing attacks
+        return hmac.compare_digest(user, DASHBOARD_API_USER) and hmac.compare_digest(password, DASHBOARD_API_PASS)
+    except Exception:
+        return False
+
+def _require_auth(handler):
+    """Send 401 if basic auth fails."""
+    if _check_basic_auth(handler.headers):
+        return True
+    handler.send_response(401)
+    handler.send_header("WWW-Authenticate", 'Basic realm="Dashboard API"')
+    handler.send_header("Content-Type", "application/json")
+    handler.end_headers()
+    handler.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+    return False
+
+# ─── SSE (Server-Sent Events) Queue ──────────────────────────────────
+_sse_queue: queue.Queue = queue.Queue(maxsize=1000)
+_sse_clients: list = []
+_sse_clients_lock = threading_lib.Lock()
+
+def publish_anomaly_sse(anomaly_data: dict):
+    """Publish an anomaly to the SSE queue (called by agent.py)."""
+    try:
+        _sse_queue.put_nowait({
+            "type": anomaly_data.get("type", anomaly_data.get("attack_type", "unknown")),
+            "severity": anomaly_data.get("severity", "MEDIUM"),
+            "description": anomaly_data.get("description", ""),
+            "src_ip": anomaly_data.get("src_ip", ""),
+            "timestamp": anomaly_data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+        })
+    except queue.Full:
+        logger.warning("SSE queue full, dropping anomaly event")
+
+def sse_background_cleaner():
+    """Background thread to clean up dead SSE connections."""
+    while True:
+        time.sleep(60)
+        with _sse_clients_lock:
+            _sse_clients[:] = [c for c in _sse_clients if c.get("alive", False)]
 
 try:
     import psycopg2
@@ -1659,16 +1719,136 @@ class DashboardHandler(BaseHTTPRequestHandler):
         
         return False
 
+    # ─── P2-3: Prometheus metrics ──────────────────────────────────────
+    def _send_prometheus_metrics(self):
+        """Send Prometheus-format metrics."""
+        out = []
+        try:
+            state = load_state()
+            agent_counters = state.get("agent_counters", {}) if state else {}
+            events_processed = agent_counters.get("event_count", 0)
+            anomalies_detected = agent_counters.get("anomaly_count", 0)
+            alerts_sent = agent_counters.get("alert_count", 0)
+            mutes_count = len(load_mutes())
+            baseline_count = 0
+            anomaly_by_type = {}
+            anomaly_by_severity = {}
+
+            conn = get_db()
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    cur.execute("SELECT attack_type, COUNT(*) as cnt FROM anomalies GROUP BY attack_type")
+                    for row in cur.fetchall():
+                        anomaly_by_type[str(row[0]).lower().replace(" ", "_")] = row[1]
+
+                    cur.execute("SELECT severity, COUNT(*) as cnt FROM anomalies GROUP BY severity")
+                    for row in cur.fetchall():
+                        anomaly_by_severity[row[0]] = row[1]
+
+                    row = cur.fetchone if False else None
+                    cur.execute("SELECT COUNT(*) FROM rule_baselines WHERE baseline_updated = TRUE")
+                    row = cur.fetchone()
+                    baseline_count = row[0] if row and row[0] else 0
+                    cur.close()
+                except Exception as e:
+                    logger.warning("Metrics query failed: %s", e)
+                finally:
+                    close_db(conn)
+
+            out.append("# HELP events_processed_total Total events processed by the agent")
+            out.append("# TYPE events_processed_total counter")
+            out.append(f"events_processed_total {events_processed}")
+
+            out.append("# HELP anomalies_detected_total Total anomalies detected by type")
+            out.append("# TYPE anomalies_detected_total counter")
+            out.append(f'anomalies_detected_total{{type="total"}} {anomalies_detected}')
+            for atype, cnt in anomaly_by_type.items():
+                out.append(f'anomalies_detected_total{{type="{atype}"}} {cnt}')
+
+            out.append("# HELP alert_sent_total Total alerts sent by severity")
+            out.append("# TYPE alert_sent_total counter")
+            for sev, cnt in anomaly_by_severity.items():
+                out.append(f'alert_sent_total{{severity="{sev}"}} {cnt}')
+            out.append(f'alert_sent_total{{severity="total"}} {alerts_sent}')
+
+            out.append("# HELP baseline_count Number of baselines currently tracked")
+            out.append("# TYPE baseline_count gauge")
+            out.append(f"baseline_count {baseline_count}")
+
+            out.append("# HELP mute_count Number of active mutes")
+            out.append("# TYPE mute_count gauge")
+            out.append(f"mute_count {mutes_count}")
+
+            out.append("# HELP agent_uptime_seconds Agent uptime in seconds")
+            out.append("# TYPE agent_uptime_seconds gauge")
+            out.append(f"agent_uptime_seconds {_calc_uptime(agent_counters)}")
+
+        except Exception as e:
+            logger.error("Prometheus metrics generation failed: %s", e)
+            out = [f"# ERROR: {e}"]
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(("\n".join(out) + "\n").encode())
+
+    # ─── P2-6: SSE handler ─────────────────────────────────────────────
+    def _handle_sse(self):
+        """Handle SSE streaming connection."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        client_id = int(time.time() * 1000000)
+        client_ref = {"alive": True, "client_id": client_id}
+        with _sse_clients_lock:
+            _sse_clients.append(client_ref)
+
+        try:
+            # Send initial connection event
+            self._sse_write(f"event: connected\ndata: {{\"client_id\": {client_id}}}\n\n")
+
+            while client_ref["alive"]:
+                try:
+                    data = _sse_queue.get(timeout=5)
+                    if not client_ref["alive"]:
+                        break
+                    self._sse_write(f"event: anomaly\ndata: {json.dumps(data, default=str)}\n\n")
+                except queue.Empty:
+                    # Send heartbeat every 5 seconds
+                    self._sse_write(": heartbeat\n\n")
+        except (BrokenPipeError, ConnectionResetError, Exception) as e:
+            logger.debug("SSE client disconnected: %s", e)
+        finally:
+            client_ref["alive"] = False
+            with _sse_clients_lock:
+                if client_ref in _sse_clients:
+                    _sse_clients.remove(client_ref)
+
+    def _sse_write(self, text):
+        """Write SSE data to the client connection."""
+        try:
+            self.wfile.write(text.encode())
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            raise
+
     def do_GET(self):
         path = self.path.split("?")[0]
         
-        # Serve static files (JS, CSS, etc.) from webui/dist
+        # Serve static files (JS, CSS, etc.) from webui/dist — NO AUTH required
         if path.startswith("/assets/"):
             if self._serve_static():
                 return
         
-        # Serve API endpoints
+        # Serve API endpoints — requires basic auth if configured
         if path.startswith("/api/"):
+            if not _require_auth(self):
+                return
             if path == "/api/stats":
                 self._send_json(query_stats())
             # ═══════════════════════════════════════════════
@@ -1721,6 +1901,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/ml-summary":
                 try:
                     data = api_ml_summary()
+                    self._send_json(data)
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            # P2-3: Prometheus metrics endpoint
+            elif path == "/api/metrics":
+                try:
+                    self._send_prometheus_metrics()
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            # P2-6: SSE streaming endpoint
+            elif path == "/api/sse":
+                self._handle_sse()
+            # P2-4: Active learning queue items (DB-backed)
+            elif path == "/api/active-learning-queue/items":
+                try:
+                    data = api_active_learning_queue_items()
                     self._send_json(data)
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
@@ -1840,19 +2036,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._serve_html()
 
     def do_POST(self):
-        if self.path == "/api/mutes":
+        path = self.path.split("?")[0]
+        # Auth check for API endpoints
+        if path.startswith("/api/"):
+            if not _require_auth(self):
+                return
+        if path == "/api/mutes":
             cl = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(cl)
             data = json.loads(body)
             mute = add_mute(ip=data.get("ip", ""), attack_type=data.get("attack_type", "ALL"), port=data.get("port"), duration=data.get("duration_seconds", 3600))
             self._send_json(mute, 201)
+        elif path == "/api/rule-feedback":
+            # Submit feedback for a rule classification (P2-2 feedback loop)
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
+            data = json.loads(body)
+            try:
+                db = EventDatabase()
+                db.save_feedback(
+                    rule_name=data.get("rule_name", ""),
+                    label=data.get("label", "incorrect"),
+                    reason=data.get("reason", ""),
+                    user_id=data.get("user_id", "dashboard")
+                )
+                self._send_json({"success": True, "message": "Feedback saved"}, 201)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        elif path == "/api/active-learning/resolved":
+            # Mark an active learning queue item as resolved (P2-4)
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
+            data = json.loads(body)
+            try:
+                db = EventDatabase()
+                item_id = data.get("item_id")
+                if item_id:
+                    db.resolve_active_learning_item(item_id, data.get("classification", ""), data.get("notes", ""))
+                self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
         else:
             self.send_response(405)
             self.end_headers()
 
     def do_DELETE(self):
-        if self.path.startswith("/api/mutes/"):
-            mute_id = self.path.split("/api/mutes/")[-1]
+        path = self.path.split("?")[0]
+        # Auth check for API endpoints
+        if path.startswith("/api/"):
+            if not _require_auth(self):
+                return
+        if path.startswith("/api/mutes/"):
+            mute_id = path.split("/api/mutes/")[-1]
             remove_mute(mute_id)
             self._send_json({"ok": True})
         else:
@@ -2466,6 +2701,26 @@ def api_active_learning_queue():
         return {'error': str(e), 'queue': []}
 
 
+def api_active_learning_queue_items():
+    """Get DB-backed active learning queue items (P2-4).
+    
+    Reads from the active_learning_queue table in the database.
+    Returns items that are pending review.
+    """
+    try:
+        db = EventDatabase()
+        items = db.get_active_learning_queue()
+        return {
+            'items': items,
+            'count': len(items),
+            'pending': len([i for i in items if i.get('status') == 'pending']),
+            'resolved': len([i for i in items if i.get('status') == 'resolved']),
+        }
+    except Exception as e:
+        logger.error("active_learning_queue_items failed: %s", e)
+        return {'error': str(e), 'items': [], 'count': 0}
+
+
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -2820,6 +3075,11 @@ def run_server(host=None, port=8766):
     
     bind_host = host or os.getenv("DASHBOARD_BIND", "0.0.0.0")
     logger.info("bind_host=%s", bind_host)
+    
+    # Start SSE background cleaner thread
+    sse_cleaner = threading_lib.Thread(target=sse_background_cleaner, daemon=True)
+    sse_cleaner.start()
+    logger.info("SSE background cleaner started")
     
     # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
     import traceback as tb

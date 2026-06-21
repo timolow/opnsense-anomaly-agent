@@ -19,6 +19,9 @@ ML Learning Approach:
    - NEW rule_names appearing (potential unauthorized rules)
    - Rule_name -> action mismatches (rule allows but traffic is suspicious)
    - Traffic with no rule_name (should be caught by default deny)
+
+P2-2: Feedback loop — reads rule_feedback from DB, adjusts confidence.
+P2-4: Active learning queue — queues UNCERTAIN rules for human review.
 """
 
 import os
@@ -47,6 +50,10 @@ class RuleProfile:
     total_events: int = 0
     first_seen: Optional[datetime] = None
     last_seen: Optional[datetime] = None
+    # P2-2: Confidence scoring (0.0-1.0, starts at None = not scored)
+    confidence: Optional[float] = None
+    feedback_correct: int = 0
+    feedback_incorrect: int = 0
     
     @property
     def is_permit_rule(self) -> Optional[bool]:
@@ -66,7 +73,7 @@ class RuleProfile:
     
     @property
     def classification(self) -> str:
-        """Classify the rule as PERMIT, DENY, or UNCLASSIFIED."""
+        """Classify the rule as PERMIT, DENY, MIXED, or UNCERTAIN."""
         if self.total_events < MIN_RULE_EVENTS:
             return "UNCERTAIN"
         if self.is_permit_rule:
@@ -74,6 +81,31 @@ class RuleProfile:
         if self.is_deny_rule:
             return "DENY"
         return "MIXED"
+    
+    def calculate_confidence(self) -> float:
+        """Calculate confidence score (0.0-1.0) based on event count and feedback."""
+        if self.total_events < MIN_RULE_EVENTS:
+            return 0.0
+        
+        # Base confidence from event count (more events = higher base confidence)
+        base_confidence = min(1.0, self.total_events / (MIN_RULE_EVENTS * 5))
+        
+        # Adjust based on action clarity
+        pass_ratio = self.actions.get('PASS', 0) / self.total_events if self.total_events > 0 else 0.5
+        block_ratio = self.actions.get('BLOCK', 0) / self.total_events if self.total_events > 0 else 0.5
+        action_clarity = max(pass_ratio, block_ratio)  # 1.0 = all same action
+        
+        confidence = base_confidence * action_clarity
+        
+        # P2-2: Apply feedback adjustments
+        total_feedback = self.feedback_correct + self.feedback_incorrect
+        if total_feedback > 0:
+            # Each incorrect label reduces confidence
+            incorrect_penalty = self.feedback_incorrect * 0.15  # 15% per incorrect
+            correct_bonus = min(0.1, self.feedback_correct * 0.05)  # up to 10% bonus
+            confidence = max(0.0, min(1.0, confidence - incorrect_penalty + correct_bonus))
+        
+        return round(confidence, 3)
 
 
 class RuleClassifier:
@@ -281,3 +313,123 @@ class RuleClassifier:
             logger.info("Rule classifier state loaded from %s (%d rules)", filepath, len(self.rule_profiles))
         except Exception as e:
             logger.error("Failed to load rule classifier state: %s", e)
+    
+    # ─── P2-2: Feedback Loop ───────────────────────────────────────────
+    
+    def apply_feedback(self, db=None):
+        """Read rule_feedback from the DB and adjust rule profiles.
+        
+        For each rule with feedback:
+        - 'correct' feedback increases confidence
+        - 'incorrect' feedback decreases confidence
+        - Multiple 'incorrect' labels can flip the classification to UNCERTAIN
+        
+        Args:
+            db: Optional EventDatabase instance. If not provided, feedback
+                adjustments are skipped (no DB connection).
+        """
+        if not db:
+            logger.debug("No DB connection for feedback loop, skipping")
+            return
+        
+        from eventdb import EventDatabase
+        if not isinstance(db, EventDatabase):
+            logger.warning("Invalid DB type for feedback loop")
+            return
+        
+        adjusted = 0
+        for rule_name, profile in self.rule_profiles.items():
+            try:
+                stats = db.get_feedback_stats(rule_name)
+                correct = stats.get('correct_count', 0)
+                incorrect = stats.get('incorrect_count', 0)
+                total = stats.get('total_records', 0)
+                
+                if total == 0:
+                    continue
+                
+                # Apply feedback to confidence
+                profile.feedback_correct = correct
+                profile.feedback_incorrect = incorrect
+                
+                # Calculate confidence based on feedback
+                agreement_rate = correct / total if total > 0 else 1.0
+                
+                # Start with base confidence from classification
+                if profile.total_events >= MIN_RULE_EVENTS:
+                    base_confidence = 0.7 if profile.classification in ("PERMIT", "DENY") else 0.4
+                else:
+                    base_confidence = 0.3
+                
+                # Adjust confidence based on feedback
+                feedback_factor = agreement_rate * min(total, 10) / 10.0
+                profile.confidence = min(1.0, max(0.0, base_confidence * feedback_factor))
+                
+                # If many incorrect labels, downgrade to UNCERTAIN
+                if incorrect >= 3 and total >= 5:
+                    profile.confidence = max(0.1, profile.confidence - 0.3)
+                    logger.info("Rule '%s' downgraded due to %d incorrect feedbacks", rule_name, incorrect)
+                
+                adjusted += 1
+            except Exception as e:
+                logger.warning("Feedback processing failed for rule %s: %s", rule_name, e)
+        
+        if adjusted > 0:
+            logger.info("Feedback loop applied to %d rules", adjusted)
+    
+    # ─── P2-4: Active Learning Queue ───────────────────────────────────
+    
+    def queue_uncertain_rules(self, db=None):
+        """Queue rules with UNCERTAIN classification for human review.
+        
+        Args:
+            db: EventDatabase instance for queue storage.
+        """
+        if not db:
+            logger.debug("No DB connection for active learning queue, skipping")
+            return
+        
+        from eventdb import EventDatabase
+        if not isinstance(db, EventDatabase):
+            logger.warning("Invalid DB type for active learning queue")
+            return
+        
+        queued = 0
+        for rule_name, profile in self.rule_profiles.items():
+            classification = profile.classification
+            confidence = profile.confidence if profile.confidence is not None else 0.0
+            
+            # Queue rules that are UNCERTAIN or have low confidence
+            should_queue = False
+            reasons = []
+            
+            if classification == "UNCERTAIN":
+                should_queue = True
+                reasons.append(f"Insufficient data: {profile.total_events} events (need {MIN_RULE_EVENTS})")
+            
+            elif classification == "MIXED":
+                should_queue = True
+                reasons.append(f"Mixed actions: PASS={profile.actions.get('PASS', 0)}, BLOCK={profile.actions.get('BLOCK', 0)}")
+            
+            if confidence is not None and confidence < 0.3:
+                should_queue = True
+                reasons.append(f"Low confidence: {confidence:.2f}")
+            
+            if profile.feedback_incorrect >= 2:
+                should_queue = True
+                reasons.append(f"User flagged as incorrect {profile.feedback_incorrect} times")
+            
+            if should_queue:
+                try:
+                    db.queue_for_review(
+                        rule_name=rule_name,
+                        classification=classification,
+                        confidence=confidence,
+                        reasons="; ".join(reasons),
+                    )
+                    queued += 1
+                except Exception as e:
+                    logger.warning("Failed to queue rule %s for review: %s", rule_name, e)
+        
+        if queued > 0:
+            logger.info("Queued %d rules for active learning review", queued)

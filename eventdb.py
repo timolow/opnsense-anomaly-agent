@@ -171,6 +171,24 @@ CREATE TABLE IF NOT EXISTS ip_threat_profiles (
 CREATE INDEX IF NOT EXISTS idx_rule_baselines_rule ON rule_baselines(rule);
 CREATE INDEX IF NOT EXISTS idx_rule_baselines_ip ON rule_baselines(ip) WHERE ip IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ip_threat_profiles_score ON ip_threat_profiles(unified_score DESC);
+
+-- P2-4: Active Learning Queue — rules flagged for human review
+CREATE TABLE IF NOT EXISTS active_learning_queue (
+    id SERIAL PRIMARY KEY,
+    rule_name TEXT NOT NULL,
+    rule_description TEXT,
+    classification TEXT NOT NULL DEFAULT 'UNCERTAIN',
+    confidence DOUBLE PRECISION DEFAULT 0,
+    reasons TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending, resolved, dismissed
+    resolved_classification TEXT,
+    resolved_notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_active_learning_queue_status ON active_learning_queue(status);
+CREATE INDEX IF NOT EXISTS idx_active_learning_queue_rule ON active_learning_queue(rule_name);
+CREATE INDEX IF NOT EXISTS idx_active_learning_queue_created ON active_learning_queue(created_at);
 """
 
 
@@ -1191,4 +1209,104 @@ class EventDatabase:
         finally:
             cur.close()
             conn.close()
+
+    # ── P2-4: Active Learning Queue Methods ─────────────────────────────
+
+    def queue_for_review(self, rule_name: str, classification: str,
+                         confidence: float, reasons: str = "",
+                         rule_description: str = "") -> int:
+        """Add a rule to the active learning queue for human review.
+        
+        Uses INSERT ... ON CONFLICT to avoid duplicates for the same rule.
+        Returns the queue item ID.
+        """
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO active_learning_queue
+                   (rule_name, rule_description, classification, confidence, reasons, status)
+                   VALUES (%s, %s, %s, %s, %s, 'pending')
+                   ON CONFLICT (rule_name) DO UPDATE SET
+                       classification = EXCLUDED.classification,
+                       confidence = EXCLUDED.confidence,
+                       reasons = EXCLUDED.reasons,
+                       status = CASE WHEN active_learning_queue.status = 'resolved' 
+                           THEN 'resolved' ELSE 'pending' END,
+                       updated_at = NOW()
+                   RETURNING id""",
+                (rule_name, rule_description or "", classification, confidence, reasons)
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+        finally:
+            cur.close()
+
+    def get_active_learning_queue(self, status: str = None, limit: int = 100) -> List[Dict]:
+        """Get active learning queue items."""
+        cur = self._new_cursor()
+        try:
+            if status:
+                cur.execute(
+                    """SELECT id, rule_name, rule_description, classification, confidence,
+                              reasons, status, resolved_classification, resolved_notes,
+                              created_at, resolved_at
+                       FROM active_learning_queue
+                       WHERE status = %s
+                       ORDER BY created_at DESC
+                       LIMIT %s""",
+                    (status, limit)
+                )
+            else:
+                cur.execute(
+                    """SELECT id, rule_name, rule_description, classification, confidence,
+                              reasons, status, resolved_classification, resolved_notes,
+                              created_at, resolved_at
+                       FROM active_learning_queue
+                       ORDER BY 
+                           CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+                           created_at DESC
+                       LIMIT %s""",
+                    (limit,)
+                )
+            if cur.description:
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+                result = []
+                for row in rows:
+                    item = dict(zip(cols, row))
+                    # Serialize datetime objects
+                    for k in ('created_at', 'resolved_at'):
+                        if item.get(k):
+                            item[k] = item[k].isoformat() if hasattr(item[k], 'isoformat') else str(item[k])
+                    result.append(item)
+                return result
+            return []
+        finally:
+            cur.close()
+
+    def resolve_active_learning_item(self, item_id: int,
+                                      classification: str = "",
+                                      notes: str = ""):
+        """Mark an active learning queue item as resolved."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """UPDATE active_learning_queue
+                   SET status = 'resolved',
+                       resolved_classification = %s,
+                       resolved_notes = %s,
+                       resolved_at = NOW()
+                   WHERE id = %s""",
+                (classification, notes, item_id)
+            )
+        finally:
+            cur.close()
+
+    def dismiss_active_learning_item(self, item_id: int):
+        """Remove an item from the active learning queue."""
+        cur = self._new_cursor()
+        try:
+            cur.execute("DELETE FROM active_learning_queue WHERE id = %s", (item_id,))
+        finally:
+            cur.close()
 
