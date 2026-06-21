@@ -26,6 +26,7 @@ COPY syslog_listener.py .
 COPY adaptive_parser.py .
 COPY eventdb.py .
 COPY attack_detectors.py .
+COPY anomaly_detector.py .
 COPY statistical_model.py .
 COPY geo_lookup.py .
 COPY discord_bot.py .
@@ -44,6 +45,7 @@ COPY wan_flap_detector.py .
 COPY zenarmor_classifier.py .
 COPY ids_signature_analyzer.py .
 COPY nginx_monitor.py .
+COPY parser.py .
 
 # Copy new modules
 COPY graylog_training_extractor.py .

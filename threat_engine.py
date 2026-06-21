@@ -337,11 +337,23 @@ class ThreatEngine:
         for ip, profile in self._ip_profiles.items():
             try:
                 self.db.execute("""
-                    INSERT OR REPLACE INTO ip_threat_profiles 
+                    INSERT INTO ip_threat_profiles 
                     (ip, unified_score, total_events, firewall_events, http_events,
                      ids_events, zenarmor_events, nginx_events, baseline_deviations,
                      geo_info, first_seen, last_seen)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (ip) DO UPDATE SET
+                        unified_score = EXCLUDED.unified_score,
+                        total_events = EXCLUDED.total_events,
+                        firewall_events = EXCLUDED.firewall_events,
+                        http_events = EXCLUDED.http_events,
+                        ids_events = EXCLUDED.ids_events,
+                        zenarmor_events = EXCLUDED.zenarmor_events,
+                        nginx_events = EXCLUDED.nginx_events,
+                        baseline_deviations = EXCLUDED.baseline_deviations,
+                        geo_info = EXCLUDED.geo_info,
+                        first_seen = EXCLUDED.first_seen,
+                        last_seen = EXCLUDED.last_seen
                 """, (
                     ip,
                     profile.unified_score,

@@ -115,81 +115,11 @@ CREATE TABLE IF NOT EXISTS rule_feedback (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Week 2: Per-rule baseline statistics
-CREATE TABLE IF NOT EXISTS rule_baselines (
-    id SERIAL PRIMARY KEY,
-    rule_name TEXT NOT NULL UNIQUE,
-    avg_port_diversity DOUBLE PRECISION DEFAULT 0,
-    avg_dest_diversity DOUBLE PRECISION DEFAULT 0,
-    avg_volume DOUBLE PRECISION DEFAULT 0,
-    avg_block_ratio DOUBLE PRECISION DEFAULT 0,
-    baseline_goodness DOUBLE PRECISION DEFAULT 0,
-    sample_count INTEGER DEFAULT 0,
-    baseline_updated BOOLEAN DEFAULT FALSE,
-    window_start TIMESTAMPTZ,
-    window_end TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Week 3: Temporal patterns per rule
-CREATE TABLE IF NOT EXISTS rule_temporal_patterns (
-    id SERIAL PRIMARY KEY,
-    rule_name TEXT NOT NULL UNIQUE,
-    hour_distribution JSONB DEFAULT '{}',
-    total_samples INTEGER DEFAULT 0,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Indexes for self-learning tables
-CREATE INDEX IF NOT EXISTS idx_rule_feedback_rule_name ON rule_feedback(rule_name);
-CREATE INDEX IF NOT EXISTS idx_rule_feedback_timestamp ON rule_feedback(timestamp);
-CREATE INDEX IF NOT EXISTS idx_rule_feedback_label ON rule_feedback(label);
-CREATE INDEX IF NOT EXISTS idx_rule_temporal_patterns_rule_name ON rule_temporal_patterns(rule_name);
-
--- Nginx web server events table
-CREATE TABLE IF NOT EXISTS nginx_events (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL,
-    src_ip TEXT,
-    method TEXT,
-    path TEXT,
-    status_code INTEGER,
-    bytes_sent INTEGER,
-    request TEXT,
-    user_agent TEXT,
-    raw_message TEXT,
-    ingested_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Nginx anomalies table
-CREATE TABLE IF NOT EXISTS nginx_anomalies (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL,
-    attack_type TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    src_ip TEXT,
-    path TEXT,
-    status_code INTEGER,
-    description TEXT,
-    detail JSONB,
-    alert_sent BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Indexes for nginx tables
-CREATE INDEX IF NOT EXISTS idx_nginx_events_timestamp ON nginx_events(timestamp);
-CREATE INDEX IF NOT EXISTS idx_nginx_events_src_ip ON nginx_events(src_ip) WHERE src_ip IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_nginx_events_path ON nginx_events(path) WHERE path IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_nginx_events_status_code ON nginx_events(status_code);
-CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_attack_type ON nginx_anomalies(attack_type);
-CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_severity ON nginx_anomalies(severity);
-CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_created_at ON nginx_anomalies(created_at);
-CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_src_ip ON nginx_anomalies(src_ip) WHERE src_ip IS NOT NULL;
-
--- Rule baselines table: learned traffic patterns per rule
+-- Rule baselines table: learned traffic patterns per rule (consolidated schema)
 CREATE TABLE IF NOT EXISTS rule_baselines (
     id SERIAL PRIMARY KEY,
     rule TEXT NOT NULL,
+    rule_name TEXT NOT NULL,
     ip TEXT,
     hour INTEGER,
     avg_events_per_hour DOUBLE PRECISION DEFAULT 0,
@@ -204,8 +134,20 @@ CREATE TABLE IF NOT EXISTS rule_baselines (
     block_ratio DOUBLE PRECISION DEFAULT 0,
     hourly_distribution JSONB DEFAULT '[]',
     sample_count INTEGER DEFAULT 0,
-    last_updated TIMESTAMPTZ DEFAULT NOW()
+    avg_port_diversity DOUBLE PRECISION DEFAULT 0,
+    avg_dest_diversity DOUBLE PRECISION DEFAULT 0,
+    avg_volume DOUBLE PRECISION DEFAULT 0,
+    avg_block_ratio DOUBLE PRECISION DEFAULT 0,
+    baseline_goodness DOUBLE PRECISION DEFAULT 0,
+    baseline_updated BOOLEAN DEFAULT FALSE,
+    window_start TIMESTAMPTZ,
+    window_end TIMESTAMPTZ,
+    last_updated TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure unique constraint on rule_name for consistent lookups
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_baselines_rule_name ON rule_baselines(rule_name) WHERE ip IS NULL AND hour IS NULL;
 
 -- IP threat profiles table: unified threat scores per IP
 CREATE TABLE IF NOT EXISTS ip_threat_profiles (
@@ -395,6 +337,9 @@ class EventDatabase:
         cur = self._new_cursor()
         try:
             detail = anomaly_data.pop('detail', None)
+            # Ensure timestamp is set (required by DB schema)
+            if not anomaly_data.get('timestamp'):
+                anomaly_data['timestamp'] = datetime.now(timezone.utc).isoformat()
             cur.execute(
                 """INSERT INTO anomalies
                    (event_id, timestamp, attack_type, severity,

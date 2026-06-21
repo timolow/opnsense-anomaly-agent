@@ -272,7 +272,7 @@ class DashboardAPI:
         try:
             result = self.db.execute("""
                 SELECT COUNT(*) FROM firewall_events 
-                WHERE rule = ? AND timestamp > datetime('now', '-1 hour')
+                WHERE rule = %s AND timestamp > NOW() - INTERVAL '1 hour'
             """, (rule,)).fetchone()
             return result[0] if result else 0
         except Exception:

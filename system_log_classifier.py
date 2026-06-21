@@ -48,6 +48,8 @@ TRUSTED_SERVICES = {
     'firewall', 'filterlog', 'vpn', 'openvpn', 'wireguard',
     'usbhid-ups', 'lockout_handler', 'configd', 'zenarmor',
     'omniservice', 'captiveportal', 'ntpctl', 'dhcpleases',
+    'nginx', 'audit', 'config', 'configctl', 'crontab', 'syslogd',
+    'usbd', 'devd', 'route6d', 'rtsold', 'wsd', 'hostapd',
 }
 
 

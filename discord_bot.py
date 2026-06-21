@@ -240,8 +240,10 @@ class DiscordClient:
             return False
     
     def send_alert(self, attack: Dict[str, Any]) -> bool:
-        dedup_key = f"{attack.get('attack_type')}:{attack.get('src_ip', 'x')}:{attack.get('dst_ip', 'x')}"
-        if not self.rate_limiter.should_alert(attack.get('attack_type'), dedup_key):
+        # Use 'type' or 'attack_type' for dedup (system log anomalies use 'type')
+        signal = attack.get('attack_type') or attack.get('type') or 'UNKNOWN'
+        dedup_key = f"{signal}:{attack.get('src_ip', 'x')}:{attack.get('dst_ip', 'x')}:{attack.get('service', '')}"
+        if not self.rate_limiter.should_alert(signal, dedup_key):
             return False
         
         embed = anomaly_to_embed(attack)
