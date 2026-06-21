@@ -82,6 +82,20 @@ from threat_engine import ThreatEngine
 from baseline_engine import BaselineEngine
 from anomaly_detector import AnomalyDetector
 
+# P2-6: SSE queue access (imported from server module)
+_sse_publish_fn = None
+
+def _get_sse_publisher():
+    """Lazily import the SSE publisher from server module."""
+    global _sse_publish_fn
+    if _sse_publish_fn is None:
+        try:
+            from server import publish_anomaly_sse
+            _sse_publish_fn = publish_anomaly_sse
+        except ImportError:
+            _sse_publish_fn = lambda x: None  # No-op if server not available
+    return _sse_publish_fn
+
 
 # ── Config ─────────────────────────────────────────────────────────────
 class Config:
@@ -1098,6 +1112,11 @@ class OPNsenseAgent:
                                     logger.warning("Failed to save anomaly to DB: %s", e)
                                 self.discord_bot.send_alert(anomaly)
                                 self.apprise_notifier.send_alert(anomaly)
+                                # P2-6: Publish to SSE stream
+                                try:
+                                    _get_sse_publisher()(anomaly)
+                                except Exception:
+                                    pass
 
                     # Check WAN flap detection periodically
                     if now - self.last_wan_flap_check >= self.config.learn_interval:
