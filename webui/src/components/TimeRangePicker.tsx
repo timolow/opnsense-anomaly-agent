@@ -1,7 +1,7 @@
 // TimeRangePicker - Grafana-like time selection
 import React, { useState } from 'react';
-import { useStore, timeRanges, getTimeRangeTimestamps } from '../../store';
-import type { TimeRange, CustomTimeRange } from '../../store';
+import { useStore, timeRanges, getTimeRangeTimestamps } from '../store';
+import type { TimeRange, CustomTimeRange } from '../store';
 
 interface TimeRangePickerProps {
   onTimeRangeChange?: (start: number, end: number) => void;

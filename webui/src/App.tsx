@@ -5,6 +5,7 @@
 import { Suspense, lazy, useEffect } from 'react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
+import TimeRangePicker from './components/TimeRangePicker';
 
 // ── Tab Components ──
 import OverviewTab from './components/tabs/OverviewTab';
@@ -25,7 +26,6 @@ import LogsQueryTab from './components/tabs/LogsQueryTab';
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
-import OverviewTab from './components/tabs/OverviewTab';
 import NginxTab from './components/tabs/NginxTab';
 
 const TAB_TITLE: Record<string, string> = {
@@ -158,6 +158,7 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-3">
+            <TimeRangePicker />
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-cyber-panelHover border border-cyber-border">
               <div className="w-2 h-2 rounded-full bg-cyber-green animate-pulse" />
               <span className="text-xs text-cyber-textMuted">Live</span>
