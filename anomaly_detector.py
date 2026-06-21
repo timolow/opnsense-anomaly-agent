@@ -126,22 +126,69 @@ class AnomalyDetector:
         return None
 
     def check_temporal(self, rule: str, count_5min: int) -> Optional[Dict]:
-        """Check for temporal anomalies (unusual activity for time of day)."""
+        """Check for temporal anomalies using z-scores against hourly distribution.
+
+        Compares current activity against the distribution of all 24 hours.
+        A spike relative to the learned pattern triggers an alert.
+        Catches: unusual activity at quiet hours, spikes during busy periods.
+        """
         b = self.baselines.get(rule)
         if not b:
             return None
-        # Handle both dict and TrafficBaseline
-        hourly = b.hourly_distribution if hasattr(b, 'hourly_distribution') else b.get("hourly")
+        # Handle both dict and TrafficBaseline objects
+        hourly = (b.hourly_distribution
+                   if hasattr(b, 'hourly_distribution')
+                   else b.get("hourly", []))
         if not hourly:
             return None
+
+        # Pad to 24 hours if distribution is incomplete
+        dist = list(hourly) + [0.0] * (24 - len(hourly))
+
+        # Compute population mean and stddev of the full distribution
+        mean = sum(dist) / len(dist)
+        variance = sum((x - mean) ** 2 for x in dist) / len(dist)
+        stddev = variance ** 0.5
+
+        # Skip if no variance (all hours identical — no temporal pattern to compare)
+        if stddev < 0.1:
+            return None
+
         hour = datetime.now(timezone.utc).hour
-        baseline_hourly = hourly[hour]
-        if baseline_hourly == 0 and count_5min > 0:
+        current_rate = count_5min * 12  # extrapolate 5-min count to hourly rate
+        expected_this_hour = dist[hour] if hour < len(dist) else 0.0
+
+        # Z-score: how many stddevs away from the distribution mean is the current rate
+        z = (current_rate - mean) / stddev
+
+        # Also check ratio against this specific hour's baseline (catches quiet-hour spikes)
+        # If the hour normally sees near-zero traffic, even a small absolute count is suspicious
+        ratio_anomaly = False
+        if expected_this_hour < 1 and current_rate > 0:
+            # Activity when there should be none — flag if rate is meaningfully above mean
+            if current_rate > mean + TEMPORAL_ZSCORE * stddev:
+                ratio_anomaly = True
+
+        if abs(z) >= TEMPORAL_ZSCORE or ratio_anomaly:
+            sev = ("CRITICAL" if abs(z) >= 5
+                   else "HIGH" if abs(z) >= 4
+                   else "MEDIUM")
             return {
-                "type": "temporal_anomaly", "severity": "HIGH", "rule": rule,
-                "hour": hour, "current_count": count_5min,
-                "baseline_hourly": baseline_hourly,
-                "description": f"Temporal anomaly: rule {rule} at {hour}:00 (baseline: {baseline_hourly} events/hr)"
+                "type": "temporal_anomaly",
+                "severity": sev,
+                "rule": rule,
+                "hour": hour,
+                "current_5min": count_5min,
+                "current_hourly_rate": current_rate,
+                "baseline_mean": round(mean, 1),
+                "baseline_std": round(stddev, 1),
+                "baseline_this_hour": expected_this_hour,
+                "z_score": round(z, 2),
+                "description": (
+                    f"Temporal anomaly on rule {rule}: {current_rate:.0f}/hr "
+                    f"at {hour}:00 UTC (dist mean {mean:.0f}/hr, "
+                    f"this hour expected {expected_this_hour:.0f}/hr, z={z:.1f})"
+                ),
             }
         return None
 
