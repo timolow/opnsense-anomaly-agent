@@ -11,6 +11,8 @@ import {
   Activity, Clock, ArrowUpRight, ArrowDownRight,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { useStore } from '../../store';
+import TimelineChart from '../../components/charts/TimelineChart';
 
 function StatBox({ value, label, color, change }: {
   value: string | number;
@@ -135,6 +137,10 @@ function ActivityFeed({ alerts }: { alerts: AlertsData }) {
 }
 
 export default function OverviewTab() {
+  const { timeRange, customTimeRange } = useStore();
+  const [timelineData, setTimelineData] = useState<{ time: number; value: number }[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(true);
+
   const { data: stats } = useQuery<StatsData>({
     queryKey: ['stats'],
     queryFn: api.stats,
@@ -143,6 +149,50 @@ export default function OverviewTab() {
     queryKey: ['alerts'],
     queryFn: api.alerts,
   });
+
+  // Fetch timeline data based on time range
+  useEffect(() => {
+    const fetchData = async () => {
+      setTimelineLoading(true);
+      try {
+        let start: number;
+        let end: number;
+
+        if (timeRange === 'custom' && customTimeRange) {
+          start = customTimeRange.start;
+          end = customTimeRange.end;
+        } else {
+          const now = Math.floor(Date.now() / 1000);
+          switch (timeRange) {
+            case '1h': start = now - 3600; break;
+            case '6h': start = now - 21600; break;
+            case '24h': start = now - 86400; break;
+            case '7d': start = now - 604800; break;
+            case '30d': start = now - 2592000; break;
+            default: start = now - 86400;
+          }
+          end = now;
+        }
+
+        const response = await fetch(`/api//timeline?start=${start}&end=${end}`);
+        const result = await response.json();
+
+        if (result.timeline) {
+          const data = result.timeline.map((item: { time: string; count: number }) => ({
+            time: Math.floor(new Date(item.time).getTime() / 1000),
+            value: item.count,
+          }));
+          setTimelineData(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch timeline data:', error);
+      } finally {
+        setTimelineLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [timeRange, customTimeRange]);
 
   if (!stats) {
     return (
@@ -166,6 +216,14 @@ export default function OverviewTab() {
         <StatBox value={stats.rules_classified} label="Rules Classified" color="text-cyber-purple" />
         <StatBox value={stats.mutes_active} label="Active Mutes" />
       </div>
+
+      {/* Timeline Chart - uPlot time series */}
+      <TimelineChart
+        title="Event Timeline"
+        data={timelineData}
+        isLoading={timelineLoading}
+        height={300}
+      />
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2">
