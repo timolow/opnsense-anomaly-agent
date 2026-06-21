@@ -1861,7 +1861,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api//actions":
                 self._send_json(query__action_distribution())
             elif path == "/api//timeline":
-                self._send_json(query__timeline())
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                period = query.get("period", ["7d"])[0]
+                granularity = query.get("granularity", ["hour"])[0]
+                start = int(query["start"][0]) if "start" in query else None
+                end = int(query["end"][0]) if "end" in query else None
+                self._send_json(query__timeline(period=period, granularity=granularity, start=start, end=end))
             elif path == "/api//blocked-ips":
                 self._send_json(query__blocked_ips())
             elif path == "/api//top-ports":
@@ -2819,7 +2824,7 @@ def query__action_distribution(hours=24):
         return {"actions": [], "total": 0}
 
 
-def query__timeline(period="7d", granularity="hour"):
+def query__timeline(period="7d", granularity="hour", start=None, end=None):
     """Traffic volume over time (line chart)."""
     conn = get_db()
     if not conn:
@@ -2827,23 +2832,30 @@ def query__timeline(period="7d", granularity="hour"):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
+        # Build time filter
+        time_filter = ""
+        params: list = []
+        if start and end:
+            time_filter = "AND timestamp >= %s AND timestamp <= %s"
+            params = [start, end]
+        
         # Total events per time bucket
         if granularity == "hour":
             cur.execute("""
                 SELECT date_trunc('%s', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days'
+                WHERE timestamp > NOW() - INTERVAL '7 days' %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """ % (granularity,))
+            """ % (granularity, time_filter), tuple(params))
         else:
             cur.execute("""
                 SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days'
+                WHERE timestamp > NOW() - INTERVAL '7 days' %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """)
+            """ % time_filter, tuple(params))
         rows = cur.fetchall()
         timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in rows]
         
@@ -2852,18 +2864,18 @@ def query__timeline(period="7d", granularity="hour"):
             cur.execute("""
                 SELECT date_trunc('%s', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days' AND action = 'BLOCK'
+                WHERE timestamp > NOW() - INTERVAL '7 days' %s AND action = 'BLOCK'
                 GROUP BY bucket
                 ORDER BY bucket
-            """ % (granularity,))
+            """ % (granularity, time_filter), tuple(params))
         else:
             cur.execute("""
                 SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days' AND action = 'BLOCK'
+                WHERE timestamp > NOW() - INTERVAL '7 days' %s AND action = 'BLOCK'
                 GROUP BY bucket
                 ORDER BY bucket
-            """)
+            """ % time_filter, tuple(params))
         blocked_rows = cur.fetchall()
         blocked_timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in blocked_rows]
         
