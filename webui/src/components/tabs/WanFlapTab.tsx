@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import { Radio, AlertTriangle, RefreshCw } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import TimelineChart from '../../components/charts/TimelineChart';
 
 export default function WanFlapTab() {
   const { data } = useQuery<any>({
@@ -23,9 +23,10 @@ export default function WanFlapTab() {
   const flapData = data?.flaps || [];
   const stats = data?.stats || { total_flaps: 0, last_flap: 'N/A', avg_duration: 'N/A' };
 
-  const chartData = flapData.slice(-24).map((f: { time: string; count: number }) => ({
-    time: f.time,
-    count: f.count,
+  // Convert flap data to TimelineChart format
+  const timelineData = flapData.slice(-24).map((f: { time: string; count: number }) => ({
+    time: Math.floor(new Date(f.time).getTime() / 1000),
+    value: f.count,
   }));
 
   return (
@@ -63,28 +64,14 @@ export default function WanFlapTab() {
         </div>
       </div>
 
-      {/* Flap History */}
-      <div className="cyber-card p-4 scanlines">
-        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Flap History (24h)</h3>
-        {chartData.length === 0 ? (
-          <div className="text-center py-8 text-cyber-textMuted">No flaps detected</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={chartData}>
-              <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} />
-              <Tooltip
-                contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0' }}
-              />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={20}>
-{chartData.map((_: any, i: number) => (
-                  <Cell key={i} fill={i % 2 === 0 ? '#ff7800' : '#ffbe0b'} style={{ filter: 'drop-shadow(0 0 4px rgba(255,120,0,0.3))' }} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+      {/* Flap History - uPlot time series */}
+      <TimelineChart
+        title="Flap History (24h)"
+        data={timelineData}
+        isLoading={!data}
+        height={250}
+        className="scanlines"
+      />
 
       {/* Flap Events */}
       <div className="cyber-card p-4 scanlines">
