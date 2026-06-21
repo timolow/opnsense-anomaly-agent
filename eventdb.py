@@ -245,22 +245,66 @@ class EventDatabase:
         try:
             # Check if columns exist
             cur.execute("""
-                SELECT column_name FROM information_schema.columns 
+                SELECT column_name FROM information_schema.columns
                 WHERE table_name = 'events' AND column_name IN ('src_hostname', 'dst_hostname')
             """)
             existing = {row[0] for row in cur.fetchall()}
-            
+
             added = []
             for col in ('src_hostname', 'dst_hostname'):
                 if col not in existing:
                     cur.execute(f"ALTER TABLE events ADD COLUMN {col} TEXT")
                     added.append(col)
                     logger.info("Added column: %s to events table", col)
-            
+
             if added:
                 logger.info("Migration complete: added columns %s", ", ".join(added))
             else:
                 logger.debug("Hostname columns already present in events table")
+        finally:
+            cur.close()
+
+    def ensure_rule_baselines_migration(self):
+        """Migrate rule_baselines table: add missing columns, fix indexes."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            # Columns that may be missing from old schema
+            missing_columns = {
+                'ip': 'TEXT',
+                'hour': 'INTEGER',
+                'rule': 'TEXT',
+                'avg_port_diversity': 'DOUBLE PRECISION DEFAULT 0',
+                'avg_dest_diversity': 'DOUBLE PRECISION DEFAULT 0',
+                'avg_volume': 'DOUBLE PRECISION DEFAULT 0',
+                'avg_block_ratio': 'DOUBLE PRECISION DEFAULT 0',
+                'baseline_goodness': 'DOUBLE PRECISION DEFAULT 0',
+                'baseline_updated': 'BOOLEAN DEFAULT FALSE',
+                'window_start': 'TIMESTAMPTZ',
+                'window_end': 'TIMESTAMPTZ',
+            }
+
+            # Check which columns exist
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'rule_baselines'
+            """)
+            existing = {row[0] for row in cur.fetchall()}
+
+            added = []
+            for col, col_def in missing_columns.items():
+                if col not in existing:
+                    cur.execute(f"ALTER TABLE rule_baselines ADD COLUMN {col} {col_def}")
+                    added.append(col)
+                    logger.info("Added column: %s to rule_baselines table", col)
+
+            # Drop old unique index (if it exists) that conflicts with new schema
+            cur.execute("DROP INDEX IF EXISTS idx_rule_baselines_rule_name")
+
+            if added:
+                logger.info("rule_baselines migration complete: added columns %s", ", ".join(added))
+            else:
+                logger.debug("rule_baselines schema already up to date")
         finally:
             cur.close()
     
