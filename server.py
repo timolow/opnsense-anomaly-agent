@@ -1022,34 +1022,136 @@ def query_service_status():
         return {"error": str(e), "services_tracked": 0, "services_monitored": 0}
 
 def query_health():
-    conn = get_db()
+    """Aggregated health check for all subsystems."""
+    import requests as req_lib
+    
     state = load_state()
     agent_counters = {}
     if state:
         agent_counters = state.get("agent_counters", {})
     uptime = _calc_uptime(agent_counters)
-    if not conn:
-        return {"status": "cold-start", "database": {"status": "disconnected"}, "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0), "uptime_seconds": uptime}
+    
+    subsystems = {}
+    overall_status = "healthy"
+    event_count = 0
+    anomaly_count = 0
+    
+    # --- PostgreSQL ---
+    db_conn = get_db()
+    if db_conn:
+        try:
+            cur = db_conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM events")
+            event_count = (cur.fetchone() or (0,))[0]
+            cur.execute("SELECT COUNT(*) FROM anomalies")
+            anomaly_count = (cur.fetchone() or (0,))[0]
+            cur.close()
+            close_db(db_conn)
+            subsystems["database"] = {"status": "connected", "message": f"{event_count:,} events, {anomaly_count:,} anomalies"}
+        except Exception as e:
+            close_db(db_conn)
+            subsystems["database"] = {"status": "error", "message": str(e)}
+            overall_status = "degraded"
+    else:
+        subsystems["database"] = {"status": "disconnected", "message": "Cannot connect to PostgreSQL"}
+        overall_status = "degraded"
+        event_count = 0
+    
+    # --- Redis ---
+    r = get_redis()
+    if r:
+        try:
+            r.ping()
+            info = r.info("memory")
+            mem_used = info.get("used_memory_human", "unknown")
+            subsystems["redis"] = {"status": "connected", "message": f"Memory: {mem_used}"}
+        except Exception as e:
+            subsystems["redis"] = {"status": "error", "message": str(e)}
+            overall_status = "degraded"
+    else:
+        subsystems["redis"] = {"status": "disconnected", "message": "Redis not available"}
+        # Redis is optional for non-critical features
+    
+    # --- OPNsense API ---
+    opn_host = os.environ.get("OPN_HOST", "")
+    opn_port = os.environ.get("OPN_PORT", "6666")
+    opn_key = os.environ.get("OPN_API_KEY", "")
+    opn_secret = os.environ.get("OPN_API_SECRET", "")
+    if opn_host and opn_key and opn_secret:
+        try:
+            import base64 as b64
+            creds = f"{opn_key}:{opn_secret}"
+            auth = f"Basic {b64.b64encode(creds.encode()).decode()}"
+            resp = req_lib.get(
+                f"https://{opn_host}:{opn_port}/api/core/firmware/status",
+                headers={"Authorization": auth},
+                timeout=5,
+                verify=False,
+            )
+            if resp.status_code == 200:
+                version = resp.json().get("os_version", "unknown")
+                subsystems["opnsense"] = {"status": "connected", "message": f"OPNsense {version}"}
+            else:
+                subsystems["opnsense"] = {"status": "error", "message": f"HTTP {resp.status_code}"}
+                overall_status = "degraded"
+        except Exception as e:
+            subsystems["opnsense"] = {"status": "error", "message": str(e)}
+            overall_status = "degraded"
+    else:
+        subsystems["opnsense"] = {"status": "configured", "message": "OPNsense API not configured (no credentials)"}
+    
+    # --- Syslog listener ---
+    syslog_enabled = os.environ.get("SYSLOG_ENABLED", "false").lower() == "true"
+    syslog_port = os.environ.get("SYSLOG_UDP_PORT", "1514")
+    if syslog_enabled:
+        # Check if the port is actually listening by trying a local connection
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(("127.0.0.1", int(syslog_port)))
+        sock.close()
+        # UDP port, so we can't truly check — rely on event count growth
+        if event_count > 0:
+            subsystems["syslog"] = {"status": "active", "message": f"UDP listener on port {syslog_port} (events flowing)"}
+        else:
+            subsystems["syslog"] = {"status": "questionable", "message": f"UDP listener on port {syslog_port} (no events yet)"}
+    else:
+        subsystems["syslog"] = {"status": "disabled", "message": "Syslog listener not enabled"}
+    
+    # --- Discord bot ---
+    discord_token = os.environ.get("DISCORD_TOKEN", "")
+    if discord_token:
+        subsystems["discord"] = {"status": "configured", "message": "Discord bot token set (connection state checked via bot gateway)"}
+    else:
+        subsystems["discord"] = {"status": "disabled", "message": "Discord bot not configured"}
+    
+    # --- Disk space (agent_data dir) ---
     try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM events")
-        row = cur.fetchone()
-        event_count = row[0] if row else 0
-        close_db(conn)
-        return {
-            "status": "healthy" if event_count > 0 else "cold-start",
-            "database": {"status": "connected", "message": f"{event_count:,} total events"},
-            "syslog": {"status": "active", "message": "Syslog listener running"},
-            "discord": {"status": "active", "message": "Discord bot online"},
-            "opnsense": {"status": "active", "message": "OPNsense API connected"},
-            "events_processed": event_count,
-            "anomalies_detected": agent_counters.get("anomaly_count", 0),
-            "uptime_seconds": uptime,
-            "agent_counters": agent_counters,
-        }
-    except Exception as e:
-        close_db(conn)
-        return {"status": "error", "database": {"status": "error", "message": str(e)}, "events_processed": 0, "anomalies_detected": agent_counters.get("anomaly_count", 0), "uptime_seconds": uptime}
+        import shutil
+        total, used, free = shutil.disk_usage(DATA_DIR)
+        free_gb = free / (1024**3)
+        if free_gb < 1:
+            subsystems["disk"] = {"status": "warning", "message": f"{free_gb:.1f} GB free"}
+            if overall_status == "healthy":
+                overall_status = "degraded"
+        else:
+            subsystems["disk"] = {"status": "ok", "message": f"{free_gb:.1f} GB free"}
+    except Exception:
+        subsystems["disk"] = {"status": "unknown", "message": "Could not check disk space"}
+    
+    # Determine overall status
+    if overall_status == "healthy" and event_count > 0:
+        overall_status = "healthy"
+    elif overall_status == "healthy" and event_count == 0:
+        overall_status = "cold-start"
+    
+    return {
+        "status": overall_status,
+        "subsystems": subsystems,
+        "events_processed": event_count,
+        "anomalies_detected": agent_counters.get("anomaly_count", 0),
+        "uptime_seconds": uptime,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────

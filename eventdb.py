@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, asdict
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,11 @@ CREATE INDEX IF NOT EXISTS idx_ip_threat_profiles_score ON ip_threat_profiles(un
 
 
 class EventDatabase:
-    """Manages PostgreSQL connection and all database operations."""
+    """Manages PostgreSQL connection pool and all database operations."""
+    
+    # Module-level pool singleton (shared across instances)
+    _pool = None
+    _pool_lock = None  # type: ignore
     
     def __init__(self, host=None, port=None, database=None, user=None, password=None):
         self.host = host or DEFAULT_PG_HOST
@@ -182,23 +187,44 @@ class EventDatabase:
         self.database = database or DEFAULT_PG_DB
         self.user = user or DEFAULT_PG_USER
         self.password = password or DEFAULT_PG_PASS
-        self._connection = None
         self._initialized = False
+        
+        # Initialize connection pool (singleton)
+        pool_key = f"{self.host}:{self.port}/{self.database}"
+        if EventDatabase._pool is None or EventDatabase._pool_key != pool_key:
+            if EventDatabase._pool is not None:
+                EventDatabase._pool.closeall()
+            EventDatabase._pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=10,
+                host=self.host,
+                port=self.port,
+                dbname=self.database,
+                user=self.user,
+                password=self.password,
+            )
+            EventDatabase._pool_key = pool_key
+            logger.info("PostgreSQL connection pool initialized (%s, max=%d)", pool_key, EventDatabase._pool.maxconn)
     
     def connect(self):
-        """Create or return a database connection."""
-        if self._connection and self._connection.closed == 0:
-            return self._connection
-        
-        self._connection = psycopg2.connect(
-            host=self.host,
-            port=self.port,
-            dbname=self.database,
-            user=self.user,
-            password=self.password
-        )
-        self._connection.autocommit = True
-        return self._connection
+        """Get a connection from the pool."""
+        conn = EventDatabase._pool.getconn()
+        conn.autocommit = True
+        return conn
+    
+    def putconn(self, conn):
+        """Return a connection to the pool."""
+        if conn:
+            try:
+                EventDatabase._pool.putconn(conn)
+            except Exception:
+                pass
+    
+    def close_all(self):
+        """Close all connections in the pool."""
+        if EventDatabase._pool:
+            EventDatabase._pool.closeall()
+            EventDatabase._pool = None
     
     def ensure_tables(self):
         """Create database tables if they don't exist."""
@@ -250,9 +276,8 @@ class EventDatabase:
         pass
     
     def close(self):
-        """Close the database connection."""
-        if self._connection and self._connection.closed == 0:
-            self._connection.close()
+        """Close the database connection (return to pool)."""
+        # No-op with connection pooling — connections are managed by the pool
     
     def _new_cursor(self):
         """Get a new cursor from the connection."""

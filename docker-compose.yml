@@ -84,6 +84,8 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-50}
       - LEARN_INTERVAL=${LEARN_INTERVAL:-300}
+      # Internal IP prefixes (comma-separated, overrides defaults)
+      - INTERNAL_IP_PREFIXES=${INTERNAL_IP_PREFIXES:-}
       # GeoLite2 / MaxMind (optional)
       - MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID:-}
       - MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY:-}
