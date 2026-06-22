@@ -98,6 +98,8 @@ services:
       - ./agent_data:/app/agent_data
       # GeoLite2 database (mounted when available)
       - ./data:/app/data
+      # Backup files (pg_dump backups stored here by host cron)
+      - ./backups:/app/backups
     ports:
       # Syslog UDP listener (built-in UDP when SYSLOG_ENABLED=true)
       - "${SYSLOG_UDP_PORT:-1514}:1514/udp"

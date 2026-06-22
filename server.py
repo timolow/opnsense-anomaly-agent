@@ -2169,6 +2169,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 threshold_type = query.get("type", ["volume_zscore"])[0]
                 self._send_json(api_threshold_roc(threshold_type))
+            # ═══════════════════════════════════════════════
+            # Backup/Restore API endpoints
+            # ═══════════════════════════════════════════════
+            elif path == "/api/backups":
+                try:
+                    from backup_restore import list_backups, get_status
+                    result = list_backups()
+                    result["status"] = get_status()
+                    self._send_json(result)
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+            elif path == "/api/backup/status":
+                try:
+                    from backup_restore import get_status
+                    self._send_json(get_status())
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+            elif path == "/api/backup/cleanup":
+                try:
+                    from backup_restore import cleanup_old_backups
+                    result = cleanup_old_backups()
+                    self._send_json(result)
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -2271,6 +2295,56 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "threshold_type": data.get("threshold_type"),
                     "value": data.get("value"),
                 })
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        # ═══════════════════════════════════════════════
+        # Backup/Restore POST endpoints
+        # ═══════════════════════════════════════════════
+        elif path == "/api/backup/trigger":
+            # Trigger a manual backup (writes marker file for host cron)
+            try:
+                from backup_restore import trigger_backup
+                result = trigger_backup()
+                code = 202 if result.get("success") else 500
+                self._send_json(result, code)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        elif path == "/api/backup/restore":
+            # Restore from a specific backup file
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            try:
+                from backup_restore import restore_from_backup
+                backup_file = data.get("backup_file", "")
+                if not backup_file:
+                    from backup_restore import list_backups
+                    backups = list_backups()
+                    self._send_json({
+                        "success": False,
+                        "error": "No backup_file specified",
+                        "available_backups": [b["filename"] for b in backups.get("backups", [])],
+                    }, 400)
+                else:
+                    result = restore_from_backup(backup_file)
+                    code = 202 if result.get("success") else 500
+                    self._send_json(result, code)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        elif path == "/api/backup/delete":
+            # Delete a specific backup file
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            try:
+                from backup_restore import delete_backup
+                backup_file = data.get("backup_file", "")
+                if not backup_file:
+                    self._send_json({"success": False, "error": "No backup_file specified"}, 400)
+                else:
+                    result = delete_backup(backup_file)
+                    code = 200 if result.get("success") else 400
+                    self._send_json(result, code)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
         else:
@@ -2427,15 +2501,24 @@ def save_active_learning_feedback(rule_name, feedback_type):
 
 
 # ═══════════════════════════════════════════════
-# Phase 5: Threshold Auto-Tuning API handlers
+# Phase 5: Threshold Auto-Tuning API
 # ═══════════════════════════════════════════════
 
+# Singleton tuner instance (avoids connection pool exhaustion)
+_threshold_tuner_instance = None
+
 def _get_threshold_tuner():
-    """Get a ThresholdTuner instance with DB connection."""
-    from threshold_tuner import ThresholdTuner
-    db = EventDatabase()
-    db.ensure_tables()
-    return ThresholdTuner(db)
+    """Get a ThresholdTuner instance (cached singleton)."""
+    global _threshold_tuner_instance
+    if _threshold_tuner_instance is None:
+        from threshold_tuner import ThresholdTuner
+        try:
+            # Try EventDatabase first (uses connection pool)
+            db = EventDatabase()
+        except Exception:
+            db = None
+        _threshold_tuner_instance = ThresholdTuner(db)
+    return _threshold_tuner_instance
 
 
 def api_thresholds():
