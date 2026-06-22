@@ -309,6 +309,10 @@ class CommandHandler:
         'status': 'Show agent status and configuration',
         'attacks': 'Show recent detected attacks',
         'geo': 'Show geographic anomaly statistics',
+        'feedback': 'Mark anomaly as true_positive/false_positive/dismissed',
+        'thresholds': 'Show current detection thresholds',
+        'metrics': 'Show threshold performance metrics',
+        'tune': 'Trigger manual threshold tuning',
         'help': 'Show available commands',
     }
     
@@ -332,6 +336,14 @@ class CommandHandler:
             return self._cmd_attacks()
         elif cmd == 'geo':
             return self._cmd_geo()
+        elif cmd == 'feedback':
+            return self._cmd_feedback(args)
+        elif cmd == 'thresholds':
+            return self._cmd_thresholds()
+        elif cmd == 'metrics':
+            return self._cmd_threshold_metrics()
+        elif cmd == 'tune':
+            return self._cmd_tune()
         else:
             return CommandResult(content=f"Unknown command: `{cmd}`. Type `/help` for available commands.")
     
@@ -400,6 +412,104 @@ class CommandHandler:
             for cc, count in top[:5]:
                 lines.append(f"- {cc}: {count} events")
         return CommandResult(content='\n'.join(lines))
+    
+    def _cmd_feedback(self, args: str) -> CommandResult:
+        """Handle /feedback <anomaly_id> <label> [<reason>]"""
+        parts = args.strip().split(None, 2)
+        if len(parts) < 2:
+            return CommandResult(content="Usage: `/feedback <anomaly_id> <true_positive|false_positive|dismissed> [reason]`")
+        
+        try:
+            anomaly_id = int(parts[0])
+        except ValueError:
+            return CommandResult(content=f"Invalid anomaly ID: `{parts[0]}`")
+        
+        label = parts[1].lower()
+        if label not in ('true_positive', 'false_positive', 'dismissed'):
+            return CommandResult(content="Label must be: `true_positive`, `false_positive`, or `dismissed`")
+        
+        reason = parts[2] if len(parts) > 2 else ""
+        
+        # Get the tuner from the agent
+        tuner = getattr(self.agent, 'threshold_tuner', None)
+        if not tuner:
+            return CommandResult(content="Threshold tuner not available.")
+        
+        try:
+            tuner.record_feedback(
+                anomaly_id=anomaly_id,
+                label=label,
+                reason=reason,
+                user_id="discord",
+            )
+            return CommandResult(content=f"Feedback recorded: anomaly #{anomaly_id} marked as **{label}**" +
+                                     (f"\nReason: {reason}" if reason else ""))
+        except Exception as e:
+            return CommandResult(content=f"Failed to record feedback: {e}")
+    
+    def _cmd_thresholds(self) -> CommandResult:
+        """Handle /thresholds — show current threshold values."""
+        tuner = getattr(self.agent, 'threshold_tuner', None)
+        if not tuner:
+            return CommandResult(content="Threshold tuner not available.")
+        
+        thresholds = tuner.get_all_thresholds()
+        lines = ['**Current Detection Thresholds:**']
+        for name, value in sorted(thresholds.items()):
+            # Format nicely
+            display_name = name.replace('_', ' ').title()
+            lines.append(f"- **{display_name}:** `{value:.2f}`")
+        
+        lines.append('\nUse `/feedback <id> <label>` to provide feedback for auto-tuning.')
+        return CommandResult(content='\n'.join(lines))
+    
+    def _cmd_threshold_metrics(self) -> CommandResult:
+        """Handle /metrics — show threshold performance metrics."""
+        tuner = getattr(self.agent, 'threshold_tuner', None)
+        if not tuner:
+            return CommandResult(content="Threshold tuner not available.")
+        
+        metrics = tuner.get_metrics()
+        if not metrics:
+            return CommandResult(content="No metrics available yet.")
+        
+        lines = ['**Threshold Performance Metrics:**']
+        for ttype, m in metrics.items():
+            display_name = ttype.replace('_', ' ').title()
+            lines.append(f"\n**{display_name}:**")
+            lines.append(f"  Threshold: `{m.get('current_threshold', 'N/A'):.2f}`")
+            lines.append(f"  FPR: {m.get('false_positive_rate', 0):.1%}")
+            lines.append(f"  TPR: {m.get('true_positive_rate', 0):.1%}")
+            lines.append(f"  F1: {m.get('f1_score', 0):.2f}")
+            lines.append(f"  Samples: {m.get('sample_count', 0)}")
+        
+        return CommandResult(content='\n'.join(lines))
+    
+    def _cmd_tune(self) -> CommandResult:
+        """Handle /tune — trigger manual threshold tuning."""
+        tuner = getattr(self.agent, 'threshold_tuner', None)
+        if not tuner:
+            return CommandResult(content="Threshold tuner not available.")
+        
+        try:
+            adjustments = tuner.tune()
+            if not adjustments:
+                return CommandResult(content="No adjustments needed — all thresholds within targets.")
+            
+            changed = [a for a in adjustments if a['old_value'] != a['new_value']]
+            if not changed:
+                return CommandResult(content="Tuning complete — all thresholds already optimal.")
+            
+            lines = ['**Threshold Auto-Tune Results:**']
+            for a in changed:
+                lines.append(
+                    f"- **{a['type'].replace('_', ' ').title()}:** "
+                    f"`{a['old_value']:.2f}` → `{a['new_value']:.2f}` "
+                    f"({a.get('reason', '')})"
+                )
+            return CommandResult(content='\n'.join(lines))
+        except Exception as e:
+            return CommandResult(content=f"Tuning failed: {e}")
     
     def record_attack(self, attack: Dict[str, Any]):
         self._recent_attacks.append(attack)

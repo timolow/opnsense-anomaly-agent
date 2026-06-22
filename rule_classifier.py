@@ -26,17 +26,43 @@ P2-4: Active learning queue — queues UNCERTAIN rules for human review.
 
 import os
 import json
+import math
 import logging
+import pickle
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, Counter
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
+
+import numpy as np
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    classification_report, confusion_matrix,
+)
+from sklearn.model_selection import cross_val_score
+import joblib
 
 logger = logging.getLogger(__name__)
 
 # Default classification thresholds
 MIN_RULE_EVENTS = 10
 DEFAULT_DENY_THRESHOLD = 0.7
+
+# ML-specific constants
+ML_MIN_SAMPLES = 20                    # min samples to train
+ML_RETRAIN_THRESHOLD = 50              # new samples since last train
+ML_PREDICT_CONFIDENCE_THRESHOLD = 0.55 # min confidence to trust ML
+ML_FEATURE_NAMES = [
+    "total_events", "unique_src_ips", "unique_dst_ips", "unique_dst_ports",
+    "src_ip_entropy", "dst_ip_entropy", "dst_port_entropy",
+    "pass_ratio", "block_ratio", "action_diversity",
+    "hour_of_day_mean", "hour_of_day_std", "hour_span",
+    "port_diversity_log", "ip_ratio", "avg_events_per_hour",
+    "rule_age_hours", "feedback_ratio",
+]
+ML_LABEL_NAMES = ["PERMIT", "DENY", "MIXED"]
 
 
 @dataclass
@@ -108,10 +134,345 @@ class RuleProfile:
         return round(confidence, 3)
 
 
+class FeatureExtractor:
+    """Extract ML feature vectors from RuleProfile objects.
+
+    Features (18 total):
+    - Volume: total_events, unique IPs/ports counts
+    - Entropy: src_ip_entropy, dst_ip_entropy, dst_port_entropy
+    - Action profile: pass_ratio, block_ratio, action_diversity
+    - Temporal: hour_of_day_mean/std/span
+    - Diversity: port_diversity_log, ip_ratio, avg_events_per_hour
+    - Meta: rule_age_hours, feedback_ratio
+    """
+
+    @staticmethod
+    def extract(profile: RuleProfile) -> np.ndarray:
+        """Extract a single feature vector from a RuleProfile."""
+        feats = {}
+
+        # Volume features
+        feats["total_events"] = float(profile.total_events)
+        feats["unique_src_ips"] = float(len(profile.src_ips))
+        feats["unique_dst_ips"] = float(len(profile.dst_ips))
+        feats["unique_dst_ports"] = float(len(profile.dst_ports))
+
+        # Entropy features (Shannon entropy of distribution)
+        feats["src_ip_entropy"] = _shannon_entropy(len(profile.src_ips))
+        feats["dst_ip_entropy"] = _shannon_entropy(len(profile.dst_ips))
+        feats["dst_port_entropy"] = _shannon_entropy(len(profile.dst_ports))
+
+        # Action profile
+        total = max(profile.total_events, 1)
+        pass_count = profile.actions.get("PASS", 0)
+        block_count = profile.actions.get("BLOCK", 0)
+        feats["pass_ratio"] = pass_count / total
+        feats["block_ratio"] = block_count / total
+        # Action diversity: entropy over action categories
+        action_counts = list(profile.actions.values())
+        feats["action_diversity"] = _distribution_entropy(action_counts)
+
+        # Temporal features
+        if profile.first_seen and profile.last_seen:
+            span = (profile.last_seen - profile.first_seen).total_seconds() / 3600.0
+            feats["hour_span"] = float(min(span, 9999))  # cap runaway values
+            feats["rule_age_hours"] = feats["hour_span"]
+            # Approximate mean hour from first/last seen
+            mean_hour = (profile.first_seen.hour + profile.last_seen.hour) / 2.0
+            feats["hour_of_day_mean"] = float(mean_hour)
+            feats["hour_of_day_std"] = float(abs(profile.last_seen.hour - profile.first_seen.hour) / 2.0)
+        else:
+            feats["hour_span"] = 0.0
+            feats["rule_age_hours"] = 0.0
+            feats["hour_of_day_mean"] = 12.0
+            feats["hour_of_day_std"] = 0.0
+
+        # Diversity ratios
+        port_div = max(len(profile.dst_ports), 1)
+        feats["port_diversity_log"] = float(math.log1p(port_div))
+        src_ratio = len(profile.src_ips) / max(len(profile.dst_ips), 1)
+        feats["ip_ratio"] = float(min(src_ratio, 100))  # cap extreme ratios
+        age = max(feats["rule_age_hours"], 1.0)
+        feats["avg_events_per_hour"] = float(profile.total_events / age)
+
+        # Feedback signal
+        total_fb = profile.feedback_correct + profile.feedback_incorrect
+        feats["feedback_ratio"] = float(profile.feedback_correct / max(total_fb, 1))
+
+        return np.array([feats[f] for f in ML_FEATURE_NAMES], dtype=np.float64)
+
+    @staticmethod
+    def extract_batch(profiles: Dict[str, RuleProfile]) -> Tuple[np.ndarray, List[str]]:
+        """Extract feature matrix from multiple profiles.
+
+        Returns (X, rule_names) where X is (n_rules, n_features).
+        Only includes profiles with total_events >= MIN_RULE_EVENTS.
+        """
+        X = []
+        names = []
+        for name, profile in profiles.items():
+            if profile.total_events >= MIN_RULE_EVENTS:
+                X.append(FeatureExtractor.extract(profile))
+                names.append(name)
+
+        if not X:
+            return np.empty((0, len(ML_FEATURE_NAMES)), dtype=np.float64), []
+
+        return np.array(X), names
+
+
+def _shannon_entropy(count: int) -> float:
+    """Approximate Shannon entropy for a uniform distribution of `count` categories."""
+    if count <= 1:
+        return 0.0
+    return float(math.log2(count))
+
+
+def _distribution_entropy(counts: List[int]) -> float:
+    """Shannon entropy of a categorical distribution given raw counts."""
+    total = sum(counts)
+    if total == 0:
+        return 0.0
+    entropy = 0.0
+    for c in counts:
+        if c > 0:
+            p = c / total
+            entropy -= p * math.log2(p)
+    return entropy
+
+
+class MLRuleClassifier:
+    """scikit-learn based ML classifier for firewall rules.
+
+    Uses GradientBoosting to classify rules as PERMIT, DENY, or MIXED
+    based on features extracted from RuleProfile objects.
+
+    Persists trained model to disk via joblib. Provides graceful fallback
+    to heuristic classification when the model is not yet trained or
+    confidence is too low.
+    """
+
+    def __init__(self):
+        self.model: Optional[GradientBoostingClassifier] = None
+        self.label_encoder: Optional[LabelEncoder] = None
+        self.model_path = os.path.join(
+            os.environ.get("AGENT_DATA_DIR", "/app/agent_data"),
+            "rule_classifier_model.pkl",
+        )
+        self.samples_since_retrain = 0
+        self.metrics: Dict[str, Any] = {}
+        self.feature_importances: Dict[str, float] = {}
+        self._load_model()
+
+    def _load_model(self):
+        """Load a persisted model from disk if available."""
+        if not os.path.exists(self.model_path):
+            logger.info("No persisted ML model found at %s", self.model_path)
+            return
+
+        try:
+            data = joblib.load(self.model_path)
+            self.model = data["model"]
+            self.label_encoder = data["label_encoder"]
+            self.metrics = data.get("metrics", {})
+            self.feature_importances = data.get("feature_importances", {})
+            logger.info(
+                "ML model loaded from %s (accuracy=%.3f, trained on %d samples)",
+                self.model_path,
+                self.metrics.get("accuracy", 0),
+                self.metrics.get("train_samples", 0),
+            )
+        except Exception as e:
+            logger.error("Failed to load ML model: %s", e)
+            self.model = None
+            self.label_encoder = None
+
+    def _save_model(self):
+        """Persist the current model to disk."""
+        if self.model is None:
+            return
+
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+        data = {
+            "model": self.model,
+            "label_encoder": self.label_encoder,
+            "metrics": self.metrics,
+            "feature_importances": self.feature_importances,
+            "feature_names": ML_FEATURE_NAMES,
+            "label_names": ML_LABEL_NAMES,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        joblib.dump(data, self.model_path)
+        logger.info(
+            "ML model saved to %s (train_samples=%d, accuracy=%.3f)",
+            self.model_path,
+            self.metrics.get("train_samples", 0),
+            self.metrics.get("accuracy", 0),
+        )
+
+    def _heuristic_label(self, profile: RuleProfile) -> str:
+        """Fallback heuristic label for training data generation."""
+        return profile.classification  # PERMIT / DENY / MIXED / UNCERTAIN
+
+    def train(self, profiles: Dict[str, RuleProfile]) -> Dict[str, Any]:
+        """Train (or retrain) the ML model from rule profiles.
+
+        Args:
+            profiles: All rule profiles with sufficient data.
+
+        Returns:
+            Dict with training metrics (accuracy, precision, recall, etc.).
+        """
+        X, rule_names = FeatureExtractor.extract_batch(profiles)
+
+        if len(X) < ML_MIN_SAMPLES:
+            logger.warning(
+                "Not enough data to train ML model (%d samples, need %d)",
+                len(X), ML_MIN_SAMPLES,
+            )
+            self.metrics = {"error": "insufficient_data", "samples": len(X)}
+            return self.metrics
+
+        # Generate labels from heuristic classification (bootstrap training)
+        raw_labels = []
+        valid_X = []
+        valid_names = []
+        for i, (features, name) in enumerate(zip(X, rule_names)):
+            profile = profiles[name]
+            label = self._heuristic_label(profile)
+            if label in ("PERMIT", "DENY", "MIXED"):  # skip UNCERTAIN
+                valid_X.append(features)
+                raw_labels.append(label)
+                valid_names.append(name)
+
+        if len(valid_X) < ML_MIN_SAMPLES:
+            logger.warning(
+                "Not enough labelled data after filtering (%d samples, need %d)",
+                len(valid_X), ML_MIN_SAMPLES,
+            )
+            self.metrics = {"error": "insufficient_labeled_data", "samples": len(valid_X)}
+            return self.metrics
+
+        X_train = np.array(valid_X)
+        y_labels = raw_labels
+
+        # Encode labels
+        self.label_encoder = LabelEncoder()
+        self.label_encoder.fit(ML_LABEL_NAMES)  # fixed order: DENY, MIXED, PERMIT
+        y_train = self.label_encoder.transform(y_labels)
+
+        # Train GradientBoosting classifier
+        self.model = GradientBoostingClassifier(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            random_state=42,
+            min_samples_split=3,
+            min_samples_leaf=2,
+        )
+        self.model.fit(X_train, y_train)
+
+        # Cross-validation for honest metrics
+        cv_scores = cross_val_score(self.model, X_train, y_train, cv=min(3, len(valid_X)), scoring="accuracy")
+        train_preds = self.model.predict(X_train)
+
+        self.metrics = {
+            "accuracy": round(float(accuracy_score(y_train, train_preds)), 4),
+            "cv_accuracy_mean": round(float(cv_scores.mean()), 4),
+            "cv_accuracy_std": round(float(cv_scores.std()), 4),
+            "precision_macro": round(float(precision_score(y_train, train_preds, average="macro", zero_division=0)), 4),
+            "recall_macro": round(float(recall_score(y_train, train_preds, average="macro", zero_division=0)), 4),
+            "f1_macro": round(float(f1_score(y_train, train_preds, average="macro", zero_division=0)), 4),
+            "train_samples": len(X_train),
+            "n_rules_classified": len(valid_names),
+            "class_distribution": dict(Counter(y_labels)),
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Feature importances
+        importances = self.model.feature_importances_
+        self.feature_importances = {
+            ML_FEATURE_NAMES[i]: round(float(imp), 4)
+            for i, imp in enumerate(importances)
+            if imp > 0.001
+        }
+
+        self.samples_since_retrain = 0
+
+        logger.info(
+            "ML model trained: accuracy=%.3f (±%.3f CV), samples=%d, top_features=%s",
+            self.metrics["cv_accuracy_mean"],
+            self.metrics["cv_accuracy_std"],
+            self.metrics["train_samples"],
+            list(self.feature_importances.keys())[:3],
+        )
+
+        self._save_model()
+        return self.metrics
+
+    def predict(self, profile: RuleProfile) -> Tuple[str, float]:
+        """Predict classification for a single rule profile.
+
+        Returns (label, confidence) where label is PERMIT/DENY/MIXED
+        and confidence is the predicted probability for that class.
+
+        If no model is trained or confidence is below threshold,
+        falls back to heuristic classification.
+        """
+        if self.model is None or self.label_encoder is None:
+            return self._fallback_predict(profile)
+
+        try:
+            features = FeatureExtractor.extract(profile)
+            proba = self.model.predict_proba(features.reshape(1, -1))[0]
+            pred_idx = np.argmax(proba)
+            label = self.label_encoder.classes_[pred_idx]
+            confidence = float(proba[pred_idx])
+
+            if confidence < ML_PREDICT_CONFIDENCE_THRESHOLD:
+                logger.debug(
+                    "ML confidence %.3f below threshold for rule %s, using fallback",
+                    confidence, profile.rule_name,
+                )
+                return self._fallback_predict(profile)
+
+            return label, confidence
+
+        except Exception as e:
+            logger.warning("ML prediction failed for %s: %s", profile.rule_name, e)
+            return self._fallback_predict(profile)
+
+    def _fallback_predict(self, profile: RuleProfile) -> Tuple[str, float]:
+        """Fall back to heuristic classification."""
+        label = profile.classification
+        if label == "UNCERTAIN":
+            return "UNCERTAIN", 0.0
+
+        confidence = profile.calculate_confidence()
+        return label, confidence
+
+    def should_retrain(self) -> bool:
+        """Check if the model should be retrained based on new data."""
+        return self.samples_since_retrain >= ML_RETRAIN_THRESHOLD
+
+    def increment_samples(self, count: int = 1):
+        """Track new samples since last retrain."""
+        self.samples_since_retrain += count
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Return model metadata and metrics for API exposure."""
+        return {
+            "model_trained": self.model is not None,
+            "model_type": "GradientBoosting",
+            "metrics": self.metrics,
+            "feature_importances": self.feature_importances,
+            "samples_since_retrain": self.samples_since_retrain,
+            "feature_names": ML_FEATURE_NAMES,
+            "label_names": ML_LABEL_NAMES,
+        }
+
+
 class RuleClassifier:
-    """
-    Classifies firewall rules and learns which are permitted vs denied.
-    """
     
     def __init__(self, min_events=MIN_RULE_EVENTS, deny_threshold=DEFAULT_DENY_THRESHOLD):
         self.min_events = min_events
@@ -121,9 +482,12 @@ class RuleClassifier:
         self.events_with_rule = 0
         self.events_without_rule = 0
         self.traffic_baselines: Counter = Counter()
-        
-        logger.info("RuleClassifier initialized (min_events=%d, deny_threshold=%.2f)",
-                    min_events, deny_threshold)
+
+        # ML classifier
+        self.ml_classifier = MLRuleClassifier()
+
+        logger.info("RuleClassifier initialized (min_events=%d, deny_threshold=%.2f, ml=%s)",
+                    min_events, deny_threshold, "trained" if self.ml_classifier.model is not None else "untrained")
     
     def process_event(self, event: Dict[str, Any], timestamp: Optional[datetime] = None):
         """Process a single event and update rule profiles."""
@@ -138,6 +502,8 @@ class RuleClassifier:
         if rule_name:
             self.events_with_rule += 1
             self._update_rule_profile(rule_name, action, src_ip, dst_ip, dst_port, timestamp)
+            # Track samples for ML retraining
+            self.ml_classifier.increment_samples()
         else:
             self.events_without_rule += 1
             self._update_traffic_baseline(action, src_ip, dst_ip, dst_port)
@@ -256,7 +622,99 @@ class RuleClassifier:
                 })
         
         return anomalies
-    
+
+    # ─── ML Integration ────────────────────────────────────────────────
+
+    def get_ml_classification(self, rule_name: str) -> Dict[str, Any]:
+        """Get ML-based classification with confidence for a rule.
+
+        Uses the ML model if trained, falls back to heuristic.
+
+        Returns:
+            Dict with 'label', 'confidence', 'source' (ML or heuristic).
+        """
+        if rule_name not in self.rule_profiles:
+            return {"label": "UNKNOWN", "confidence": 0.0, "source": "not_found"}
+
+        profile = self.rule_profiles[rule_name]
+        label, confidence = self.ml_classifier.predict(profile)
+
+        source = "ML" if self.ml_classifier.model is not None else "heuristic"
+        # Check if ML actually made the prediction or fell back
+        if self.ml_classifier.model is not None:
+            try:
+                features = FeatureExtractor.extract(profile)
+                proba = self.ml_classifier.model.predict_proba(features.reshape(1, -1))[0]
+                max_proba = float(np.max(proba))
+                if max_proba >= ML_PREDICT_CONFIDENCE_THRESHOLD:
+                    source = "ML"
+                else:
+                    source = "ML_fallback"
+            except Exception:
+                source = "ML_error_fallback"
+
+        return {
+            "label": label,
+            "confidence": round(confidence, 4),
+            "source": source,
+            "rule_name": rule_name,
+        }
+
+    def get_all_classifications(self) -> List[Dict[str, Any]]:
+        """Get ML/heuristic classifications for all known rules."""
+        results = []
+        for name in self.rule_profiles:
+            cls = self.get_ml_classification(name)
+            results.append(cls)
+        results.sort(key=lambda x: -x["confidence"])
+        return results
+
+    def train_ml_model(self) -> Dict[str, Any]:
+        """Train or retrain the ML model from current rule profiles.
+
+        Can be called manually or triggered automatically when
+        enough new samples have accumulated (see should_retrain).
+
+        Returns:
+            Dict with training metrics.
+        """
+        logger.info("Training ML model with %d rule profiles...", len(self.rule_profiles))
+        metrics = self.ml_classifier.train(self.rule_profiles)
+
+        if "error" in metrics:
+            logger.warning("ML training did not complete: %s", metrics["error"])
+        else:
+            logger.info(
+                "ML training complete: accuracy=%.3f, cv=%.3f (±%.3f), samples=%d",
+                metrics["accuracy"],
+                metrics["cv_accuracy_mean"],
+                metrics["cv_accuracy_std"],
+                metrics["train_samples"],
+            )
+
+        return metrics
+
+    def should_retrain_ml(self) -> bool:
+        """Check if the ML model should be retrained."""
+        return self.ml_classifier.should_retrain()
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Return model metadata and metrics for API/dashboard exposure."""
+        info = self.ml_classifier.get_model_info()
+        info["heuristic_rules_count"] = len(self.rule_profiles)
+        info["total_events_processed"] = self.total_events
+        info["should_retrain"] = self.should_retrain_ml()
+        return info
+
+    def get_model_metrics(self) -> Dict[str, Any]:
+        """Return just the evaluation metrics (for Prometheus endpoint)."""
+        metrics = self.ml_classifier.metrics.copy()
+        metrics["model_trained"] = self.ml_classifier.model is not None
+        metrics["samples_since_retrain"] = self.ml_classifier.samples_since_retrain
+        return metrics
+
+    # ─── State Persistence ──────────────────────────────────────────────
+
     def save_state(self, filepath: str = None):
         """Save rule profiles to disk."""
         if filepath is None:
