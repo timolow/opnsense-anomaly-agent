@@ -20,7 +20,7 @@ import json
 import logging
 import ipaddress
 from datetime import datetime, timezone
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -89,7 +89,9 @@ class AdaptiveParser:
 
     def __init__(self):
         # Track discovered patterns for adaptation
-        self.pattern_history = defaultdict(list)  # feature_name -> [values]
+        # Bounded deques prevent unbounded memory growth under sustained traffic
+        self._PATTERN_HISTORY_MAXLEN = 10000
+        self.pattern_history = defaultdict(lambda: deque(maxlen=self._PATTERN_HISTORY_MAXLEN))  # feature_name -> deque(values)
         self.discovered_patterns = set()
         self.log_type_distribution = Counter()
         self.adaptation_counter = 0

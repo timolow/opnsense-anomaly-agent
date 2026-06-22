@@ -134,3 +134,82 @@ class TestAdaptiveParserParseLine:
         for i in range(5):
             self.parser.parse_line(self._sample_filterlog())
         assert self.parser.log_type_distribution['filterlog'] == 5
+
+
+class TestPatternHistoryBounded:
+    """Test that pattern_history uses bounded deques and does not grow unbounded."""
+
+    def setup_method(self):
+        self.parser = AdaptiveParser()
+
+    def _sample_filterlog(self):
+        return "<134>Jun 17 10:00:00 opnsense filterlog[12345]: 17,,,fae559338f65e11c53669fc3642c93c2,igb1,match,pass,in,4,0x00,4605,0,DF,17,udp,0,10.0.0.1,10.0.0.2,33444,53,0,0,"
+
+    def test_pattern_history_is_deque(self):
+        """pattern_history values should be deque instances with maxlen."""
+        from collections import deque
+        self.parser.parse_line(self._sample_filterlog())
+        assert isinstance(self.parser.pattern_history['src_ip'], deque)
+        assert self.parser.pattern_history['src_ip'].maxlen == self.parser._PATTERN_HISTORY_MAXLEN
+
+    def test_pattern_history_maxlen_configurable(self):
+        """_PATTERN_HISTORY_MAXLEN should control deque bounds."""
+        assert self.parser._PATTERN_HISTORY_MAXLEN == 10000
+
+    def test_pattern_history_does_not_exceed_maxlen(self):
+        """After exceeding maxlen, oldest entries are dropped."""
+        # Parse more events than the maxlen
+        for i in range(self.parser._PATTERN_HISTORY_MAXLEN + 100):
+            self.parser.parse_line(self._sample_filterlog())
+
+        # History should be capped at maxlen
+        assert len(self.parser.pattern_history['src_ip']) == self.parser._PATTERN_HISTORY_MAXLEN
+        assert len(self.parser.pattern_history['dst_ip']) == self.parser._PATTERN_HISTORY_MAXLEN
+        assert len(self.parser.pattern_history['dport']) == self.parser._PATTERN_HISTORY_MAXLEN
+
+    def test_pattern_history_oldest_dropped_first(self):
+        """FIFO ordering: oldest entries are evicted when deque is full."""
+        base_line = self._sample_filterlog()
+        maxlen = self.parser._PATTERN_HISTORY_MAXLEN
+
+        # Fill past capacity
+        for i in range(maxlen + 50):
+            self.parser.parse_line(base_line)
+
+        # All entries should be the same (10.0.0.1), but the first 50 are gone
+        src_ips = list(self.parser.pattern_history['src_ip'])
+        assert all(ip == '10.0.0.1' for ip in src_ips)
+        assert len(src_ips) == maxlen
+
+    def test_pattern_history_small_traffic_unchanged(self):
+        """Normal traffic well below maxlen accumulates normally."""
+        for i in range(100):
+            self.parser.parse_line(self._sample_filterlog())
+
+        assert len(self.parser.pattern_history['src_ip']) == 100
+        assert len(self.parser.pattern_history['dst_ip']) == 100
+        assert len(self.parser.pattern_history['dport']) == 100
+
+    def test_pattern_history_memory_bounded(self):
+        """Memory should not grow linearly with events after maxlen is reached."""
+        import sys
+
+        # Parse a batch and measure memory
+        for i in range(self.parser._PATTERN_HISTORY_MAXLEN + 5000):
+            self.parser.parse_line(self._sample_filterlog())
+
+        size_after_big = sys.getsizeof(
+            list(self.parser.pattern_history['src_ip'])
+        )
+
+        # Parse 10x more events
+        for i in range(self.parser._PATTERN_HISTORY_MAXLEN * 10):
+            self.parser.parse_line(self._sample_filterlog())
+
+        size_after_more = sys.getsizeof(
+            list(self.parser.pattern_history['src_ip'])
+        )
+
+        # Memory footprint of the list repr should be identical
+        assert size_after_big == size_after_more
+        assert len(self.parser.pattern_history['src_ip']) == self.parser._PATTERN_HISTORY_MAXLEN
