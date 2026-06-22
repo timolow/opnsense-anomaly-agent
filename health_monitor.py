@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+Self-health monitoring for the OPNsense Anomaly Detection Agent.
+
+Provides:
+- System metrics collection (memory, CPU, load average via /proc)
+- Periodic self-check with configurable interval
+- Degraded state tracking and Discord alerting on health failures
+"""
+
+import json
+import logging
+import os
+import re
+import threading
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def get_system_metrics() -> Dict[str, Any]:
+    """Collect system-level metrics from /proc (no psutil dependency).
+
+    Returns a dict with:
+      - memory: {total_mb, used_mb, free_mb, cached_mb, pct_used}
+      - cpu: {usage_pct}  (sampled over 0.5s)
+      - load_avg: {1m, 5m, 15m}
+    """
+    result: Dict[str, Any] = {}
+
+    # --- Memory from /proc/meminfo ---
+    try:
+        meminfo: Dict[str, int] = {}
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                parts = line.split()
+                key = parts[0].rstrip(":")
+                value = int(parts[1])  # kB
+                meminfo[key] = value
+
+        total_kb = meminfo.get("MemTotal", 0)
+        free_kb = meminfo.get("MemFree", 0)
+        available_kb = meminfo.get("MemAvailable", free_kb)
+        cached_kb = meminfo.get("Cached", 0) + meminfo.get("Buffers", 0)
+        used_kb = total_kb - available_kb
+        pct = (used_kb / total_kb * 100) if total_kb > 0 else 0.0
+
+        result["memory"] = {
+            "total_mb": round(total_kb / 1024, 1),
+            "used_mb": round(used_kb / 1024, 1),
+            "free_mb": round(available_kb / 1024, 1),
+            "cached_mb": round(cached_kb / 1024, 1),
+            "pct_used": round(pct, 1),
+        }
+    except Exception as e:
+        result["memory"] = {"error": str(e)}
+
+    # --- CPU usage (two samples 0.5s apart from /proc/stat) ---
+    try:
+        def _read_cpu_times() -> tuple:
+            with open("/proc/stat", "r") as f:
+                line = f.readline()
+            # cpu  user nice system idle iowait irq softirq steal
+            parts = line.split()[1:]
+            times = tuple(int(x) for x in parts)
+            return times
+
+        t1 = _read_cpu_times()
+        time.sleep(0.5)
+        t2 = _read_cpu_times()
+
+        delta = [b - a for a, b in zip(t1, t2)]
+        total_delta = sum(delta)
+        idle_delta = delta[3] if len(delta) > 3 else 0
+        usage = (1.0 - idle_delta / total_delta) * 100 if total_delta > 0 else 0.0
+
+        result["cpu"] = {"usage_pct": round(usage, 1)}
+    except Exception as e:
+        result["cpu"] = {"error": str(e)}
+
+    # --- Load average from /proc/loadavg ---
+    try:
+        with open("/proc/loadavg", "r") as f:
+            parts = f.read().split()
+        result["load_avg"] = {
+            "1m": float(parts[0]),
+            "5m": float(parts[1]),
+            "15m": float(parts[2]),
+        }
+    except Exception as e:
+        result["load_avg"] = {"error": str(e)}
+
+    return result
+
+
+class HealthMonitor:
+    """Periodic self-check that logs degraded state and alerts via Discord.
+
+    Usage:
+        monitor = HealthMonitor(agent, discord_bot, interval=300)
+        monitor.start()
+        # ... later ...
+        monitor.stop()
+    """
+
+    # Thresholds for "degraded" classification
+    MEMORY_WARN_PCT = 85.0
+    MEMORY_CRIT_PCT = 95.0
+    CPU_WARN_PCT = 90.0
+    CPU_CRIT_PCT = 98.0
+    EVENT_BUFFER_WARN = 5000
+    EVENT_BUFFER_CRIT = 20000
+    LOAD_WARN_MULTIPLIER = 2.0  # load > N * cpu_count
+
+    def __init__(
+        self,
+        agent: Any,
+        discord_bot: Any,
+        interval: int = 300,
+        alert_cooldown: int = 3600,
+    ):
+        """
+        Args:
+            agent: AnomalyAgent instance (for event buffer, db access)
+            discord_bot: DiscordBot instance (for alerting)
+            interval: seconds between health checks
+            alert_cooldown: minimum seconds between Discord alerts
+        """
+        self.agent = agent
+        self.discord_bot = discord_bot
+        self.interval = max(30, interval)  # minimum 30s
+        self.alert_cooldown = alert_cooldown
+        self._shutdown = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+        # Degraded state tracking
+        self._last_status: str = "healthy"
+        self._last_alert_time: float = 0.0
+        self._consecutive_degraded: int = 0
+        self._lock = threading.Lock()
+
+        # Load cpu_count for load average threshold
+        try:
+            self._cpu_count = os.cpu_count() or 1
+        except Exception:
+            self._cpu_count = 1
+
+    # ── Public API ──────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Start the background health check thread."""
+        if self._thread is not None and self._thread.is_alive():
+            logger.info("Health monitor already running")
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="health-monitor")
+        self._thread.start()
+        logger.info("Health monitor started (interval=%ds, alert_cooldown=%ds)", self.interval, self.alert_cooldown)
+
+    def stop(self) -> None:
+        """Stop the background health check thread."""
+        self._shutdown.set()
+        if self._thread:
+            self._thread.join(timeout=10)
+        logger.info("Health monitor stopped")
+
+    def get_status(self) -> Dict[str, Any]:
+        """Return current health status (non-blocking)."""
+        with self._lock:
+            return {
+                "status": self._last_status,
+                "consecutive_degraded": self._consecutive_degraded,
+                "last_check_time": datetime.fromtimestamp(time.time(), tz=timezone.utc).isoformat() if self._thread else None,
+            }
+
+    def run_check(self) -> Dict[str, Any]:
+        """Run a single health check synchronously. Returns the result dict."""
+        issues: list[str] = []
+        details: Dict[str, Any] = {}
+
+        # 1. System metrics
+        sys_metrics = get_system_metrics()
+        details["system"] = sys_metrics
+
+        # Memory check
+        mem = sys_metrics.get("memory", {})
+        if "error" not in mem:
+            pct = mem.get("pct_used", 0)
+            if pct >= self.MEMORY_CRIT_PCT:
+                issues.append(f"CRITICAL: memory at {pct}%")
+            elif pct >= self.MEMORY_WARN_PCT:
+                issues.append(f"WARNING: memory at {pct}%")
+
+        # CPU check
+        cpu = sys_metrics.get("cpu", {})
+        if "error" not in cpu:
+            usage = cpu.get("usage_pct", 0)
+            if usage >= self.CPU_CRIT_PCT:
+                issues.append(f"CRITICAL: CPU at {usage}%")
+            elif usage >= self.CPU_WARN_PCT:
+                issues.append(f"WARNING: CPU at {usage}%")
+
+        # Load average check
+        load = sys_metrics.get("load_avg", {})
+        if "error" not in load:
+            load1 = load.get("1m", 0)
+            threshold = self._cpu_count * self.LOAD_WARN_MULTIPLIER
+            if load1 > threshold:
+                issues.append(f"WARNING: load avg {load1:.1f} > {threshold:.0f} ({self._cpu_count} CPUs)")
+
+        # 2. Event buffer depth
+        try:
+            buffer_depth = len(self.agent._event_buffer)
+            details["event_buffer"] = {"depth": buffer_depth}
+            if buffer_depth >= self.EVENT_BUFFER_CRIT:
+                issues.append(f"CRITICAL: event buffer depth {buffer_depth}")
+            elif buffer_depth >= self.EVENT_BUFFER_WARN:
+                issues.append(f"WARNING: event buffer depth {buffer_depth}")
+        except Exception as e:
+            issues.append(f"ERROR: cannot read event buffer: {e}")
+
+        # 3. Database connectivity
+        db_ok = True
+        try:
+            if self.agent.db:
+                conn = self.agent.db.connect()
+                if conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT 1")
+                    cur.close()
+                else:
+                    db_ok = False
+            else:
+                db_ok = False
+        except Exception as e:
+            db_ok = False
+            issues.append(f"ERROR: database check failed: {e}")
+        details["database"] = {"connected": db_ok}
+
+        # 4. Determine overall status
+        if any("CRITICAL" in i for i in issues):
+            status = "critical"
+        elif any("ERROR" in i for i in issues):
+            status = "degraded"
+        elif issues:
+            status = "warning"
+        else:
+            status = "healthy"
+
+        # Update state
+        with self._lock:
+            prev_status = self._last_status
+            self._last_status = status
+
+            if status in ("degraded", "critical"):
+                self._consecutive_degraded += 1
+            else:
+                self._consecutive_degraded = 0
+
+        # Log
+        if issues:
+            logger.warning(
+                "Health check: %s (prev=%s) — %s",
+                status, prev_status, "; ".join(issues),
+            )
+        else:
+            logger.info("Health check: %s (prev=%s) — all clear", status, prev_status)
+
+        # Discord alert on state change to degraded/critical (with cooldown)
+        now = time.time()
+        if status in ("degraded", "critical") and prev_status == "healthy":
+            with self._lock:
+                if now - self._last_alert_time >= self.alert_cooldown:
+                    self._last_alert_time = now
+                    self._send_alert(status, issues, details)
+        # Also alert if consecutive degraded count hits threshold (3 checks = ~15 min)
+        elif status in ("degraded", "critical") and self._consecutive_degraded >= 3:
+            with self._lock:
+                if now - self._last_alert_time >= self.alert_cooldown:
+                    self._last_alert_time = now
+                    self._send_alert(status, issues, details)
+
+        return {
+            "status": status,
+            "issues": issues,
+            "details": details,
+        }
+
+    # ── Private ─────────────────────────────────────────────────────
+
+    def _loop(self) -> None:
+        """Background loop: run check every `interval` seconds."""
+        while not self._shutdown.is_set():
+            try:
+                self.run_check()
+            except Exception as e:
+                logger.error("Health check loop error: %s", e, exc_info=True)
+            self._shutdown.wait(self.interval)
+
+    def _send_alert(self, status: str, issues: list[str], details: Dict[str, Any]) -> None:
+        """Send a health alert to Discord."""
+        issue_text = "\n".join(f"• {i}" for i in issues)
+        message = (
+            f"**⚠️ Agent health: {status.upper()}**\n"
+            f"```\n"
+            f"Issues:\n{issue_text}\n"
+            f"```\n"
+            f"Consecutive degraded checks: {self._consecutive_degraded}"
+        )
+        try:
+            # Use send_message for simple text alerts
+            if hasattr(self.discord_bot, "send_message"):
+                self.discord_bot.send_message(message)
+            elif hasattr(self.discord_bot, "send_alert"):
+                self.discord_bot.send_alert({
+                    "type": "health_alert",
+                    "severity": status.upper(),
+                    "description": message,
+                })
+            logger.info("Health alert sent to Discord: %s", status)
+        except Exception as e:
+            logger.error("Failed to send health alert to Discord: %s", e)

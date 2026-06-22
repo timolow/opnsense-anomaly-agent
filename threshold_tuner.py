@@ -508,7 +508,22 @@ class ThresholdTuner:
                 break
     
     # ── Database persistence ──────────────────────────────────────
-    
+
+    def _db_query(self, query, params=None):
+        """Execute a query with proper connection management."""
+        if not self.db:
+            return None
+        conn = self.db.connect()
+        try:
+            cur = conn.cursor()
+            try:
+                cur.execute(query, params or [])
+                return cur
+            finally:
+                cur.close()
+        finally:
+            self.db.putconn(conn)
+
     def _store_detection_record(self, anomaly_id: int, anomaly_type: str,
                                   score: float, threshold_type: str,
                                   timestamp: Optional[str] = None):
@@ -516,133 +531,99 @@ class ThresholdTuner:
         if not self.db:
             return
         try:
-            conn = self.db.connect()
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    """INSERT INTO threshold_detection_records
-                       (anomaly_id, anomaly_type, score, threshold_type, timestamp)
-                       VALUES (%s, %s, %s, %s, %s)
-                       ON CONFLICT (anomaly_id) DO NOTHING""",
-                    (anomaly_id, anomaly_type, score, threshold_type,
-                     timestamp or datetime.now(timezone.utc).isoformat())
-                )
-            finally:
-                cur.close()
+            cur = self._db_query(
+                """INSERT INTO threshold_detection_records
+                   (anomaly_id, anomaly_type, score, threshold_type, timestamp)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (anomaly_id) DO NOTHING""",
+                (anomaly_id, anomaly_type, score, threshold_type,
+                 timestamp or datetime.now(timezone.utc).isoformat())
+            )
         except Exception as e:
             logger.debug("Failed to store detection record: %s", e)
-    
+
     def _store_feedback(self, anomaly_id: int, label: str, reason: str, user_id: str):
         """Store feedback in the DB."""
         if not self.db:
             return
         try:
-            conn = self.db.connect()
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    """INSERT INTO threshold_feedback
-                       (anomaly_id, label, reason, user_id, created_at)
-                       VALUES (%s, %s, %s, %s, NOW())""",
-                    (anomaly_id, label, reason, user_id)
-                )
-            finally:
-                cur.close()
+            self._db_query(
+                """INSERT INTO threshold_feedback
+                   (anomaly_id, label, reason, user_id, created_at)
+                   VALUES (%s, %s, %s, %s, NOW())""",
+                (anomaly_id, label, reason, user_id)
+            )
         except Exception as e:
             logger.warning("Failed to store feedback: %s", e)
-    
+
     def _get_detection_score(self, anomaly_id: int) -> Optional[float]:
         """Get the detection score for an anomaly from DB."""
         if not self.db:
             return None
         try:
-            conn = self.db.connect()
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT score, anomaly_type FROM threshold_detection_records WHERE anomaly_id = %s",
-                    (anomaly_id,)
-                )
-                row = cur.fetchone()
-                if row:
-                    return row[0]
-            finally:
-                cur.close()
+            cur = self._db_query(
+                "SELECT score, anomaly_type FROM threshold_detection_records WHERE anomaly_id = %s",
+                (anomaly_id,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
         except Exception:
-            pass
-        return None
-    
+            return None
+
     def _get_detection_type(self, anomaly_id: int) -> str:
         """Get the anomaly type for an anomaly from DB."""
         if not self.db:
             return ''
         try:
-            conn = self.db.connect()
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT anomaly_type FROM threshold_detection_records WHERE anomaly_id = %s",
-                    (anomaly_id,)
-                )
-                row = cur.fetchone()
-                if row:
-                    return row[0]
-            finally:
-                cur.close()
+            cur = self._db_query(
+                "SELECT anomaly_type FROM threshold_detection_records WHERE anomaly_id = %s",
+                (anomaly_id,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else ''
         except Exception:
-            pass
-        return ''
-    
+            return ''
+
     def _record_tuning(self, threshold_type: str, old_value: float, new_value: float, reason: str):
         """Record a tuning adjustment in history."""
         if not self.db:
             return
         try:
-            conn = self.db.connect()
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    """INSERT INTO threshold_tuning_history
-                       (threshold_type, old_value, new_value, reason, created_at)
-                       VALUES (%s, %s, %s, %s, NOW())""",
-                    (threshold_type, old_value, new_value, reason)
-                )
-            finally:
-                cur.close()
+            self._db_query(
+                """INSERT INTO threshold_tuning_history
+                   (threshold_type, old_value, new_value, reason, created_at)
+                   VALUES (%s, %s, %s, %s, NOW())""",
+                (threshold_type, old_value, new_value, reason)
+            )
         except Exception as e:
             logger.debug("Failed to record tuning: %s", e)
-    
+
     def _get_tuning_history_from_db(self, limit: int) -> List[Dict[str, Any]]:
         """Get tuning history from DB."""
         if not self.db:
             return []
         try:
-            conn = self.db.connect()
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    """SELECT threshold_type, old_value, new_value, reason, created_at
-                       FROM threshold_tuning_history
-                       ORDER BY created_at DESC
-                       LIMIT %s""",
-                    (limit,)
-                )
-                results = []
-                for row in cur.fetchall():
-                    results.append({
-                        'threshold_type': row[0],
-                        'old_value': row[1],
-                        'new_value': row[2],
-                        'reason': row[3],
-                        'created_at': row[4].isoformat() if row[4] else None,
-                    })
-                return results
-            finally:
-                cur.close()
+            cur = self._db_query(
+                """SELECT threshold_type, old_value, new_value, reason, created_at
+                   FROM threshold_tuning_history
+                   ORDER BY created_at DESC
+                   LIMIT %s""",
+                (limit,)
+            )
+            results = []
+            for row in cur.fetchall():
+                results.append({
+                    'threshold_type': row[0],
+                    'old_value': row[1],
+                    'new_value': row[2],
+                    'reason': row[3],
+                    'created_at': row[4].isoformat() if row[4] else None,
+                })
+            return results
         except Exception as e:
             logger.warning("Failed to get tuning history: %s", e)
             return []
-    
+
     # ── State persistence (JSON file) ─────────────────────────────
     
     def _load_state(self):
