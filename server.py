@@ -238,6 +238,25 @@ def save_mutes(mutes):
     with open(MUTES_PATH, "w") as f:
         json.dump(mutes, f, indent=2, default=str)
 
+
+def load_ml_model_info():
+    """Load ML model info from persisted model file for Prometheus metrics."""
+    try:
+        import joblib
+        model_path = os.path.join(DATA_DIR, "rule_classifier_model.pkl")
+        if not os.path.exists(model_path):
+            return None
+        data = joblib.load(model_path)
+        return {
+            "model_trained": True,
+            "metrics": data.get("metrics", {}),
+            "feature_importances": data.get("feature_importances", {}),
+            "samples_since_retrain": 0,  # live value from agent
+        }
+    except Exception:
+        return None
+
+
 def add_mute(ip, attack_type, port=None, duration=3600, source="manual"):
     mutes = load_mutes()
     mute = {
@@ -1784,6 +1803,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
             out.append("# TYPE agent_uptime_seconds gauge")
             out.append(f"agent_uptime_seconds {_calc_uptime(agent_counters)}")
 
+            # ML model metrics
+            try:
+                from rule_classifier import RuleClassifier
+                ml_info = load_ml_model_info()
+                if ml_info:
+                    out.append("# HELP ml_model_trained Whether ML model is trained")
+                    out.append("# TYPE ml_model_trained gauge")
+                    out.append(f"ml_model_trained {1 if ml_info.get('model_trained') else 0}")
+                    out.append("# HELP ml_model_accuracy ML model accuracy")
+                    out.append("# TYPE ml_model_accuracy gauge")
+                    out.append(f"ml_model_accuracy {ml_info.get('metrics', {}).get('cv_accuracy_mean', 0)}")
+                    out.append("# HELP ml_model_precision_macro ML model macro precision")
+                    out.append("# TYPE ml_model_precision_macro gauge")
+                    out.append(f"ml_model_precision_macro {ml_info.get('metrics', {}).get('precision_macro', 0)}")
+                    out.append("# HELP ml_model_recall_macro ML model macro recall")
+                    out.append("# TYPE ml_model_recall_macro gauge")
+                    out.append(f"ml_model_recall_macro {ml_info.get('metrics', {}).get('recall_macro', 0)}")
+                    out.append("# HELP ml_model_f1_macro ML model macro F1 score")
+                    out.append("# TYPE ml_model_f1_macro gauge")
+                    out.append(f"ml_model_f1_macro {ml_info.get('metrics', {}).get('f1_macro', 0)}")
+                    out.append("# HELP ml_model_train_samples Number of training samples")
+                    out.append("# TYPE ml_model_train_samples gauge")
+                    out.append(f"ml_model_train_samples {ml_info.get('metrics', {}).get('train_samples', 0)}")
+                    out.append("# HELP ml_model_samples_since_retrain Samples since last retrain")
+                    out.append("# TYPE ml_model_samples_since_retrain gauge")
+                    out.append(f"ml_model_samples_since_retrain {ml_info.get('samples_since_retrain', 0)}")
+            except Exception as ml_err:
+                logger.debug("Could not add ML metrics: %s", ml_err)
+
         except Exception as e:
             logger.error("Prometheus metrics generation failed: %s", e)
             out = [f"# ERROR: {e}"]
@@ -1836,6 +1884,62 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             raise
+
+    # ═══════════════════════════════════════════════
+    # Phase 5: Threshold Auto-Tuning API handlers
+    # ═══════════════════════════════════════════════
+
+    def _handle_thresholds_get(self):
+        """GET /api/thresholds — return current threshold values."""
+        try:
+            from threshold_tuner import ThresholdTuner, DEFAULT_THRESHOLDS
+            tuner = ThresholdTuner()
+            thresholds = tuner.get_all_thresholds()
+            result = {}
+            for name, cfg in DEFAULT_THRESHOLDS.items():
+                result[name] = {
+                    'current_value': thresholds.get(name, cfg['value']),
+                    'min': cfg['min'],
+                    'max': cfg['max'],
+                    'step': cfg['step'],
+                    'description': cfg['description'],
+                }
+            self._send_json({'thresholds': result})
+        except Exception as e:
+            self._send_json({'error': str(e)}, 500)
+
+    def _handle_threshold_metrics_get(self):
+        """GET /api/threshold-metrics — return performance metrics."""
+        try:
+            from threshold_tuner import ThresholdTuner
+            tuner = ThresholdTuner()
+            metrics = tuner.get_metrics()
+            self._send_json({'metrics': metrics})
+        except Exception as e:
+            self._send_json({'error': str(e)}, 500)
+
+    def _handle_threshold_history_get(self):
+        """GET /api/threshold-history — return tuning history."""
+        try:
+            from threshold_tuner import ThresholdTuner
+            tuner = ThresholdTuner()
+            history = tuner.get_tuning_history(limit=50)
+            self._send_json({'history': history})
+        except Exception as e:
+            self._send_json({'error': str(e)}, 500)
+
+    def _handle_threshold_roc_get(self, threshold_type: str):
+        """GET /api/threshold-roc?type=volume_zscore — return ROC curve points."""
+        try:
+            from threshold_tuner import ThresholdTuner
+            tuner = ThresholdTuner()
+            curve = tuner.get_roc_curve(threshold_type)
+            self._send_json({
+                'threshold_type': threshold_type,
+                'curve': curve,
+            })
+        except Exception as e:
+            self._send_json({'error': str(e)}, 500)
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -1913,6 +2017,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/metrics":
                 try:
                     self._send_prometheus_metrics()
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            # ML model endpoints
+            elif path == "/api/ml-model":
+                if self.command == "POST":
+                    try:
+                        data = api_train_ml_model()
+                        self._send_json(data)
+                    except Exception as e:
+                        self._send_json({'error': str(e)}, 500)
+                else:
+                    try:
+                        data = api_ml_model_info()
+                        self._send_json(data)
+                    except Exception as e:
+                        self._send_json({'error': str(e)}, 500)
+            elif path == "/api/ml-classifications":
+                try:
+                    data = api_ml_classifications()
+                    self._send_json(data)
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
             # P2-6: SSE streaming endpoint
@@ -2032,6 +2156,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(query_rule_detail(rule_name))
                 else:
                     self._send_json({"error": "No rule name specified"}, 400)
+            # ═══════════════════════════════════════════════
+            # Phase 5: Threshold Auto-Tuning API
+            # ═══════════════════════════════════════════════
+            elif path == "/api/thresholds":
+                self._send_json(api_thresholds())
+            elif path == "/api/threshold-metrics":
+                self._send_json(api_threshold_metrics())
+            elif path == "/api/threshold-history":
+                self._send_json(api_threshold_history())
+            elif path == "/api/threshold-roc":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                threshold_type = query.get("type", ["volume_zscore"])[0]
+                self._send_json(api_threshold_roc(threshold_type))
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -2079,6 +2216,61 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if item_id:
                     db.resolve_active_learning_item(item_id, data.get("classification", ""), data.get("notes", ""))
                 self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        # ═══════════════════════════════════════════════
+        # Phase 5: Threshold Auto-Tuning POST endpoints
+        # ═══════════════════════════════════════════════
+        elif path == "/api/threshold-feedback":
+            # Submit feedback on a detected anomaly
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
+            data = json.loads(body)
+            try:
+                from threshold_tuner import ThresholdTuner
+                db = EventDatabase()
+                tuner = ThresholdTuner(db)
+                tuner.record_feedback(
+                    anomaly_id=data.get("anomaly_id"),
+                    label=data.get("label", "dismissed"),
+                    reason=data.get("reason", ""),
+                    user_id=data.get("user_id", "dashboard"),
+                )
+                self._send_json({"success": True, "message": "Feedback recorded"}, 201)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        elif path == "/api/threshold-tune":
+            # Trigger manual threshold tuning
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            try:
+                from threshold_tuner import ThresholdTuner
+                db = EventDatabase()
+                tuner = ThresholdTuner(db)
+                threshold_type = data.get("threshold_type")
+                adjustments = tuner.tune(threshold_type)
+                self._send_json({"success": True, "adjustments": adjustments})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        elif path == "/api/threshold-set":
+            # Manually set a threshold value
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
+            data = json.loads(body)
+            try:
+                from threshold_tuner import ThresholdTuner
+                db = EventDatabase()
+                tuner = ThresholdTuner(db)
+                tuner.set_threshold(
+                    threshold_type=data.get("threshold_type"),
+                    value=float(data.get("value")),
+                )
+                self._send_json({
+                    "success": True,
+                    "threshold_type": data.get("threshold_type"),
+                    "value": data.get("value"),
+                })
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
         else:
@@ -2232,6 +2424,63 @@ def save_active_learning_feedback(rule_name, feedback_type):
         json.dump(feedback, f, indent=2)
     
     return {"status": "saved", "rule_name": rule_name}
+
+
+# ═══════════════════════════════════════════════
+# Phase 5: Threshold Auto-Tuning API handlers
+# ═══════════════════════════════════════════════
+
+def _get_threshold_tuner():
+    """Get a ThresholdTuner instance with DB connection."""
+    from threshold_tuner import ThresholdTuner
+    db = EventDatabase()
+    db.ensure_tables()
+    return ThresholdTuner(db)
+
+
+def api_thresholds():
+    """GET /api/thresholds — current threshold values."""
+    tuner = _get_threshold_tuner()
+    thresholds = tuner.get_all_thresholds()
+    # Add metadata for each threshold
+    from threshold_tuner import DEFAULT_THRESHOLDS
+    result = {}
+    for name, value in thresholds.items():
+        cfg = DEFAULT_THRESHOLDS.get(name, {})
+        result[name] = {
+            'value': value,
+            'min': cfg.get('min', 0),
+            'max': cfg.get('max', 10),
+            'default': cfg.get('value', value),
+            'description': cfg.get('description', ''),
+        }
+    return {'thresholds': result}
+
+
+def api_threshold_metrics():
+    """GET /api/threshold-metrics — performance metrics per threshold type."""
+    tuner = _get_threshold_tuner()
+    metrics = tuner.get_metrics()
+    return {'metrics': metrics}
+
+
+def api_threshold_history(limit=50):
+    """GET /api/threshold-history — tuning history."""
+    tuner = _get_threshold_tuner()
+    history = tuner.get_tuning_history(limit=limit)
+    return {'history': history}
+
+
+def api_threshold_roc(threshold_type='volume_zscore'):
+    """GET /api/threshold-roc?type=volume_zscore — ROC curve data."""
+    tuner = _get_threshold_tuner()
+    curve = tuner.get_roc_curve(threshold_type)
+    metrics = tuner.get_metrics(threshold_type)
+    return {
+        'threshold_type': threshold_type,
+        'roc_curve': curve,
+        'metrics': metrics.get(threshold_type, {}),
+    }
 
 
 def query_wan_flaps():
@@ -2665,6 +2914,75 @@ def api_ml_summary():
     except Exception as e:
         logger.error("ml_summary failed: %s", e)
         return {'error': str(e)}
+
+
+def api_ml_model_info():
+    """GET /api/ml-model - Return ML model info and metrics."""
+    try:
+        # Load current rule classifier state to get model info
+        from rule_classifier import RuleClassifier
+
+        # Load persisted state
+        classifier = RuleClassifier()
+        classifier.load_state()
+
+        info = classifier.get_model_info()
+
+        # Add Prometheus-style metrics
+        info["metrics"] = classifier.get_model_metrics()
+
+        return info
+    except Exception as e:
+        logger.error("ml_model_info failed: %s", e)
+        return {"error": str(e)}
+
+
+def api_train_ml_model():
+    """POST /api/ml-model - Trigger ML model training."""
+    try:
+        from rule_classifier import RuleClassifier
+
+        # Load current state
+        classifier = RuleClassifier()
+        classifier.load_state()
+
+        if len(classifier.rule_profiles) < 10:
+            return {
+                "success": False,
+                "error": f"Insufficient data: {len(classifier.rule_profiles)} rules (need >= 10)",
+            }
+
+        metrics = classifier.train_ml_model()
+
+        return {
+            "success": "error" not in metrics,
+            "metrics": metrics,
+            "model_trained": "error" not in metrics,
+        }
+    except Exception as e:
+        logger.error("train_ml_model failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+def api_ml_classifications():
+    """GET /api/ml-classifications - Return all rule classifications."""
+    try:
+        from rule_classifier import RuleClassifier
+
+        classifier = RuleClassifier()
+        classifier.load_state()
+
+        classifications = classifier.get_all_classifications()
+
+        return {
+            "classifications": classifications,
+            "total_rules": len(classifications),
+            "model_trained": classifier.ml_classifier.model is not None,
+            "model_metrics": classifier.get_model_metrics(),
+        }
+    except Exception as e:
+        logger.error("ml_classifications failed: %s", e)
+        return {"error": str(e)}
 
 
 def api_active_learning_queue():

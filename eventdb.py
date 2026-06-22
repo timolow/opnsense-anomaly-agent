@@ -189,6 +189,104 @@ CREATE TABLE IF NOT EXISTS active_learning_queue (
 CREATE INDEX IF NOT EXISTS idx_active_learning_queue_status ON active_learning_queue(status);
 CREATE INDEX IF NOT EXISTS idx_active_learning_queue_rule ON active_learning_queue(rule_name);
 CREATE INDEX IF NOT EXISTS idx_active_learning_queue_created ON active_learning_queue(created_at);
+
+-- Phase 5: Threshold Auto-Tuning tables
+-- Detection records: track each anomaly detection with its score
+CREATE TABLE IF NOT EXISTS threshold_detection_records (
+    id SERIAL PRIMARY KEY,
+    anomaly_id INTEGER NOT NULL,
+    anomaly_type TEXT NOT NULL,
+    score DOUBLE PRECISION NOT NULL,
+    threshold_type TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_detection_anomaly ON threshold_detection_records(anomaly_id);
+CREATE INDEX IF NOT EXISTS idx_threshold_detection_type ON threshold_detection_records(anomaly_type);
+CREATE INDEX IF NOT EXISTS idx_threshold_detection_threshold_type ON threshold_detection_records(threshold_type);
+
+-- Threshold feedback: user labels on detected anomalies
+CREATE TABLE IF NOT EXISTS threshold_feedback (
+    id SERIAL PRIMARY KEY,
+    anomaly_id INTEGER NOT NULL,
+    label TEXT NOT NULL,  -- true_positive, false_positive, dismissed
+    reason TEXT,
+    user_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_feedback_anomaly ON threshold_feedback(anomaly_id);
+CREATE INDEX IF NOT EXISTS idx_threshold_feedback_label ON threshold_feedback(label);
+CREATE INDEX IF NOT EXISTS idx_threshold_feedback_created ON threshold_feedback(created_at);
+
+-- Threshold tuning history: audit trail of threshold adjustments
+CREATE TABLE IF NOT EXISTS threshold_tuning_history (
+    id SERIAL PRIMARY KEY,
+    threshold_type TEXT NOT NULL,
+    old_value DOUBLE PRECISION NOT NULL,
+    new_value DOUBLE PRECISION NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_tuning_history_type ON threshold_tuning_history(threshold_type);
+CREATE INDEX IF NOT EXISTS idx_threshold_tuning_history_created ON threshold_tuning_history(created_at);
+
+-- Threshold tuning tables: track detection records, feedback, and tuning history
+CREATE TABLE IF NOT EXISTS threshold_detection_records (
+    id SERIAL PRIMARY KEY,
+    anomaly_id INTEGER NOT NULL,
+    anomaly_type TEXT NOT NULL,
+    score DOUBLE PRECISION NOT NULL,
+    threshold_type TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(anomaly_id)
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_detection_type ON threshold_detection_records(anomaly_type);
+CREATE INDEX IF NOT EXISTS idx_threshold_detection_threshold_type ON threshold_detection_records(threshold_type);
+CREATE INDEX IF NOT EXISTS idx_threshold_detection_timestamp ON threshold_detection_records(timestamp);
+
+CREATE TABLE IF NOT EXISTS threshold_feedback (
+    id SERIAL PRIMARY KEY,
+    anomaly_id INTEGER NOT NULL REFERENCES anomalies(id),
+    label TEXT NOT NULL,              -- true_positive, false_positive, dismissed
+    reason TEXT,
+    user_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_feedback_anomaly ON threshold_feedback(anomaly_id);
+CREATE INDEX IF NOT EXISTS idx_threshold_feedback_label ON threshold_feedback(label);
+CREATE INDEX IF NOT EXISTS idx_threshold_feedback_created ON threshold_feedback(created_at);
+
+CREATE TABLE IF NOT EXISTS threshold_tuning_history (
+    id SERIAL PRIMARY KEY,
+    threshold_type TEXT NOT NULL,
+    old_value DOUBLE PRECISION NOT NULL,
+    new_value DOUBLE PRECISION NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_threshold_tuning_type ON threshold_tuning_history(threshold_type);
+CREATE INDEX IF NOT EXISTS idx_threshold_tuning_created ON threshold_tuning_history(created_at);
+
+-- Concept drift events: track distribution shifts in traffic patterns
+CREATE TABLE IF NOT EXISTS drift_events (
+    id SERIAL PRIMARY KEY,
+    metric TEXT NOT NULL,            -- e.g. volume, protocol, port_diversity, ip_diversity
+    scope TEXT NOT NULL,             -- e.g. "rule:abc123", "global:volume"
+    old_mean DOUBLE PRECISION NOT NULL,
+    new_mean DOUBLE PRECISION NOT NULL,
+    drift_magnitude DOUBLE PRECISION NOT NULL,
+    window_size INTEGER NOT NULL,
+    severity TEXT NOT NULL,          -- LOW, MEDIUM, HIGH, CRITICAL
+    description TEXT,
+    triggered_retrain BOOLEAN DEFAULT FALSE,
+    timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_drift_events_metric ON drift_events(metric);
+CREATE INDEX IF NOT EXISTS idx_drift_events_scope ON drift_events(scope);
+CREATE INDEX IF NOT EXISTS idx_drift_events_severity ON drift_events(severity);
+CREATE INDEX IF NOT EXISTS idx_drift_events_timestamp ON drift_events(timestamp);
 """
 
 
@@ -326,6 +424,74 @@ class EventDatabase:
         finally:
             cur.close()
     
+    def ensure_threshold_tuning_migration(self):
+        """Create threshold tuning tables if they don't exist (migration)."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            # Check which tables exist
+            cur.execute("""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN ('threshold_detection_records', 'threshold_feedback', 'threshold_tuning_history')
+            """)
+            existing = {row[0] for row in cur.fetchall()}
+
+            missing = {'threshold_detection_records', 'threshold_feedback', 'threshold_tuning_history'} - existing
+
+            if 'threshold_detection_records' in missing:
+                cur.execute("""
+                    CREATE TABLE threshold_detection_records (
+                        id SERIAL PRIMARY KEY,
+                        anomaly_id INTEGER NOT NULL,
+                        anomaly_type TEXT NOT NULL,
+                        score DOUBLE PRECISION NOT NULL,
+                        threshold_type TEXT NOT NULL,
+                        timestamp TIMESTAMPTZ NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE(anomaly_id)
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_detection_type ON threshold_detection_records(anomaly_type)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_detection_threshold_type ON threshold_detection_records(threshold_type)")
+                logger.info("Created table: threshold_detection_records")
+
+            if 'threshold_feedback' in missing:
+                cur.execute("""
+                    CREATE TABLE threshold_feedback (
+                        id SERIAL PRIMARY KEY,
+                        anomaly_id INTEGER NOT NULL REFERENCES anomalies(id),
+                        label TEXT NOT NULL,
+                        reason TEXT,
+                        user_id TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_feedback_anomaly ON threshold_feedback(anomaly_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_feedback_label ON threshold_feedback(label)")
+                logger.info("Created table: threshold_feedback")
+
+            if 'threshold_tuning_history' in missing:
+                cur.execute("""
+                    CREATE TABLE threshold_tuning_history (
+                        id SERIAL PRIMARY KEY,
+                        threshold_type TEXT NOT NULL,
+                        old_value DOUBLE PRECISION NOT NULL,
+                        new_value DOUBLE PRECISION NOT NULL,
+                        reason TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_tuning_type ON threshold_tuning_history(threshold_type)")
+                logger.info("Created table: threshold_tuning_history")
+
+            if missing:
+                logger.info("Threshold tuning migration complete: created %d table(s)", len(missing))
+            else:
+                logger.debug("Threshold tuning tables already present")
+        finally:
+            cur.close()
+
     def ensure_indexes(self):
         """Ensure database indexes exist.
         
@@ -513,7 +679,100 @@ class EventDatabase:
                 cur.execute("UPDATE anomalies SET discord_sent = TRUE WHERE id = %s", (anomaly_id,))
         finally:
             cur.close()
-    
+
+    def insert_drift_event(self, metric: str, scope: str, old_mean: float,
+                           new_mean: float, drift_magnitude: float, window_size: int,
+                           severity: str, description: str,
+                           timestamp: Optional[datetime] = None) -> int:
+        """Insert a concept drift event."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO drift_events
+                   (metric, scope, old_mean, new_mean, drift_magnitude, window_size,
+                    severity, description, timestamp)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (metric, scope, old_mean, new_mean, drift_magnitude, window_size,
+                 severity, description, timestamp or datetime.now(timezone.utc))
+            )
+            drift_id = cur.fetchone()[0]
+            return drift_id
+        finally:
+            cur.close()
+
+    def mark_drift_retrained(self, drift_id: int):
+        """Mark a drift event as having triggered retraining."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                "UPDATE drift_events SET triggered_retrain = TRUE WHERE id = %s",
+                (drift_id,)
+            )
+        finally:
+            cur.close()
+
+    def get_recent_drift_events(self, hours: int = 24, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get recent drift events for dashboard/history."""
+        cur = self._new_cursor()
+        result = []
+        try:
+            cur.execute(
+                """SELECT id, metric, scope, old_mean, new_mean, drift_magnitude,
+                          window_size, severity, description, triggered_retrain, timestamp
+                   FROM drift_events
+                   ORDER BY timestamp DESC
+                   LIMIT %s""",
+                (limit,)
+            )
+            for row in cur.fetchall():
+                result.append({
+                    "id": row[0],
+                    "metric": row[1],
+                    "scope": row[2],
+                    "old_mean": row[3],
+                    "new_mean": row[4],
+                    "drift_magnitude": row[5],
+                    "window_size": row[6],
+                    "severity": row[7],
+                    "description": row[8],
+                    "triggered_retrain": row[9],
+                    "timestamp": str(row[10]) if row[10] else "",
+                })
+        finally:
+            cur.close()
+        return result
+
+    def get_drift_stats(self) -> Dict[str, Any]:
+        """Get drift statistics for dashboard."""
+        cur = self._new_cursor()
+        result = {"total": 0, "by_metric": {}, "by_severity": {}, "recent_count": 0}
+        try:
+            # Total count
+            cur.execute("SELECT COUNT(*) FROM drift_events")
+            result["total"] = cur.fetchone()[0]
+
+            # By metric
+            cur.execute(
+                "SELECT metric, COUNT(*) FROM drift_events GROUP BY metric ORDER BY COUNT(*) DESC"
+            )
+            result["by_metric"] = {row[0]: row[1] for row in cur.fetchall()}
+
+            # By severity
+            cur.execute(
+                "SELECT severity, COUNT(*) FROM drift_events GROUP BY severity ORDER BY COUNT(*) DESC"
+            )
+            result["by_severity"] = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Last 24h count
+            cur.execute(
+                "SELECT COUNT(*) FROM drift_events WHERE timestamp > NOW() - INTERVAL '24 hours'"
+            )
+            result["recent_count"] = cur.fetchone()[0]
+        finally:
+            cur.close()
+        return result
+
     def upsert_baseline(self, metric: str, time_window: datetime, mean: float, stddev: float, count: int):
         """Insert or update a baseline measurement."""
         cur = self._new_cursor()

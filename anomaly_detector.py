@@ -2,6 +2,7 @@
 """
 Anomaly Detector - integrated with agent.py
 Detects: volume spikes, port scans, new IPs, protocol shifts, temporal anomalies
+Supports dynamic threshold tuning via ThresholdTuner integration.
 """
 import os
 import json
@@ -12,7 +13,7 @@ from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Thresholds
+# Default thresholds (overridden by ThresholdTuner when integrated)
 VOLUME_ZSCORE = 3.0      # z-score for volume spikes
 PORT_SCAN_MIN = 10       # unique ports to trigger port scan alert
 NEW_IP_MIN = 5           # events from new IP to alert
@@ -57,13 +58,20 @@ def is_internal_ip(ip: str) -> bool:
 class AnomalyDetector:
     """Detects anomalies by comparing events against learned baselines."""
 
-    def __init__(self, baselines):
+    def __init__(self, baselines, threshold_tuner=None):
         self.baselines = baselines
+        self.threshold_tuner = threshold_tuner  # Optional ThresholdTuner
         self.ip_ports: Dict[str, set] = defaultdict(set)
         self.ip_counts: Dict[str, int] = defaultdict(int)
         self.rule_counts: Dict[str, int] = defaultdict(int)
         self.detected: List[Dict[str, Any]] = []
         self.detected_ips: set = set()  # Track IPs we've already alerted on
+    
+    def _get_threshold(self, name: str, default: float) -> float:
+        """Get threshold value from tuner or fallback to module default."""
+        if self.threshold_tuner:
+            return self.threshold_tuner.get_threshold(name)
+        return default
 
     def check_volume(self, rule: str, count_5min: int) -> Optional[Dict]:
         """Check if event volume deviates from baseline."""
@@ -77,7 +85,8 @@ class AnomalyDetector:
             return None
         hourly = count_5min * 12  # extrapolate
         z = (hourly - avg) / std
-        if abs(z) >= VOLUME_ZSCORE:
+        zscore_threshold = self._get_threshold('volume_zscore', VOLUME_ZSCORE)
+        if abs(z) >= zscore_threshold:
             sev = "CRITICAL" if abs(z) >= 5 else "HIGH" if abs(z) >= 4 else "MEDIUM"
             return {
                 "type": "volume_spike", "severity": sev, "rule": rule,
@@ -90,7 +99,8 @@ class AnomalyDetector:
     def check_port_scan(self, ip: str) -> Optional[Dict]:
         """Check for port scanning."""
         ports = self.ip_ports.get(ip, set())
-        if len(ports) >= PORT_SCAN_MIN:
+        port_scan_min = self._get_threshold('port_scan_min', PORT_SCAN_MIN)
+        if len(ports) >= port_scan_min:
             sev = "CRITICAL" if len(ports) > 20 else "HIGH" if len(ports) > 10 else "MEDIUM"
             return {
                 "type": "port_scan", "severity": sev, "rule": "any",
@@ -104,7 +114,8 @@ class AnomalyDetector:
         # Skip internal/whitelisted IPs
         if is_internal_ip(ip):
             return None
-        if count < NEW_IP_MIN:
+        new_ip_min = self._get_threshold('new_ip_min', NEW_IP_MIN)
+        if count < new_ip_min:
             return None
         # Check if IP has any baseline (handle both dict and TrafficBaseline)
         known = False
@@ -164,12 +175,13 @@ class AnomalyDetector:
         # Also check ratio against this specific hour's baseline (catches quiet-hour spikes)
         # If the hour normally sees near-zero traffic, even a small absolute count is suspicious
         ratio_anomaly = False
+        temporal_zscore = self._get_threshold('temporal_zscore', TEMPORAL_ZSCORE)
         if expected_this_hour < 1 and current_rate > 0:
             # Activity when there should be none — flag if rate is meaningfully above mean
-            if current_rate > mean + TEMPORAL_ZSCORE * stddev:
+            if current_rate > mean + temporal_zscore * stddev:
                 ratio_anomaly = True
 
-        if abs(z) >= TEMPORAL_ZSCORE or ratio_anomaly:
+        if abs(z) >= temporal_zscore or ratio_anomaly:
             sev = ("CRITICAL" if abs(z) >= 5
                    else "HIGH" if abs(z) >= 4
                    else "MEDIUM")

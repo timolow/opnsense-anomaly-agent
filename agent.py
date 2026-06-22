@@ -81,6 +81,8 @@ from nginx_monitor import NginxMonitor
 from threat_engine import ThreatEngine
 from baseline_engine import BaselineEngine
 from anomaly_detector import AnomalyDetector
+from threshold_tuner import ThresholdTuner
+from concept_drift import ConceptDriftDetector, DriftEvent
 
 # P2-6: SSE queue access (imported from server module)
 _sse_publish_fn = None
@@ -492,6 +494,7 @@ class OPNsenseAgent:
                 self.db.ensure_tables()
                 self.db.ensure_indexes()
                 self.db.ensure_hostnames_migration()
+                self.db.ensure_threshold_tuning_migration()
                 logger.info("Connected to PostgreSQL %s:%s (%s)", self.config.db_host, self.config.db_port, self.config.db_name)
                 break
             except Exception as e:
@@ -590,14 +593,26 @@ class OPNsenseAgent:
             self.threat_engine = ThreatEngine(self.db, baseline_engine=self.baseline_engine)
             logger.info("Unified threat engine initialized")
 
-            # Initialize anomaly detector with baselines
-            self.anomaly_detector = AnomalyDetector(self.baseline_engine._baselines)
+            # Initialize threshold auto-tuner (Phase 5)
+            self.threshold_tuner = ThresholdTuner(self.db)
+            logger.info("Threshold auto-tuner initialized")
+
+            # Initialize anomaly detector with baselines + threshold tuner
+            self.anomaly_detector = AnomalyDetector(self.baseline_engine._baselines,
+                                                     threshold_tuner=self.threshold_tuner)
             logger.info("Anomaly detector initialized with %d baselines", len(self.baseline_engine._baselines))
         except Exception as e:
             logger.warning("Failed to initialize threat/baseline engines: %s", e)
             self.baseline_engine = None
             self.threat_engine = None
+            self.threshold_tuner = None
         self._adapt_cycle = 0
+
+        # Concept drift detector — monitors traffic distribution changes
+        self.drift_detector = ConceptDriftDetector()
+        self.last_drift_check = time.time()
+        self.last_drift_retrain = time.time()
+        logger.info("Concept drift detector initialized")
 
         # Shutdown
         self._shutdown = Event()
@@ -755,6 +770,10 @@ class OPNsenseAgent:
         # Rule-based learning (firewall rules only)
         self.rule_classifier.process_event(event)
 
+        # Auto-retrain ML model when enough new data accumulates
+        if self.rule_classifier.should_retrain_ml():
+            self.rule_classifier.train_ml_model()
+
         # ZenArmor policy classifier — tracks security gateway policies
         log_type = event.get('log_type', '')
         if log_type == 'zenarmor':
@@ -817,6 +836,10 @@ class OPNsenseAgent:
         if log_type == 'firewall' and self.baseline_engine and self.threat_engine:
             self.baseline_engine.update_baseline(event.get('rule_name', ''), [event])
             self.threat_engine.ingest_firewall_event(event)
+
+        # Concept drift detection — feed firewall events into drift tracker
+        if log_type == 'firewall' and self.drift_detector:
+            self.drift_detector.process_event(event)
 
     def _process_batch(self, events: list[dict]):
         """Process a batch of events."""
@@ -1082,7 +1105,7 @@ class OPNsenseAgent:
                     self._process_batch(events)
 
                     # Anomaly detection against baselines
-                    if self.anomaly_detector and self.baseline_engine:
+                    if self.anomaly_detector and self.baseline_engine and self.db:
                         anomalies = self.anomaly_detector.analyze(events)
                         if anomalies:
                             for anomaly in anomalies:
@@ -1095,6 +1118,7 @@ class OPNsenseAgent:
                                 self.anomaly_count += 1
                                 logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
                                 # Save anomaly to database
+                                anomaly_id = None
                                 try:
                                     # Map anomaly detector output to database schema
                                     db_anomaly = {
@@ -1107,9 +1131,18 @@ class OPNsenseAgent:
                                         "description": anomaly.get("description", ""),
                                         "detail": {k: v for k, v in anomaly.items() if k not in ("attack_type", "severity", "src_ip", "dst_ip", "dst_port", "proto", "description")}
                                     }
-                                    self.db.insert_anomaly(db_anomaly)
+                                    anomaly_id = self.db.insert_anomaly(db_anomaly)
                                 except Exception as e:
                                     logger.warning("Failed to save anomaly to DB: %s", e)
+
+                                # Record detection with threshold tuner (for auto-tuning)
+                                if self.threshold_tuner and anomaly_id:
+                                    score = anomaly.get("z_score") or anomaly.get("ports_count") or anomaly.get("event_count") or 1.0
+                                    self.threshold_tuner.record_detection(
+                                        anomaly_type=anomaly_type,
+                                        score=abs(float(score)),
+                                        anomaly_id=anomaly_id,
+                                    )
                                 self.discord_bot.send_alert(anomaly)
                                 self.apprise_notifier.send_alert(anomaly)
                                 # P2-6: Publish to SSE stream
@@ -1146,6 +1179,20 @@ class OPNsenseAgent:
                         self.zenarmor_classifier.save_state()
                         self.ids_analyzer.save_state()
                         self.nginx_monitor.save_state()
+
+                    # Phase 5: Periodic threshold auto-tuning (every 2 learn intervals)
+                    if self.threshold_tuner and now - self.last_save >= self.config.learn_interval * 2:
+                        try:
+                            adjustments = self.threshold_tuner.tune()
+                            if adjustments:
+                                adj_summary = ", ".join(
+                                    f"{a['type']}: {a['old_value']:.2f} -> {a['new_value']:.2f}"
+                                    for a in adjustments if a['old_value'] != a['new_value']
+                                )
+                                if adj_summary:
+                                    logger.info("Threshold auto-tune: %s", adj_summary)
+                        except Exception as e:
+                            logger.warning("Threshold auto-tune failed: %s", e)
 
                     # Periodic status (time-based every 60s)
                     now = time.time()
