@@ -2078,7 +2078,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({
                         'thresholds': tuner.get_all_thresholds(),
                         'metrics': tuner.get_metrics(),
-                        'roc_curve': tuner.compute_roc_curve()
+                        'roc_curve': tuner.get_roc_curve('default')
                     })
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
