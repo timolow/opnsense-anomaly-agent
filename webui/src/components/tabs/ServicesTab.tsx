@@ -66,7 +66,7 @@ export default function ServicesTab() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div><span className="text-cyber-textMuted">Cache Size</span><div className="font-mono">{data.unbound.cache_size}</div></div>
-              <div><span className="text-cyber-textMuted">Queries Total</span><div className="font-mono">{data.unbound.queries_total.toLocaleString()}</div></div>
+              <div><span className="text-cyber-textMuted">Queries Total</span><div className="font-mono">{(data.unbound.queries_total || 0).toLocaleString()}</div></div>
             </div>
             {data.unbound.details && <div className="mt-2 text-xs text-cyber-textMuted">{data.unbound.details}</div>}
           </div>

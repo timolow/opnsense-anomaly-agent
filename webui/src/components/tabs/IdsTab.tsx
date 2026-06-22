@@ -99,7 +99,7 @@ export default function IdsTab() {
                       {sig.severity}
                     </span>
                   </td>
-                  <td className="font-mono">{sig.triggered_count.toLocaleString()}</td>
+                  <td className="font-mono">{(sig.triggered_count || 0).toLocaleString()}</td>
                   <td className="text-cyber-textMuted">{sig.last_triggered || 'N/A'}</td>
                 </tr>
               ))}

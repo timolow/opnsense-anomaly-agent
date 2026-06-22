@@ -101,7 +101,7 @@ function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
                 }} />
               </div>
               <div style={{ fontSize: '12px', color: '#8899aa', minWidth: '60px', textAlign: 'right', fontFamily: 'monospace' }}>
-                {count.toLocaleString()} ({pct.toFixed(1)}%)
+                {(count || 0).toLocaleString()} ({pct.toFixed(1)}%)
               </div>
             </div>
           );
@@ -151,7 +151,7 @@ function MethodChart({ by_method }: { by_method: Record<string, number> }) {
                 textShadow: `0 0 8px ${color}40`,
               }}>{method}</div>
               <div style={{ fontSize: '16px', fontWeight: '700', color, fontFamily: 'monospace' }}>
-                {count.toLocaleString()}
+                {count || 0}
               </div>
               <div style={{ fontSize: '10px', color: '#8899aa' }}>{pct.toFixed(1)}%</div>
             </div>
@@ -196,7 +196,7 @@ function TopIPsTable({ ips }: { ips: Array<{ ip: string; requests: number }> }) 
                 {item.ip}
               </td>
               <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#00ffaa' }}>
-                {item.requests.toLocaleString()}
+                {(item.requests || 0).toLocaleString()}
               </td>
             </tr>
           ))}
@@ -236,7 +236,7 @@ function TopPathsTable({ paths }: { paths: Array<{ path: string; requests: numbe
                 {item.path}
               </td>
               <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#00ffaa' }}>
-                {item.requests.toLocaleString()}
+                {(item.requests || 0).toLocaleString()}
               </td>
             </tr>
           ))}
@@ -443,36 +443,36 @@ export const NginxTab: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
         <SummaryCard
           title="Total Requests"
-          value={s.total_requests.toLocaleString()}
+          value={(s.total_requests || 0).toLocaleString()}
           color="#00ffaa"
           description="Last 24 hours"
         />
         <SummaryCard
           title="Unique IPs"
-          value={s.unique_ips.toLocaleString()}
+          value={(s.unique_ips || 0).toLocaleString()}
           color="#00ccff"
         />
         <SummaryCard
           title="Status OK"
-          value={s.status_ok.toLocaleString()}
+          value={(s.status_ok || 0).toLocaleString()}
           color="#00ffaa"
-          description={`${s.total_requests > 0 ? ((s.status_ok / s.total_requests) * 100).toFixed(1) : 0}% of total`}
+          description={`${(s.total_requests || 0) > 0 ? (((s.status_ok || 0) / (s.total_requests || 1)) * 100).toFixed(1) : 0}% of total`}
         />
         <SummaryCard
           title="Client Errors"
-          value={s.status_client_err.toLocaleString()}
+          value={(s.status_client_err || 0).toLocaleString()}
           color="#ffa500"
           description="4xx responses"
         />
         <SummaryCard
           title="Server Errors"
-          value={s.status_server_err.toLocaleString()}
+          value={(s.status_server_err || 0).toLocaleString()}
           color="#ff0040"
           description="5xx responses"
         />
         <SummaryCard
           title="404 Not Found"
-          value={s.not_found_404.toLocaleString()}
+          value={(s.not_found_404 || 0).toLocaleString()}
           color="#ffff00"
           description="Potential scanning"
         />
@@ -480,18 +480,18 @@ export const NginxTab: React.FC = () => {
 
       {/* Charts Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
-        <MethodChart by_method={s.by_method} />
-        <StatusCodeChart by_status={s.by_status} />
+        <MethodChart by_method={s.by_method || {}} />
+        <StatusCodeChart by_status={s.by_status || {}} />
       </div>
 
       {/* Top IPs + Top Paths */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
-        <TopIPsTable ips={s.top_ips} />
-        <TopPathsTable paths={s.top_paths} />
+        <TopIPsTable ips={s.top_ips || []} />
+        <TopPathsTable paths={s.top_paths || []} />
       </div>
 
       {/* Anomalies by Type */}
-      {Object.keys(s.anomalies_by_type).length > 0 && (
+      {Object.keys(s.anomalies_by_type || {}).length > 0 && (
         <div style={{
           background: 'rgba(10, 15, 30, 0.7)',
           border: '1px solid rgba(255, 0, 64, 0.15)',

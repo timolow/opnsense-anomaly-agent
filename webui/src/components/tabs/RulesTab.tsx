@@ -150,7 +150,7 @@ export default function RulesTab() {
                 <td className="font-semibold">{rule.name}</td>
                 <td className="font-mono text-xs">{rule.source_net}</td>
                 <td className="font-mono text-xs">{rule.destination_net}</td>
-                <td className="font-mono">{rule.events_24h.toLocaleString()}</td>
+                <td className="font-mono">{(rule.events_24h || 0).toLocaleString()}</td>
                 <td><span className={`cyber-badge ${classificationColor(rule.classification)}`}>{rule.classification}</span></td>
                 <td>
                   <div className="flex items-center gap-1">

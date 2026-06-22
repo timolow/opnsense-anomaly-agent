@@ -290,9 +290,9 @@ export default function OverviewTab() {
       <ThreatSummary data={stats} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <StatBox value={stats.events_24h.toLocaleString()} label="Events (24h)" change={{ value: 12, positive: true }} />
-        <StatBox value={stats.blocked_24h.toLocaleString()} label="Blocked" color="text-cyber-red" />
-        <StatBox value={stats.passed_24h.toLocaleString()} label="Passed" color="text-cyber-green" />
+        <StatBox value={(stats.events_24h || 0).toLocaleString()} label="Events (24h)" change={{ value: 12, positive: true }} />
+        <StatBox value={(stats.blocked_24h || 0).toLocaleString()} label="Blocked" color="text-cyber-red" />
+        <StatBox value={(stats.passed_24h || 0).toLocaleString()} label="Passed" color="text-cyber-green" />
         <StatBox value={stats.unique_ips} label="Unique IPs" />
         <StatBox value={stats.anomalies_detected} label="Anomalies" color="text-cyber-yellow" />
         <StatBox value={stats.alerts_sent} label="Alerts Sent" />
