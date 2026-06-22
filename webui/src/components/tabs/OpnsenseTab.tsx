@@ -35,7 +35,7 @@ export default function OpnsenseTab() {
       </div>
 
       {/* System Info */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="flex items-center gap-2 mb-2">
             <Cpu size={14} className="text-cyber-accent" />
@@ -69,7 +69,7 @@ export default function OpnsenseTab() {
       {/* Interfaces */}
       <div className="cyber-card p-4 scanlines">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Interfaces</h3>
-        <table className="cyber-table">
+        <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
             <tr>
               <th>Status</th>
@@ -92,13 +92,13 @@ export default function OpnsenseTab() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       {/* Gateways */}
       <div className="cyber-card p-4 scanlines">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Gateways</h3>
-        <table className="cyber-table">
+        <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -125,7 +125,7 @@ export default function OpnsenseTab() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );

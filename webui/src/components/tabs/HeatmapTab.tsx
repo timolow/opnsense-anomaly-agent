@@ -27,10 +27,16 @@ export default function HeatmapTab() {
     
     if (numCols === 0 || numRows === 0) return;
 
-    canvas.width = 1200;
-    canvas.height = Math.max(400, numRows * 20);
-    const cellW = canvas.width / numCols;
-    const cellH = canvas.height / numRows;
+    // Responsive canvas sizing based on container width
+    const containerWidth = canvas.parentElement ? canvas.parentElement.clientWidth - 32 : 800; // minus padding
+    const cellW_target = 60; // target cell width
+    const canvasWidth = Math.max(containerWidth, numCols * cellW_target);
+    const cellH = Math.max(20, Math.min(30, 600 / numRows));
+    const canvasHeight = Math.max(200, numRows * cellH);
+    
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const cellW = canvasWidth / numCols;
 
     // Find max value
     let maxVal = 0;

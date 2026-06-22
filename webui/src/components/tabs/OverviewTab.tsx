@@ -47,7 +47,7 @@ function ThreatSummary({ data }: { data: StatsData }) {
   ];
 
   return (
-    <div className="grid grid-cols-4 gap-3 mb-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
       {threats.map((t) => (
         <div
           key={t.label}
@@ -289,7 +289,7 @@ export default function OverviewTab() {
     <div className="space-y-6">
       <ThreatSummary data={stats} />
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatBox value={stats.events_24h.toLocaleString()} label="Events (24h)" change={{ value: 12, positive: true }} />
         <StatBox value={stats.blocked_24h.toLocaleString()} label="Blocked" color="text-cyber-red" />
         <StatBox value={stats.passed_24h.toLocaleString()} label="Passed" color="text-cyber-green" />
@@ -309,8 +309,8 @@ export default function OverviewTab() {
         isLive={sseTimelineData.length > 0}
       />
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-1 lg:col-span-2">
           <SeverityChart data={stats} />
         </div>
         <ActivityFeed alerts={alerts || { anomalies: [] }} />

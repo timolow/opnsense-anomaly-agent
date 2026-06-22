@@ -36,7 +36,7 @@ export default function GeoTab() {
         <span className="text-xs text-cyber-textMuted font-mono">{totalEvents.toLocaleString()} total events</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Country bars */}
         <div className="cyber-card p-4 scanlines">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Top Sources</h3>
@@ -71,7 +71,7 @@ export default function GeoTab() {
         {/* Visual grid */}
         <div className="cyber-card p-4 scanlines">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Intensity Map</h3>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             {topCountries.slice(0, 15).map((c) => (
               <div
                 key={c.country}

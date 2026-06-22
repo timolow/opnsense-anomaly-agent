@@ -47,8 +47,8 @@ export default function AlertsTab() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3">
-        <div className="flex-1 flex gap-2">
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1 flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyber-textMuted" />
             <input
@@ -62,7 +62,7 @@ export default function AlertsTab() {
           <select
             value={severityFilter}
             onChange={(e) => setSeverityFilter(e.target.value)}
-            className="cyber-select w-32"
+            className="cyber-select w-full sm:w-32 min-h-[44px]"
           >
             <option value="">All Severity</option>
             <option value="CRITICAL">Critical</option>
@@ -81,7 +81,7 @@ export default function AlertsTab() {
             No alerts found
           </div>
         ) : (
-          <table className="cyber-table">
+          <div className="cyber-table-responsive"><table className="cyber-table">
             <thead>
               <tr>
                 <th>Time</th>
@@ -112,7 +112,7 @@ export default function AlertsTab() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
     </div>

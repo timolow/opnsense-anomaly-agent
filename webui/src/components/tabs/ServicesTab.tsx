@@ -31,7 +31,7 @@ export default function ServicesTab() {
       </div>
 
       {/* Service Cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {data.dhcp && (
           <div className="cyber-card p-4 cyber-card-hover">
             <div className="flex items-center gap-3 mb-3">
@@ -44,7 +44,7 @@ export default function ServicesTab() {
               </div>
               <div className="text-2xl">{statusIcon(data.dhcp.status)}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div><span className="text-cyber-textMuted">Active Leases</span><div className="font-mono">{data.dhcp.active_leases}</div></div>
               <div><span className="text-cyber-textMuted">Total Leases</span><div className="font-mono">{data.dhcp.leases}</div></div>
             </div>
@@ -64,7 +64,7 @@ export default function ServicesTab() {
               </div>
               <div className="text-2xl">{statusIcon(data.unbound.status)}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div><span className="text-cyber-textMuted">Cache Size</span><div className="font-mono">{data.unbound.cache_size}</div></div>
               <div><span className="text-cyber-textMuted">Queries Total</span><div className="font-mono">{data.unbound.queries_total.toLocaleString()}</div></div>
             </div>
@@ -84,7 +84,7 @@ export default function ServicesTab() {
               </div>
               <div className="text-2xl">{statusIcon(data.ntp.status)}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div><span className="text-cyber-textMuted">Server</span><div className="font-mono">{data.ntp.server}</div></div>
               <div><span className="text-cyber-textMuted">Offset</span><div className="font-mono">{data.ntp.offset.toFixed(3)}ms</div></div>
             </div>
@@ -104,7 +104,7 @@ export default function ServicesTab() {
               </div>
               <div className="text-2xl">{statusIcon(data.openvpn.status)}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div><span className="text-cyber-textMuted">Connections</span><div className="font-mono">{data.openvpn.connections}</div></div>
               <div><span className="text-cyber-textMuted">Bytes In/Out</span><div className="font-mono">{data.openvpn.bytes_in}/{data.openvpn.bytes_out}</div></div>
             </div>
@@ -124,7 +124,7 @@ export default function ServicesTab() {
               </div>
               <div className="text-2xl">{statusIcon(data.wireguard.status)}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <div><span className="text-cyber-textMuted">Connections</span><div className="font-mono">{data.wireguard.connections}</div></div>
               <div><span className="text-cyber-textMuted">Bytes In/Out</span><div className="font-mono">{data.wireguard.bytes_in}/{data.wireguard.bytes_out}</div></div>
             </div>

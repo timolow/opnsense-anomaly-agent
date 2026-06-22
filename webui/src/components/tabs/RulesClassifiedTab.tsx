@@ -63,7 +63,7 @@ export default function RulesClassifiedTab() {
       </div>
 
       {/* ML Summary */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="flex items-center gap-2 mb-2">
             <Brain size={14} className="text-cyber-purple" />
@@ -97,7 +97,7 @@ export default function RulesClassifiedTab() {
       </div>
 
       {/* ML Stats & Pie Chart */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="cyber-card p-4 scanlines">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Classification Distribution</h3>
           <ResponsiveContainer width="100%" height={250}>
@@ -174,7 +174,7 @@ export default function RulesClassifiedTab() {
       {/* Rules Table */}
       <div className="cyber-card p-4 scanlines">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Classified Rules</h3>
-        <table className="cyber-table">
+        <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -212,7 +212,7 @@ export default function RulesClassifiedTab() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );

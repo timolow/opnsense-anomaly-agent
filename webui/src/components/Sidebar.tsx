@@ -2,7 +2,7 @@
 // Sidebar Component - Cyberpunk navigation
 // ═══════════════════════════════════════════════════
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import {
   LayoutDashboard, Map, GitMerge, Network, ShieldAlert,
@@ -83,7 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 export default function Sidebar() {
-  const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar } = useStore();
+  const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, mobileMenuOpen, setMobileMenuOpen } = useStore();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
     ...Object.fromEntries(NAV_GROUPS.map((g) => [g.name, true])),
   });
@@ -92,10 +92,24 @@ export default function Sidebar() {
     setExpandedGroups((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
+  const handleTabClick = (tabId: string) => {
+    setActiveTab(tabId);
+    window.location.hash = '#' + tabId;
+    setMobileMenuOpen(false);
+  };
+
+  // On desktop, sidebar is always visible with collapse toggle
+  // On mobile, sidebar is overlay controlled by mobileMenuOpen
+  const isDesktop = typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches;
+  const showSidebar = isDesktop || mobileMenuOpen;
+
   return (
     <aside
-      className={`fixed left-0 top-0 bottom-0 z-50 flex flex-col bg-gradient-to-b from-cyber-panel to-cyber-darker border-r border-cyber-border
-        transition-all duration-300 ${sidebarCollapsed ? 'w-14' : 'w-60'}`}
+      className={`flex flex-col bg-gradient-to-b from-cyber-panel to-cyber-darker border-r border-cyber-border
+        transition-all duration-300
+        ${showSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        ${sidebarCollapsed ? 'w-14' : 'w-60'}
+        fixed left-0 top-0 bottom-0 z-50 lg:z-30`}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-14 border-b border-cyber-border flex-shrink-0">
@@ -107,9 +121,17 @@ export default function Sidebar() {
             SOC DASHBOARD
           </span>
         )}
+        {/* Mobile close button */}
+        <button
+          onClick={() => setMobileMenuOpen(false)}
+          className="lg:hidden ml-auto w-6 h-6 rounded-full bg-cyber-accent/20 border border-cyber-accent/30 flex items-center justify-center text-cyber-accent hover:bg-cyber-accent/30 flex-shrink-0"
+        >
+          <X size={12} />
+        </button>
+        {/* Desktop collapse toggle */}
         <button
           onClick={toggleSidebar}
-          className="ml-auto w-6 h-6 rounded-full bg-cyber-accent/20 border border-cyber-accent/30 flex items-center justify-center text-cyber-accent hover:bg-cyber-accent/30 flex-shrink-0"
+          className="hidden lg:flex ml-auto w-6 h-6 rounded-full bg-cyber-accent/20 border border-cyber-accent/30 flex items-center justify-center text-cyber-accent hover:bg-cyber-accent/30 flex-shrink-0"
         >
           {sidebarCollapsed ? <Menu size={12} /> : <X size={12} />}
         </button>
@@ -138,12 +160,8 @@ export default function Sidebar() {
                 {group.items.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => {
-                      // Update store and URL hash synchronously
-                      setActiveTab(item.id);
-                      window.location.hash = '#' + item.id;
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-150
+                    onClick={() => handleTabClick(item.id)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] rounded-md text-sm transition-all duration-150
                       ${activeTab === item.id
                         ? 'bg-cyber-accent/10 text-cyber-accent border-l-2 border-cyber-accent shadow-[inset_0_0_20px_rgba(0,229,255,0.05)]'
                         : 'text-cyber-textMuted hover:text-cyber-text hover:bg-cyber-panelHover'
