@@ -32,17 +32,17 @@ const TimeRangePicker: React.FC<TimeRangePickerProps> = ({ onTimeRangeChange }) 
   };
 
   const formatDateTime = (date: Date) => {
-    return date.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+    return date.toISOString().slice(0, 16);
   };
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-1 bg-slate-900/80 rounded-lg p-1 border border-slate-700/50">
+      <div className="flex items-center gap-1 bg-slate-900/80 rounded-lg p-1 border border-slate-700/50 overflow-x-auto max-w-[calc(100vw-120px)] sm:max-w-none">
         {(Object.keys(timeRanges) as TimeRange[]).map((range) => (
           <button
             key={range}
             onClick={() => handleTimeRangeChange(range)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+            className={`px-2 md:px-3 py-2 min-h-[36px] text-xs font-medium rounded-md transition-all whitespace-nowrap flex-shrink-0 ${
               timeRange === range && !showCustom
                 ? 'bg-cyan-500/20 text-cyan-400 shadow-sm shadow-cyan-500/20'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -53,7 +53,7 @@ const TimeRangePicker: React.FC<TimeRangePickerProps> = ({ onTimeRangeChange }) 
         ))}
         <button
           onClick={() => setShowCustom(!showCustom)}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+          className={`px-2 md:px-3 py-2 min-h-[36px] text-xs font-medium rounded-md transition-all whitespace-nowrap flex-shrink-0 ${
             timeRange === 'custom'
               ? 'bg-cyan-500/20 text-cyan-400'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'

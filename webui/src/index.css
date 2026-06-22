@@ -289,4 +289,64 @@
   .text-gradient-cyber {
     @apply bg-gradient-to-r from-cyber-accent via-cyber-purple to-cyber-pink bg-clip-text text-transparent;
   }
+  
+  /* ── Mobile Responsive Utilities ── */
+  
+  /* Horizontal scroll wrapper for tables */
+  .cyber-table-scroll {
+    @apply overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0;
+  }
+  
+  /* Responsive table wrapper - scrolls horizontally on mobile */
+  .cyber-table-responsive {
+    @apply overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .cyber-table-responsive::-webkit-scrollbar {
+    height: 4px;
+  }
+  .cyber-table-responsive::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .cyber-table-responsive::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 2px;
+  }
+  .cyber-table-responsive table {
+    @apply min-w-[600px] sm:min-w-[700px] lg:min-w-0;
+  }
+  
+  /* Touch-friendly minimum sizes */
+  .touch-target {
+    @apply min-w-[44px] min-h-[44px] flex items-center justify-center;
+  }
+  
+  /* Responsive grid helpers */
+  .grid-responsive {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4;
+  }
+  
+  .grid-responsive-2 {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4;
+  }
+  
+  .grid-responsive-3 {
+    @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4;
+  }
+  
+  .grid-responsive-2col {
+    @apply grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4;
+  }
+  
+  /* Custom scrollbar for thin horizontal scroll */
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 2px;
+  }
 }

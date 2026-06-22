@@ -46,7 +46,7 @@ export default function IdsTab() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="text-2xl font-bold font-mono text-neon-cyan">{totalEvents.toLocaleString()}</div>
           <div className="cyber-stat-label">Total Events</div>
@@ -77,7 +77,7 @@ export default function IdsTab() {
             <div className="text-xs mt-1">IDS data requires Suricata/Snort events in the syslog pipeline.</div>
           </div>
         ) : (
-          <table className="cyber-table">
+          <div className="cyber-table-responsive"><table className="cyber-table">
             <thead>
               <tr>
                 <th>ID</th>
@@ -104,7 +104,7 @@ export default function IdsTab() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
 

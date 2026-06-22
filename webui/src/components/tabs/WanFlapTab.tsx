@@ -40,7 +40,7 @@ export default function WanFlapTab() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle size={14} className="text-cyber-orange" />

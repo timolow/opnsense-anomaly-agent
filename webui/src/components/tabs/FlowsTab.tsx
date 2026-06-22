@@ -38,7 +38,7 @@ export default function FlowsTab() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-3 cyber-card-hover">
           <div className="text-xl font-bold font-mono text-neon-cyan">{nodes.length}</div>
           <div className="text-xs text-cyber-textMuted uppercase tracking-wider">Nodes</div>
@@ -63,7 +63,8 @@ export default function FlowsTab() {
 
       {/* Visualization - Network graph using SVG */}
       <div className="cyber-card p-4 scanlines relative">
-        <svg width="100%" height="500" viewBox="0 0 1200 500" className="w-full">
+        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <svg className="w-full min-w-[600px]" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid meet">
           <defs>
             <filter id="glow">
               <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
@@ -152,6 +153,7 @@ export default function FlowsTab() {
             </g>
           ))}
         </svg>
+        </div>
 
         {/* Legend */}
         <div className="flex items-center gap-6 mt-4 pt-3 border-t border-cyber-border">

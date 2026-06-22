@@ -48,7 +48,7 @@ export default function RulesTab() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-3 cyber-card-hover">
           <div className="text-xl font-bold font-mono text-neon-cyan">{data.summary.total}</div>
           <div className="cyber-stat-label">Total Rules</div>
@@ -90,7 +90,7 @@ export default function RulesTab() {
                 <h4 className="font-bold text-cyber-accent">{rule.name}</h4>
                 <button onClick={() => setSelectedRule(null)} className="text-cyber-textMuted hover:text-cyber-text">✕</button>
               </div>
-              <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                 <div><span className="text-xs text-cyber-textMuted">Source</span><div className="font-mono text-sm">{rule.source_net}</div></div>
                 <div><span className="text-xs text-cyber-textMuted">Destination</span><div className="font-mono text-sm">{rule.destination_net}</div></div>
                 <div><span className="text-xs text-cyber-textMuted">Classification</span><span className={`cyber-badge ${classificationColor(rule.classification)}`}>{rule.classification}</span></div>
@@ -128,7 +128,7 @@ export default function RulesTab() {
           );
         })() : null}
 
-        <table className="cyber-table">
+        <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
             <tr>
               <th>Rule Name</th>
@@ -167,7 +167,7 @@ export default function RulesTab() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );

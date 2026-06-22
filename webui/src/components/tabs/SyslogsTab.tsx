@@ -38,8 +38,8 @@ export default function SyslogsTab() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3">
-        <div className="flex-1 flex gap-2">
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1 flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyber-textMuted" />
             <input
@@ -53,7 +53,7 @@ export default function SyslogsTab() {
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="cyber-select w-28"
+            className="cyber-select w-full sm:w-28 min-h-[44px]"
           >
             <option value="">All</option>
             <option value="PASS">PASS</option>

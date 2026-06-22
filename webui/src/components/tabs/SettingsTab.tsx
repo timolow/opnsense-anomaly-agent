@@ -60,7 +60,7 @@ export default function SettingsTab() {
       {/* Detection Tuning */}
       <div className="cyber-card p-4 scanlines">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Detection Tuning</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs text-cyber-textMuted block mb-1">Port Scan Window (seconds)</label>
             <input
@@ -114,7 +114,7 @@ export default function SettingsTab() {
       {/*  Settings */}
       <div className="cyber-card p-4 scanlines">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4"> Integration</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs text-cyber-textMuted block mb-1">Elasticsearch Host</label>
             <input

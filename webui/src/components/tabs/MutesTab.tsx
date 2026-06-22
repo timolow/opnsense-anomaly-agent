@@ -58,7 +58,7 @@ export default function MutesTab() {
       {/* Add Mute Form */}
       {showForm && (
         <div className="cyber-card p-4 cyber-card-hover">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <input
               type="text"
               placeholder="IP Address"
@@ -116,7 +116,7 @@ export default function MutesTab() {
         {filtered.length === 0 ? (
           <div className="text-center py-12 text-cyber-textMuted">No active mutes</div>
         ) : (
-          <table className="cyber-table">
+          <div className="cyber-table-responsive"><table className="cyber-table">
             <thead>
               <tr>
                 <th>IP</th>
@@ -146,7 +146,7 @@ export default function MutesTab() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
     </div>

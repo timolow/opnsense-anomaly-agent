@@ -46,7 +46,7 @@ export default function ZenArmorTab() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="flex items-center gap-2 mb-2">
             <BarChart3 size={16} className="text-cyber-accent" />
@@ -89,7 +89,7 @@ export default function ZenArmorTab() {
             <div className="text-xs mt-1">ZenArmor data requires OPNsense ZenArmor events in the syslog pipeline.</div>
           </div>
         ) : (
-          <table className="cyber-table">
+          <div className="cyber-table-responsive"><table className="cyber-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -110,7 +110,7 @@ export default function ZenArmorTab() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
 

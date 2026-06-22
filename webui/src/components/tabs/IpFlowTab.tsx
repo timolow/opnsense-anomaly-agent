@@ -40,7 +40,7 @@ export default function IpFlowTab() {
       </div>
 
       <div className="cyber-card p-4 scanlines">
-        <table className="cyber-table">
+        <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
             <tr>
               <th>Source IP</th>
@@ -73,7 +73,7 @@ export default function IpFlowTab() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </div>
   );

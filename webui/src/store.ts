@@ -38,6 +38,11 @@ interface AppState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
   
+  // Mobile menu
+  mobileMenuOpen: boolean;
+  setMobileMenuOpen: (open: boolean) => void;
+  toggleMobileMenu: () => void;
+  
   // Theme
   theme: 'dark' | 'light';
   toggleTheme: () => void;
@@ -78,6 +83,10 @@ export const useStore = create<AppState>((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   sidebarCollapsed: false,
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  mobileMenuOpen: false,
+  setMobileMenuOpen: (open: boolean) => set({ mobileMenuOpen: open }),
+  toggleMobileMenu: () => set((s) => ({ mobileMenuOpen: !s.mobileMenuOpen })),
+  
   theme: 'dark',
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
   loading: false,

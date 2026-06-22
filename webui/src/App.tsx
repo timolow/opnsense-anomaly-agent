@@ -6,6 +6,7 @@ import { Suspense, lazy, useEffect } from 'react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
 import TimeRangePicker from './components/TimeRangePicker';
+import { Menu } from 'lucide-react';
 
 // ── Tab Components ──
 import OverviewTab from './components/tabs/OverviewTab';
@@ -89,7 +90,7 @@ function LoadingScreen() {
 }
 
 export default function App() {
-  const { activeTab, sidebarCollapsed, setActiveTab } = useStore();
+  const { activeTab, sidebarCollapsed, mobileMenuOpen, setActiveTab, toggleMobileMenu, setMobileMenuOpen } = useStore();
   
   useEffect(() => {
     // Normalize URL hash to match tab IDs
@@ -140,37 +141,55 @@ export default function App() {
     console.log('[App] React mounted, activeTab:', activeTab);
   }, [activeTab]);
 
+  // Desktop sidebar offset
+  const sidebarOffset = sidebarCollapsed ? 'lg:ml-14' : 'lg:ml-60';
+
   return (
     <div className="h-screen flex overflow-hidden bg-cyber-darker">
       <Sidebar />
       
+      {/* Mobile overlay backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      
       <main
         className={`flex-1 flex flex-col overflow-hidden transition-all duration-300
-          ${sidebarCollapsed ? 'ml-14' : 'ml-60'}`}
+          ${sidebarOffset}`}
       >
         {/* Top Header */}
-        <header className="h-14 bg-cyber-panel border-b border-cyber-border flex items-center justify-between px-6 flex-shrink-0">
-          <div className="flex items-center gap-4">
-            <h1 className="text-lg font-bold text-gradient-cyber">{TAB_TITLE[activeTab] || 'Dashboard'}</h1>
-            <span className="text-xs text-cyber-textMuted font-mono hidden sm:inline">
+        <header className="h-14 bg-cyber-panel border-b border-cyber-border flex items-center justify-between px-4 md:px-6 flex-shrink-0 gap-2">
+          <div className="flex items-center gap-2 md:gap-4">
+            {/* Mobile hamburger button */}
+            <button
+              onClick={toggleMobileMenu}
+              className="lg:hidden w-11 h-11 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center text-cyber-accent hover:bg-cyber-accent/20 flex-shrink-0"
+            >
+              <Menu size={16} />
+            </button>
+            <h1 className="text-sm md:text-lg font-bold text-gradient-cyber truncate">{TAB_TITLE[activeTab] || 'Dashboard'}</h1>
+            <span className="text-xs text-cyber-textMuted font-mono hidden md:inline">
               {activeTab} · v2.0.0
             </span>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
             <TimeRangePicker />
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-cyber-panelHover border border-cyber-border">
+            <div className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1 rounded-full bg-cyber-panelHover border border-cyber-border">
               <div className="w-2 h-2 rounded-full bg-cyber-green animate-pulse" />
               <span className="text-xs text-cyber-textMuted">Live</span>
             </div>
-            <div className="text-xs text-cyber-textMuted font-mono">
+            <div className="text-xs text-cyber-textMuted font-mono hidden sm:block">
               {new Date().toLocaleTimeString()}
             </div>
           </div>
         </header>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-6">
           <Suspense fallback={<LoadingScreen />}>
             <TabContent key={activeTab} tab={activeTab} />
           </Suspense>
