@@ -151,7 +151,7 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
         <div className="absolute top-2 left-2 z-10 cyber-card p-3 text-xs font-mono">
           <div className="font-semibold" style={{ color: hoveredNode.color }}>{hoveredNode.label}</div>
           <div className="text-cyber-textMuted">Category: {hoveredNode.category}</div>
-          <div className="text-cyber-textMuted">Events: {hoveredNode.count.toLocaleString()}</div>
+          <div className="text-cyber-textMuted">Events: {(hoveredNode.count || 0).toLocaleString()}</div>
         </div>
       )}
 
@@ -365,7 +365,7 @@ function TopSourcesTable({ stats }: { stats: any }) {
                   {source.ip || '0.0.0.0'}
                 </td>
                 <td className="py-2 px-3 text-right text-neon-cyan">
-                  {source.count.toLocaleString()}
+                  {(source.count || 0).toLocaleString()}
                 </td>
                 <td className="py-2 px-3">
                   <span
@@ -427,7 +427,7 @@ export default function NetworkTab() {
         </div>
         <h2 className="text-lg font-bold">Network Topology</h2>
         <span className="text-xs text-cyber-textMuted font-mono">
-          {uniqueNodes} nodes · {edges.length} connections · {totalEvents.toLocaleString()} events
+          {uniqueNodes} nodes · {edges.length} connections · {(totalEvents || 0).toLocaleString()} events
         </span>
       </div>
 

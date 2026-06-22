@@ -164,7 +164,7 @@ export default function RulesClassifiedTab() {
             <div>
               <div className="flex justify-between mb-1">
                 <span className="text-xs text-cyber-textMuted">Events Processed</span>
-                <span className="text-xs font-mono">{data.ml_stats?.events_processed?.toLocaleString() || 0}</span>
+                <span className="text-xs font-mono">{(data.ml_stats?.events_processed || 0).toLocaleString() || '0'}</span>
               </div>
             </div>
           </div>
@@ -190,7 +190,7 @@ export default function RulesClassifiedTab() {
               <tr key={rule.uuid} className="hover:bg-cyber-panel/30">
                 <td className="font-semibold max-w-[150px] truncate">{rule.name}</td>
                 <td className="font-mono text-xs">{rule.source_net}</td>
-                <td className="font-mono">{rule.events_24h.toLocaleString()}</td>
+                <td className="font-mono">{(rule.events_24h || 0).toLocaleString()}</td>
                 <td><span className={`cyber-badge ${classificationColor(rule.classification)}`}>{rule.classification}</span></td>
                 <td>
                   <div className="flex items-center gap-1">
