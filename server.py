@@ -2051,8 +2051,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({'error': str(e)}, 500)
             elif path == "/api/active-learning-queue":
                 try:
-                    data = api_active_learning_queue()
+                    data = api_active_learning_queue_status()
                     self._send_json(data)
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            # P3: Concept drift detection endpoints
+            elif path == "/api/drift":
+                try:
+                    from concept_drift import DriftDetector
+                    detector = DriftDetector()
+                    self._send_json({
+                        'status': 'active',
+                        'metrics': detector.get_metrics(),
+                        'drift_events': detector.get_drift_events(limit=10),
+                        'is_drifting': detector.is_drifting()
+                    })
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            # P3: Threshold tuning endpoints
+            elif path == "/api/threshold":
+                try:
+                    from threshold_tuner import ThresholdTuner
+                    tuner = ThresholdTuner()
+                    self._send_json({
+                        'thresholds': tuner.get_all_thresholds(),
+                        'metrics': tuner.get_metrics(),
+                        'roc_curve': tuner.compute_roc_curve()
+                    })
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
             elif path == "/api/active-learning/feedback":
