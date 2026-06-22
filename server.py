@@ -2060,11 +2060,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 try:
                     from concept_drift import ConceptDriftDetector
                     detector = ConceptDriftDetector()
+                    status = detector.get_status()
                     self._send_json({
                         'status': 'active',
-                        'metrics': detector.get_metrics(),
-                        'drift_events': detector.get_drift_events(limit=10),
-                        'is_drifting': detector.is_drifting()
+                        'metrics': status.get('metrics', {}),
+                        'drift_events': status.get('drift_events', []),
+                        'is_drifting': status.get('is_drifting', False),
+                        'needs_retraining': detector.needs_retraining()
                     })
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
