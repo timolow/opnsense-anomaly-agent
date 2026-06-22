@@ -2058,8 +2058,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # P3: Concept drift detection endpoints
             elif path == "/api/drift":
                 try:
-                    from concept_drift import DriftDetector
-                    detector = DriftDetector()
+                    from concept_drift import ConceptDriftDetector
+                    detector = ConceptDriftDetector()
                     self._send_json({
                         'status': 'active',
                         'metrics': detector.get_metrics(),
