@@ -358,7 +358,8 @@ def main():
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+    from json_logging import setup_json_logging
+    setup_json_logging(level=logging.DEBUG if args.verbose else logging.INFO)
 
     try:
         extractor = GraylogTrainingExtractor(
