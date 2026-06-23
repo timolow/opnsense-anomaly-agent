@@ -2,18 +2,30 @@
 """Syslog listener for OPNsense firewall logs.
 Runs on the Mac host to receive UDP syslog, writes to shared JSONL file.
 The Docker agent reads events from this file.
+
+When used via SyslogListener with a callback (SYSLOG_ENABLED=true in Docker),
+all JSONL file I/O is skipped — events go directly to the callback.
+
+Log rotation:
+  - Daily rotation at midnight UTC for both syslog_events.jsonl and syslog_listener.log
+  - 7-day retention (older files compressed with gzip and deleted)
+  - Max 100MB per JSONL file (size-based safety rotation)
 """
 
-import socket
+from __future__ import annotations
+
+import gzip
+import glob
 import os
 import json
+import socket
 import threading
 import logging
-from datetime import datetime
+import shutil
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-# Configuration
 # Configuration (overridable via environment variables)
 UDP_PORT = int(os.getenv("SYSLOG_UDP_PORT", "1514"))
 DATA_DIR = os.getenv("DATA_DIR", str(Path(__file__).parent / "agent_data"))
@@ -21,40 +33,219 @@ OUTPUT_FILE = os.getenv("JSONL_PATH", os.path.join(DATA_DIR, "syslog_events.json
 LOG_FILE = os.path.join(DATA_DIR, "syslog_listener.log")
 EVENT_COUNT_FILE = os.path.join(DATA_DIR, "syslog_event_count.txt")
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Rotation settings
+JSONL_MAX_BYTES = int(os.getenv("JSONL_MAX_BYTES", "100000000"))  # 100MB
+JSONL_RETENTION_DAYS = int(os.getenv("JSONL_RETENTION_DAYS", "7"))
 
-# Ensure output directory exists
-os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
-# Initialize event counter
-if not os.path.exists(EVENT_COUNT_FILE):
-    with open(EVENT_COUNT_FILE, 'w') as f:
-        f.write('0')
+class RotatingJSONLWriter:
+    """Thread-safe JSONL writer with daily rotation and gzip compression.
+
+    Rotation policy:
+      - Rotates at midnight UTC daily
+      - Keeps JSONL_RETENTION_DAYS days of rotated logs
+      - Compresses rotated logs with gzip (.gz suffix)
+      - Enforces JSONL_MAX_BYTES limit to prevent runaway growth
+    """
+
+    def __init__(self, base_path: str, max_bytes: int = JSONL_MAX_BYTES, backup_count: int = JSONL_RETENTION_DAYS):
+        self.base_path = base_path
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self._lock = threading.Lock()
+        self._current_date = self._today_utc()
+        self._file = None
+        self._file_date = None
+        self._size = 0
+        # Initialize file
+        self._open_file()
+
+    def _today_utc(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _open_file(self):
+        """Open the current JSONL file for appending."""
+        if self._file and self._file_date == self._current_date:
+            return  # Already open for today
+        # Close existing file
+        if self._file:
+            try:
+                self._file.close()
+            except OSError:
+                pass
+        # Open new file
+        data_dir = os.path.dirname(self.base_path)
+        if data_dir:
+            os.makedirs(data_dir, exist_ok=True)
+        self._file = open(self.base_path, "a", encoding="utf-8")
+        self._file_date = self._current_date
+        self._size = os.path.getsize(self.base_path) if os.path.exists(self.base_path) else 0
+
+    def _rotate(self):
+        """Rotate the current file: rename, compress, cleanup old files."""
+        if not self._file:
+            return
+        self._file.close()
+        self._file = None
+
+        today = self._today_utc()
+        rotated_name = self.base_path + "." + today
+
+        # Rename current file to date-stamped name
+        if os.path.exists(self.base_path):
+            try:
+                os.rename(self.base_path, rotated_name)
+                # Compress the rotated file
+                self._compress_file(rotated_name)
+            except OSError as e:
+                # If rename fails (e.g., race condition), just reopen
+                pass
+
+        # Clean up old rotated files beyond backupCount
+        self._cleanup_old_files()
+
+        # Reset size counter
+        self._size = 0
+
+    def _compress_file(self, filepath: str):
+        """Compress a file with gzip, removing the original on success."""
+        gz_path = filepath + ".gz"
+        if os.path.exists(gz_path):
+            return  # Already compressed
+        try:
+            with open(filepath, "rb") as f_in:
+                with gzip.open(gz_path, "wb", compresslevel=6) as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            os.remove(filepath)
+        except OSError:
+            pass
+
+    def _cleanup_old_files(self):
+        """Remove rotated JSONL files older than backup_count days."""
+        pattern_gz = self.base_path + ".*.gz"
+        pattern_plain = self.base_path + ".*"
+        rotated_files = []
+
+        for f in glob.glob(pattern_gz):
+            rotated_files.append(f)
+        for f in glob.glob(pattern_plain):
+            if not f.endswith(".gz") and f != self.base_path:
+                rotated_files.append(f)
+
+        # Sort by modification time, newest first
+        rotated_files.sort(key=os.path.getmtime, reverse=True)
+
+        # Remove files beyond backup_count
+        for old_file in rotated_files[self.backup_count:]:
+            try:
+                os.remove(old_file)
+            except OSError:
+                pass
+
+    def write(self, line: str):
+        """Write a single JSONL line with rotation check."""
+        with self._lock:
+            today = self._today_utc()
+            if today != self._current_date:
+                self._current_date = today
+                self._rotate()
+                self._open_file()
+
+            encoded = line.encode("utf-8") if isinstance(line, str) else line
+            # Size-based rotation check
+            if self.max_bytes > 0 and (self._size + len(encoded)) >= self.max_bytes:
+                self._rotate()
+                self._open_file()
+
+            if self._file:
+                self._file.write(line if isinstance(line, str) else line.decode("utf-8"))
+                self._file.flush()
+                self._size += len(encoded)
+
+    def close(self):
+        """Close the writer and release resources."""
+        with self._lock:
+            if self._file:
+                try:
+                    self._file.close()
+                except OSError:
+                    pass
+                self._file = None
+
+
+# Global JSONL writer instance (lazy init)
+_jsonl_writer: RotatingJSONLWriter | None = None
+
+
+def _get_jsonl_writer() -> RotatingJSONLWriter:
+    """Return the JSONL writer, initializing on first call."""
+    global _jsonl_writer
+    if _jsonl_writer is None:
+        _jsonl_writer = RotatingJSONLWriter(
+            OUTPUT_FILE,
+            max_bytes=JSONL_MAX_BYTES,
+            backup_count=JSONL_RETENTION_DAYS,
+        )
+    return _jsonl_writer
+
+
+# Lazy logger setup — deferred until actually needed (not at import time).
+# When SyslogListener is used with a callback, logging to LOG_FILE is still
+# desirable for diagnostics, but JSONL/event-counter writes are fully skipped.
+_logger: logging.Logger | None = None
+
+
+def _get_logger() -> logging.Logger:
+    """Return the module logger, initializing on first call."""
+    global _logger
+    if _logger is None:
+        from json_logging import setup_json_logging
+        setup_json_logging(
+            level=logging.INFO,
+            log_file=LOG_FILE,
+            stdout=False,
+        )
+        _logger = logging.getLogger(__name__)
+    return _logger
+
+
+def logger():
+    """Module-level logger property."""
+    return _get_logger()
+
+
+# Ensure output directory exists (lazy — deferred until first file write)
+def _ensure_output_dir():
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+
+# Initialize event counter (lazy — only when file writes are needed)
+def _init_event_counter():
+    if not os.path.exists(EVENT_COUNT_FILE):
+        with open(EVENT_COUNT_FILE, 'w') as f:
+            f.write('0')
 
 def get_event_count():
     try:
         with open(EVENT_COUNT_FILE, 'r') as f:
             return int(f.read().strip())
-    except:
+    except Exception:
         return 0
 
 def set_event_count(count):
     with open(EVENT_COUNT_FILE, 'w') as f:
         f.write(str(count))
 
-# Use the adaptive parser which handles all log types
-from adaptive_parser import AdaptiveParser
+# Adaptive parser — lazy init to avoid overhead when callback mode is active
+_parser = None
 
-_parser = AdaptiveParser()
+
+def _get_parser():
+    """Return the adaptive parser, initializing on first call."""
+    global _parser
+    if _parser is None:
+        from adaptive_parser import AdaptiveParser
+        _parser = AdaptiveParser()
+    return _parser
 
 def _convert_timestamp(raw_ts):
     """Convert raw syslog timestamp to ISO format for PostgreSQL.
@@ -74,25 +265,30 @@ def _convert_timestamp(raw_ts):
 def parse_syslog_line(line):
     """Parse any log line using the adaptive parser."""
     try:
-        event = _parser.parse_line(line.strip())
+        event = _get_parser().parse_line(line.strip())
         if event:
             # Convert raw syslog timestamp to ISO format for PostgreSQL
             event['timestamp'] = _convert_timestamp(event.get('timestamp', ''))
             event['_received_at'] = datetime.now().isoformat()
         return event
     except Exception as e:
-        logger.warning("Error parsing syslog line: %s", e)
+        logger().warning("Error parsing syslog line: %s", e)
         return None
 
-def write_event(event):
-    """Append event to JSONL file atomically."""
+def write_event(event, write_to_file=True):
+    """Append event to JSONL file with rotation.
+
+    Args:
+        event: parsed event dict
+        write_to_file: if False, skip file I/O entirely (callback mode)
+    """
+    if not write_to_file:
+        return True
     try:
-        with open(OUTPUT_FILE, 'a') as f:
-            f.write(json.dumps(event) + '\n')
-            f.flush()
+        _get_jsonl_writer().write(json.dumps(event) + "\n")
         return True
     except Exception as e:
-        logger.error(f"Error writing event: {e}")
+        logger().error(f"Error writing event: {e}")
         return False
 
 def run_syslog_listener():
@@ -109,9 +305,11 @@ def run_syslog_listener():
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     
     try:
+        _ensure_output_dir()
+        _init_event_counter()
         sock.bind((bind_host, UDP_PORT))
-        logger.info(f"Syslog listener started on UDP port {UDP_PORT}")
-        logger.info(f"Events will be written to: {OUTPUT_FILE}")
+        logger().info(f"Syslog listener started on UDP port {UDP_PORT}")
+        logger().info(f"Events will be written to: {OUTPUT_FILE}")
         
         while True:
             try:
@@ -121,29 +319,51 @@ def run_syslog_listener():
                 if not line:
                     continue
                 
-                logger.debug(f"Received from {addr}: {line[:100]}...")
+                logger().debug(f"Received from {addr}: {line[:100]}...")
                 
                 event = parse_syslog_line(line)
                 if event:
                     if write_event(event):
                         count = get_event_count() + 1
                         set_event_count(count)
-                        logger.info(f"Event #{count}: {event.get('src_ip')}:{event.get('sport')} -> {event.get('dst_ip')}:{event.get('dport')} ({event.get('action')})")
+                        logger().info(f"Event #{count}: {event.get('src_ip')}:{event.get('sport')} -> {event.get('dst_ip')}:{event.get('dport')} ({event.get('action')})")
             
             except socket.timeout:
                 continue
             except Exception as e:
-                logger.error(f"Error receiving data: {e}")
+                logger().error(f"Error receiving data: {e}")
                 continue
     
     except Exception as e:
-        logger.error(f"Failed to start listener: {e}")
+        logger().error(f"Failed to start listener: {e}")
     finally:
         sock.close()
-        logger.info("Syslog listener stopped")
+        # Close the JSONL writer to flush any pending writes
+        if _jsonl_writer is not None:
+            _jsonl_writer.close()
+        logger().info("Syslog listener stopped")
+
+
+def _cleanup_jsonl_writer():
+    """Close the JSONL writer on shutdown."""
+    global _jsonl_writer
+    if _jsonl_writer is not None:
+        _jsonl_writer.close()
+        _jsonl_writer = None
+
 
 if __name__ == '__main__':
-    logger.info("Starting OPNsense Syslog Listener")
+    import signal
+
+    def _signal_handler(signum, frame):
+        logger().info(f"Received signal {signum}, shutting down...")
+        _cleanup_jsonl_writer()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    logger().info("Starting OPNsense Syslog Listener")
     run_syslog_listener()
 
 
@@ -177,10 +397,10 @@ class SyslogListener:
             self._running = True
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
-            logger.info("Syslog listener started on UDP port %s", self.UDP_PORT)
+            logger().info("Syslog listener started on UDP port %s", self.UDP_PORT)
             return True
         except Exception as e:
-            logger.warning("Failed to start syslog listener: %s", e)
+            logger().warning("Failed to start syslog listener: %s", e)
             self._running = False
             return False
     
@@ -212,20 +432,21 @@ class SyslogListener:
                         if self.event_callback:
                             # Direct callback — no JSONL file
                             self.event_callback(event)
-                            logger.debug("Event #%d: %s -> %s", count,
+                            logger().debug("Event #%d: %s -> %s", count,
                                          event.get('src_ip'), event.get('dst_ip'))
                         else:
                             # Legacy fallback: write JSONL
+                            _init_event_counter()
                             write_event(event)
                             event_count = get_event_count() + 1
                             set_event_count(event_count)
                 except socket.timeout:
                     continue
                 except Exception as e:
-                    logger.warning("Syslog listener error: %s", e)
+                    logger().warning("Syslog listener error: %s", e)
             sock.close()
         except Exception as e:
-            logger.error("Syslog listener thread failed: %s", e)
+            logger().error("Syslog listener thread failed: %s", e)
     
     def stop(self):
         """Stop the syslog listener."""
