@@ -17,6 +17,8 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool  # type: ignore
 
+from schema_migrations import run_migrations as _run_migrations, CURRENT_SCHEMA_VERSION as _SCHEMA_VERSION
+
 logger = logging.getLogger(__name__)
 
 # Default PostgreSQL connection config
@@ -26,268 +28,8 @@ DEFAULT_PG_DB = os.environ.get("DB_NAME", "anomaly_agent")
 DEFAULT_PG_USER = os.environ.get("DB_USER", "anomaly_agent")
 DEFAULT_PG_PASS = os.environ.get("DB_PASSWORD") or os.environ.get("DB_PASS", "anomaly_agent_secret")
 
-
-# SQL schema definition
-CREATE_TABLES_SQL = """
--- Events table: every parsed firewall event
-CREATE TABLE IF NOT EXISTS events (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL,
-    src_ip TEXT,
-    dst_ip TEXT,
-    src_hostname TEXT,
-    dst_hostname TEXT,
-    src_port INTEGER,
-    dst_port INTEGER,
-    proto TEXT,
-    action TEXT,
-    interface TEXT,
-    direction TEXT,
-    version INTEGER,
-    ip_ttl INTEGER,
-    ip_total_length INTEGER,
-    tcp_flags TEXT,
-    tcp_seq INTEGER,
-    tcp_ack INTEGER,
-    tcp_window INTEGER,
-    tcp_options TEXT,
-    udp_datalen INTEGER,
-    icmp_datalen INTEGER,
-    raw_message TEXT,
-    rule_name TEXT,
-    ingested_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Anomalies table: detected suspicious activity
-CREATE TABLE IF NOT EXISTS anomalies (
-    id SERIAL PRIMARY KEY,
-    event_id INTEGER REFERENCES events(id),
-    timestamp TIMESTAMPTZ NOT NULL,
-    attack_type TEXT NOT NULL,       -- PORT_SCAN, SYN_FLOOD, BRUTE_FORCE, PROBE, GEO_ANOMALY, etc.
-    severity TEXT NOT NULL,          -- LOW, MEDIUM, HIGH, CRITICAL
-    src_ip TEXT,
-    dst_ip TEXT,
-    dst_port INTEGER,
-    proto TEXT,
-    description TEXT,
-    detail JSONB,                    -- structured attack data
-    alert_sent BOOLEAN DEFAULT FALSE,
-    discord_sent BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Baselines table: statistical baselines for normal traffic
-CREATE TABLE IF NOT EXISTS baselines (
-    id SERIAL PRIMARY KEY,
-    metric TEXT NOT NULL,            -- e.g. "inbound_events_per_minute", "unique_dst_ports_per_hour"
-    time_window TIMESTAMPTZ NOT NULL,
-    mean_value DOUBLE PRECISION NOT NULL,
-    stddev DOUBLE PRECISION NOT NULL,
-    sample_count INTEGER NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
-CREATE INDEX IF NOT EXISTS idx_events_src_ip ON events(src_ip) WHERE src_ip IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_events_dst_ip ON events(dst_ip) WHERE dst_ip IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_events_dst_port ON events(dst_port) WHERE dst_port IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_events_proto ON events(proto);
-CREATE INDEX IF NOT EXISTS idx_events_action ON events(action);
-CREATE INDEX IF NOT EXISTS idx_events_interface ON events(interface);
-CREATE INDEX IF NOT EXISTS idx_events_rule_name ON events(rule_name) WHERE rule_name IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_anomalies_attack_type ON anomalies(attack_type);
-CREATE INDEX IF NOT EXISTS idx_anomalies_severity ON anomalies(severity);
-CREATE INDEX IF NOT EXISTS idx_anomalies_created_at ON anomalies(created_at);
-CREATE INDEX IF NOT EXISTS idx_anomalies_alert_sent ON anomalies(alert_sent);
-CREATE INDEX IF NOT EXISTS idx_baselines_metric ON baselines(metric, time_window);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_baselines_metric_window ON baselines(metric, time_window);
-CREATE INDEX IF NOT EXISTS idx_anomalies_src_ip ON anomalies(src_ip) WHERE src_ip IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_anomalies_timestamp ON anomalies(timestamp);
-
--- Week 1: User feedback table for ML classification feedback
-CREATE TABLE IF NOT EXISTS rule_feedback (
-    id SERIAL PRIMARY KEY,
-    rule_name TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    label TEXT NOT NULL,              -- "correct" or "incorrect"
-    reason TEXT,                      -- optional explanation
-    user_id TEXT,                     -- optional user identifier
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Rule baselines table: learned traffic patterns per rule (consolidated schema)
-CREATE TABLE IF NOT EXISTS rule_baselines (
-    id SERIAL PRIMARY KEY,
-    rule TEXT NOT NULL,
-    rule_name TEXT NOT NULL,
-    ip TEXT,
-    hour INTEGER,
-    avg_events_per_hour DOUBLE PRECISION DEFAULT 0,
-    std_events_per_hour DOUBLE PRECISION DEFAULT 0,
-    max_events_per_hour INTEGER DEFAULT 0,
-    min_events_per_hour INTEGER DEFAULT 0,
-    protocol_distribution JSONB DEFAULT '{}',
-    avg_dst_ports DOUBLE PRECISION DEFAULT 0,
-    avg_src_ports DOUBLE PRECISION DEFAULT 0,
-    avg_unique_dst_ips DOUBLE PRECISION DEFAULT 0,
-    pass_ratio DOUBLE PRECISION DEFAULT 0,
-    block_ratio DOUBLE PRECISION DEFAULT 0,
-    hourly_distribution JSONB DEFAULT '[]',
-    sample_count INTEGER DEFAULT 0,
-    avg_port_diversity DOUBLE PRECISION DEFAULT 0,
-    avg_dest_diversity DOUBLE PRECISION DEFAULT 0,
-    avg_volume DOUBLE PRECISION DEFAULT 0,
-    avg_block_ratio DOUBLE PRECISION DEFAULT 0,
-    baseline_goodness DOUBLE PRECISION DEFAULT 0,
-    baseline_updated BOOLEAN DEFAULT FALSE,
-    window_start TIMESTAMPTZ,
-    window_end TIMESTAMPTZ,
-    last_updated TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Ensure unique constraint on rule_name for consistent lookups
-CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_baselines_rule_name ON rule_baselines(rule_name) WHERE ip IS NULL AND hour IS NULL;
-
--- IP threat profiles table: unified threat scores per IP
-CREATE TABLE IF NOT EXISTS ip_threat_profiles (
-    id SERIAL PRIMARY KEY,
-    ip TEXT NOT NULL UNIQUE,
-    unified_score DOUBLE PRECISION DEFAULT 0,
-    total_events INTEGER DEFAULT 0,
-    firewall_events INTEGER DEFAULT 0,
-    http_events INTEGER DEFAULT 0,
-    ids_events INTEGER DEFAULT 0,
-    zenarmor_events INTEGER DEFAULT 0,
-    nginx_events INTEGER DEFAULT 0,
-    baseline_deviations JSONB DEFAULT '[]',
-    geo_info JSONB,
-    first_seen TIMESTAMPTZ,
-    last_seen TIMESTAMPTZ
-);
-
--- Indexes for baseline tables
-CREATE INDEX IF NOT EXISTS idx_rule_baselines_rule ON rule_baselines(rule);
-CREATE INDEX IF NOT EXISTS idx_rule_baselines_ip ON rule_baselines(ip) WHERE ip IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_ip_threat_profiles_score ON ip_threat_profiles(unified_score DESC);
-
--- P2-4: Active Learning Queue — rules flagged for human review
-CREATE TABLE IF NOT EXISTS active_learning_queue (
-    id SERIAL PRIMARY KEY,
-    rule_name TEXT NOT NULL,
-    rule_description TEXT,
-    classification TEXT NOT NULL DEFAULT 'UNCERTAIN',
-    confidence DOUBLE PRECISION DEFAULT 0,
-    reasons TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending, resolved, dismissed
-    resolved_classification TEXT,
-    resolved_notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_active_learning_queue_status ON active_learning_queue(status);
-CREATE INDEX IF NOT EXISTS idx_active_learning_queue_rule ON active_learning_queue(rule_name);
-CREATE INDEX IF NOT EXISTS idx_active_learning_queue_created ON active_learning_queue(created_at);
-
--- Phase 5: Threshold Auto-Tuning tables
--- Detection records: track each anomaly detection with its score
-CREATE TABLE IF NOT EXISTS threshold_detection_records (
-    id SERIAL PRIMARY KEY,
-    anomaly_id INTEGER NOT NULL,
-    anomaly_type TEXT NOT NULL,
-    score DOUBLE PRECISION NOT NULL,
-    threshold_type TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_threshold_detection_anomaly ON threshold_detection_records(anomaly_id);
-CREATE INDEX IF NOT EXISTS idx_threshold_detection_type ON threshold_detection_records(anomaly_type);
-CREATE INDEX IF NOT EXISTS idx_threshold_detection_threshold_type ON threshold_detection_records(threshold_type);
-
--- Threshold feedback: user labels on detected anomalies
-CREATE TABLE IF NOT EXISTS threshold_feedback (
-    id SERIAL PRIMARY KEY,
-    anomaly_id INTEGER NOT NULL,
-    label TEXT NOT NULL,  -- true_positive, false_positive, dismissed
-    reason TEXT,
-    user_id TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_threshold_feedback_anomaly ON threshold_feedback(anomaly_id);
-CREATE INDEX IF NOT EXISTS idx_threshold_feedback_label ON threshold_feedback(label);
-CREATE INDEX IF NOT EXISTS idx_threshold_feedback_created ON threshold_feedback(created_at);
-
--- Threshold tuning history: audit trail of threshold adjustments
-CREATE TABLE IF NOT EXISTS threshold_tuning_history (
-    id SERIAL PRIMARY KEY,
-    threshold_type TEXT NOT NULL,
-    old_value DOUBLE PRECISION NOT NULL,
-    new_value DOUBLE PRECISION NOT NULL,
-    reason TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_threshold_tuning_history_type ON threshold_tuning_history(threshold_type);
-CREATE INDEX IF NOT EXISTS idx_threshold_tuning_history_created ON threshold_tuning_history(created_at);
-
--- Threshold tuning tables: track detection records, feedback, and tuning history
-CREATE TABLE IF NOT EXISTS threshold_detection_records (
-    id SERIAL PRIMARY KEY,
-    anomaly_id INTEGER NOT NULL,
-    anomaly_type TEXT NOT NULL,
-    score DOUBLE PRECISION NOT NULL,
-    threshold_type TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(anomaly_id)
-);
-CREATE INDEX IF NOT EXISTS idx_threshold_detection_type ON threshold_detection_records(anomaly_type);
-CREATE INDEX IF NOT EXISTS idx_threshold_detection_threshold_type ON threshold_detection_records(threshold_type);
-CREATE INDEX IF NOT EXISTS idx_threshold_detection_timestamp ON threshold_detection_records(timestamp);
-
-CREATE TABLE IF NOT EXISTS threshold_feedback (
-    id SERIAL PRIMARY KEY,
-    anomaly_id INTEGER NOT NULL REFERENCES anomalies(id),
-    label TEXT NOT NULL,              -- true_positive, false_positive, dismissed
-    reason TEXT,
-    user_id TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_threshold_feedback_anomaly ON threshold_feedback(anomaly_id);
-CREATE INDEX IF NOT EXISTS idx_threshold_feedback_label ON threshold_feedback(label);
-CREATE INDEX IF NOT EXISTS idx_threshold_feedback_created ON threshold_feedback(created_at);
-
-CREATE TABLE IF NOT EXISTS threshold_tuning_history (
-    id SERIAL PRIMARY KEY,
-    threshold_type TEXT NOT NULL,
-    old_value DOUBLE PRECISION NOT NULL,
-    new_value DOUBLE PRECISION NOT NULL,
-    reason TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_threshold_tuning_type ON threshold_tuning_history(threshold_type);
-CREATE INDEX IF NOT EXISTS idx_threshold_tuning_created ON threshold_tuning_history(created_at);
-
--- Concept drift events: track distribution shifts in traffic patterns
-CREATE TABLE IF NOT EXISTS drift_events (
-    id SERIAL PRIMARY KEY,
-    metric TEXT NOT NULL,            -- e.g. volume, protocol, port_diversity, ip_diversity
-    scope TEXT NOT NULL,             -- e.g. "rule:abc123", "global:volume"
-    old_mean DOUBLE PRECISION NOT NULL,
-    new_mean DOUBLE PRECISION NOT NULL,
-    drift_magnitude DOUBLE PRECISION NOT NULL,
-    window_size INTEGER NOT NULL,
-    severity TEXT NOT NULL,          -- LOW, MEDIUM, HIGH, CRITICAL
-    description TEXT,
-    triggered_retrain BOOLEAN DEFAULT FALSE,
-    timestamp TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_drift_events_metric ON drift_events(metric);
-CREATE INDEX IF NOT EXISTS idx_drift_events_scope ON drift_events(scope);
-CREATE INDEX IF NOT EXISTS idx_drift_events_severity ON drift_events(severity);
-CREATE INDEX IF NOT EXISTS idx_drift_events_timestamp ON drift_events(timestamp);
-"""
+# All table definitions live in schema_migrations.py (versioned migrations).
+# eventdb.py is the data access layer — schema is managed centrally.
 
 
 class EventDatabase:
@@ -343,163 +85,27 @@ class EventDatabase:
             EventDatabase._pool = None
     
     def ensure_tables(self):
-        """Create database tables if they don't exist."""
+        """Ensure all database tables exist and run pending schema migrations.
+
+        Schema is managed entirely by versioned migrations in schema_migrations.py.
+        This method runs all pending migrations in order, ensuring the database
+        schema is up to date.
+        """
         if self._initialized:
             return
-        
-        conn = self.connect()
-        cur = conn.cursor()
-        cur.execute(CREATE_TABLES_SQL)
-        cur.close()
+
+        _run_migrations(self)
         self._initialized = True
-        logger.info("Database tables ensured")
-    
-    def ensure_hostnames_migration(self):
-        """Add src_hostname/dst_hostname columns if they don't exist (migration)."""
-        conn = self.connect()
-        cur = conn.cursor()
-        try:
-            # Check if columns exist
-            cur.execute("""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name = 'events' AND column_name IN ('src_hostname', 'dst_hostname')
-            """)
-            existing = {row[0] for row in cur.fetchall()}
-
-            added = []
-            for col in ('src_hostname', 'dst_hostname'):
-                if col not in existing:
-                    cur.execute(f"ALTER TABLE events ADD COLUMN {col} TEXT")
-                    added.append(col)
-                    logger.info("Added column: %s to events table", col)
-
-            if added:
-                logger.info("Migration complete: added columns %s", ", ".join(added))
-            else:
-                logger.debug("Hostname columns already present in events table")
-        finally:
-            cur.close()
-
-    def ensure_rule_baselines_migration(self):
-        """Migrate rule_baselines table: add missing columns, fix indexes."""
-        conn = self.connect()
-        cur = conn.cursor()
-        try:
-            # Columns that may be missing from old schema
-            missing_columns = {
-                'ip': 'TEXT',
-                'hour': 'INTEGER',
-                'rule': 'TEXT',
-                'avg_port_diversity': 'DOUBLE PRECISION DEFAULT 0',
-                'avg_dest_diversity': 'DOUBLE PRECISION DEFAULT 0',
-                'avg_volume': 'DOUBLE PRECISION DEFAULT 0',
-                'avg_block_ratio': 'DOUBLE PRECISION DEFAULT 0',
-                'baseline_goodness': 'DOUBLE PRECISION DEFAULT 0',
-                'baseline_updated': 'BOOLEAN DEFAULT FALSE',
-                'window_start': 'TIMESTAMPTZ',
-                'window_end': 'TIMESTAMPTZ',
-            }
-
-            # Check which columns exist
-            cur.execute("""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name = 'rule_baselines'
-            """)
-            existing = {row[0] for row in cur.fetchall()}
-
-            added = []
-            for col, col_def in missing_columns.items():
-                if col not in existing:
-                    cur.execute(f"ALTER TABLE rule_baselines ADD COLUMN {col} {col_def}")
-                    added.append(col)
-                    logger.info("Added column: %s to rule_baselines table", col)
-
-            # Drop old unique index (if it exists) that conflicts with new schema
-            cur.execute("DROP INDEX IF EXISTS idx_rule_baselines_rule_name")
-
-            if added:
-                logger.info("rule_baselines migration complete: added columns %s", ", ".join(added))
-            else:
-                logger.debug("rule_baselines schema already up to date")
-        finally:
-            cur.close()
-    
-    def ensure_threshold_tuning_migration(self):
-        """Create threshold tuning tables if they don't exist (migration)."""
-        conn = self.connect()
-        cur = conn.cursor()
-        try:
-            # Check which tables exist
-            cur.execute("""
-                SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'public'
-                  AND table_name IN ('threshold_detection_records', 'threshold_feedback', 'threshold_tuning_history')
-            """)
-            existing = {row[0] for row in cur.fetchall()}
-
-            missing = {'threshold_detection_records', 'threshold_feedback', 'threshold_tuning_history'} - existing
-
-            if 'threshold_detection_records' in missing:
-                cur.execute("""
-                    CREATE TABLE threshold_detection_records (
-                        id SERIAL PRIMARY KEY,
-                        anomaly_id INTEGER NOT NULL,
-                        anomaly_type TEXT NOT NULL,
-                        score DOUBLE PRECISION NOT NULL,
-                        threshold_type TEXT NOT NULL,
-                        timestamp TIMESTAMPTZ NOT NULL,
-                        created_at TIMESTAMPTZ DEFAULT NOW(),
-                        UNIQUE(anomaly_id)
-                    )
-                """)
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_detection_type ON threshold_detection_records(anomaly_type)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_detection_threshold_type ON threshold_detection_records(threshold_type)")
-                logger.info("Created table: threshold_detection_records")
-
-            if 'threshold_feedback' in missing:
-                cur.execute("""
-                    CREATE TABLE threshold_feedback (
-                        id SERIAL PRIMARY KEY,
-                        anomaly_id INTEGER NOT NULL REFERENCES anomalies(id),
-                        label TEXT NOT NULL,
-                        reason TEXT,
-                        user_id TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    )
-                """)
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_feedback_anomaly ON threshold_feedback(anomaly_id)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_feedback_label ON threshold_feedback(label)")
-                logger.info("Created table: threshold_feedback")
-
-            if 'threshold_tuning_history' in missing:
-                cur.execute("""
-                    CREATE TABLE threshold_tuning_history (
-                        id SERIAL PRIMARY KEY,
-                        threshold_type TEXT NOT NULL,
-                        old_value DOUBLE PRECISION NOT NULL,
-                        new_value DOUBLE PRECISION NOT NULL,
-                        reason TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    )
-                """)
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_threshold_tuning_type ON threshold_tuning_history(threshold_type)")
-                logger.info("Created table: threshold_tuning_history")
-
-            if missing:
-                logger.info("Threshold tuning migration complete: created %d table(s)", len(missing))
-            else:
-                logger.debug("Threshold tuning tables already present")
-        finally:
-            cur.close()
+        logger.info("Database schema ensured (v%d)", _SCHEMA_VERSION)
 
     def ensure_indexes(self):
         """Ensure database indexes exist.
-        
-        Indexes are created alongside tables in CREATE_TABLES_SQL
+
+        Indexes are created alongside tables in schema_migrations.py
         via CREATE INDEX IF NOT EXISTS. This method is called
         separately by agent.py for compatibility.
         """
-        # Tables + indexes are already ensured by ensure_tables
+        # Tables + indexes are already ensured by ensure_tables / run_migrations
         # This method exists for agent.py compatibility
         pass
     
@@ -943,6 +549,89 @@ class EventDatabase:
                 'connected': False,
                 'error': str(e),
             }
+
+    def search_anomalies(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Search anomalies by IP, attack_type, rule_name, or description.
+        
+        Searches across multiple fields using ILIKE matching. Returns matching
+        anomalies ordered by creation time (newest first).
+        
+        Args:
+            query: Free-text search string (matches IP, type, description, etc.)
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of anomaly dicts matching the query.
+        """
+        cur = self._new_cursor()
+        try:
+            search_pattern = f"%{query}%"
+            cur.execute(
+                """SELECT id, attack_type, severity, src_ip, dst_ip,
+                          dst_port, proto, description, detail, discord_sent, created_at
+                   FROM anomalies
+                   WHERE src_ip ILIKE %s
+                      OR dst_ip ILIKE %s
+                      OR attack_type ILIKE %s
+                      OR COALESCE(description, '') ILIKE %s
+                   ORDER BY created_at DESC
+                   LIMIT %s""",
+                (search_pattern, search_pattern, search_pattern, search_pattern, limit),
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+            results = []
+            for row in rows:
+                d = dict(zip(cols, row))
+                # Format timestamp for display
+                if d.get('created_at'):
+                    d['created_at_str'] = d['created_at'].strftime('%Y-%m-%d %H:%M:%S UTC')
+                results.append(d)
+            return results
+        finally:
+            cur.close()
+    
+    def get_top_threat_ips(self, limit: int = 10, hours: int = 24) -> List[Dict[str, Any]]:
+        """Get top N source IPs ranked by threat score.
+        
+        Threat score is computed as weighted sum of anomaly counts by severity:
+          CRITICAL=10, HIGH=5, MEDIUM=2, LOW=1
+        
+        Args:
+            limit: Number of top IPs to return
+            hours: Time window in hours (default 24)
+            
+        Returns:
+            List of dicts with ip, threat_score, anomaly_count, attack_types, severity_breakdown.
+        """
+        cur = self._new_cursor()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            
+            cur.execute(
+                """SELECT src_ip,
+                          COUNT(*) as total,
+                          SUM(CASE WHEN severity = 'CRITICAL' THEN 10
+                                   WHEN severity = 'HIGH' THEN 5
+                                   WHEN severity = 'MEDIUM' THEN 2
+                                   ELSE 1 END) as threat_score,
+                          COUNT(CASE WHEN severity = 'CRITICAL' THEN 1 END) as critical_count,
+                          COUNT(CASE WHEN severity = 'HIGH' THEN 1 END) as high_count,
+                          COUNT(CASE WHEN severity = 'MEDIUM' THEN 1 END) as medium_count,
+                          COUNT(CASE WHEN severity = 'LOW' THEN 1 END) as low_count,
+                          STRING_AGG(DISTINCT attack_type, ', ' ORDER BY attack_type) as attack_types
+                   FROM anomalies
+                   WHERE created_at > %s AND src_ip IS NOT NULL
+                   GROUP BY src_ip
+                   ORDER BY threat_score DESC, total DESC
+                   LIMIT %s""",
+                (cutoff, limit),
+            )
+            cols = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+            return [dict(zip(cols, row)) for row in rows]
+        finally:
+            cur.close()
 
     def _save_baselines(self, baselines_data: Optional[Dict[str, Any]] = None):
         """Persist statistical baselines to the database.
