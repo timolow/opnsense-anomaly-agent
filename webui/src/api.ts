@@ -11,6 +11,7 @@ import type {
   Timeline, BlockedIps, TopPorts, RuleHeatmap,
   DirectionDistribution, RuleActionBreakdown,
   NginxSummary, NginxAnomaly,
+  ResourceData,
 } from './types';
 
 const BASE = '/api';
@@ -166,6 +167,7 @@ export const api = {
     return mapStats(raw);
   },
   health: () => json<HealthData>('/health'),
+  resources: () => json<ResourceData>('/resources'),
   heartbeat: () => json<{ ok: boolean; timestamp: number; events_processed: number; anomalies_detected: number }>('heartbeat'),
 
   // Core data

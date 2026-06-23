@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════
 
 import { useState } from 'react';
+import { TabSkeleton } from '../SkeletonLoaders';
 import { Database, Search, Filter } from 'lucide-react';
 import type { Event } from '@/types';
 
@@ -99,9 +100,7 @@ export default function LogsQueryTab() {
       {/* Results */}
       <div className="cyber-card p-4 scanlines">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
-          </div>
+          <TabSkeleton tab="logs" />
         ) : error ? (
           <div className="text-cyber-red text-sm text-center py-8">{error}</div>
         ) : results.length === 0 ? (

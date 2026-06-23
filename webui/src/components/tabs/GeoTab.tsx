@@ -6,6 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { GeoData } from '@/types';
 import { Globe } from 'lucide-react';
+import { QueryErrorState } from '../TabErrorBoundary';
+import { TabSkeleton } from '../SkeletonLoaders';
 
 const FLAG_MAP: Record<string, string> = {
   'US': '🇺🇸', 'CN': '🇨🇳', 'RU': '🇷🇺', 'DE': '🇩🇪', 'GB': '🇬🇧',
@@ -15,13 +17,14 @@ const FLAG_MAP: Record<string, string> = {
 };
 
 export default function GeoTab() {
-  const { data } = useQuery<GeoData>({
+  const { data, error, isError, refetch } = useQuery<GeoData>({
     queryKey: ['geo'],
     queryFn: api.geo,
     refetchInterval: 60000,
   });
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Geography" />;
+  if (!data) return <TabSkeleton tab="geo" />;
 
   const topCountries = data.countries.slice(0, 20);
   const totalEvents = topCountries.reduce((s, c) => s + c.count, 0);
