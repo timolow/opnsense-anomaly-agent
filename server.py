@@ -296,32 +296,15 @@ def _calc_uptime(agent_counters):
     return agent_counters.get("uptime", 0)
 
 def _read_opn_config():
-    """Read OPNsense config from env vars (docker-compose) or config.json fallback."""
-    # Primary: environment variables from docker-compose
+    """Read OPNsense config from environment variables (docker-compose)."""
     host = os.environ.get("OPN_HOST", "192.168.1.1")
     port = int(os.environ.get("OPN_PORT", "443"))
     api_key = os.environ.get("OPN_API_KEY", "")
     api_secret = os.environ.get("OPN_API_SECRET", "")
     verify_ssl = os.environ.get("OPN_VERIFY_SSL", "true").lower() not in ("false", "0", "no")
     url = f"https://{host}:{port}"
-    # Only return full config if API key was set via env
     if api_key:
         return url, api_key, api_secret, verify_ssl
-    # Fallback: read from config.json
-    config_path = os.path.join(BASE_DIR, "config.json")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                cfg = json.load(f)
-            opn = cfg.get("opnsense", {})
-            h = opn.get("host", host)
-            p = opn.get("port", port)
-            k = opn.get("api_key", "")
-            s = opn.get("api_secret", "")
-            v = opn.get("verify_ssl", not verify_ssl)
-            return f"https://{h}:{p}", k, s, v
-        except Exception:
-            pass
     return "", "", "", True
 
 # ─── PostgreSQL queries ────────────────────────────────────────────
@@ -1100,6 +1083,90 @@ def query_service_status():
     except Exception as e:
         return {"error": str(e), "services_tracked": 0, "services_monitored": 0}
 
+def query_resources():
+    """Resource monitoring endpoint — memory, CPU, DB size, disk usage.
+
+    Returns structured resource data with threshold status.
+    """
+    from health_monitor import get_system_metrics
+
+    try:
+        metrics = get_system_metrics(db_size=True, disk=True)
+    except Exception as e:
+        return {"error": str(e), "resources": {}}
+
+    # Determine threshold status
+    status = "ok"
+    warnings: list[str] = []
+
+    # Memory check
+    mem = metrics.get("memory", {})
+    if "error" not in mem:
+        pct = mem.get("pct_used", 0)
+        if pct >= 95.0:
+            mem["status"] = "critical"
+            status = "critical"
+        elif pct >= 85.0:
+            mem["status"] = "warning"
+            warnings.append(f"Memory at {pct}%")
+            if status == "ok":
+                status = "warning"
+        else:
+            mem["status"] = "ok"
+
+    # CPU check
+    cpu = metrics.get("cpu", {})
+    if "error" not in cpu:
+        usage = cpu.get("usage_pct", 0)
+        if usage >= 98.0:
+            cpu["status"] = "critical"
+            status = "critical"
+        elif usage >= 90.0:
+            cpu["status"] = "warning"
+            warnings.append(f"CPU at {usage}%")
+            if status == "ok":
+                status = "warning"
+        else:
+            cpu["status"] = "ok"
+
+    # DB size check
+    db = metrics.get("db_size", {})
+    if "error" not in db:
+        db_mb = db.get("mb", 0)
+        if db_mb >= 5120:
+            db["status"] = "critical"
+            status = "critical"
+        elif db_mb >= 2048:
+            db["status"] = "warning"
+            warnings.append(f"Database size {db_mb:.0f} MB")
+            if status == "ok":
+                status = "warning"
+        else:
+            db["status"] = "ok"
+
+    # Disk check
+    disk = metrics.get("disk", {})
+    if "error" not in disk:
+        pct = disk.get("pct_used", 0)
+        if pct >= 95.0:
+            disk["status"] = "critical"
+            status = "critical"
+        elif pct >= 85.0:
+            disk["status"] = "warning"
+            warnings.append(f"Disk at {pct}%")
+            if status == "ok":
+                status = "warning"
+        else:
+            disk["status"] = "ok"
+
+    return {
+        "status": status,
+        "warnings": warnings,
+        "resources": metrics,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def query_health():
     """Aggregated health check for all subsystems."""
     import requests as req_lib
@@ -1231,6 +1298,44 @@ def query_health():
         "anomalies_detected": agent_counters.get("anomaly_count", 0),
         "uptime_seconds": uptime,
     }
+
+
+def query_version():
+    """Return deployment version info (git commit, build time, deploy state)."""
+    import subprocess
+
+    result = {"version": "unknown", "commit": "unknown", "build_time": "unknown"}
+
+    # Git commit SHA
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL, cwd="/app").decode().strip()
+        result["commit"] = commit
+    except Exception:
+        pass
+
+    # Build time from image label or file
+    try:
+        import os as _os
+        if _os.path.exists("/app/deploy_state.json"):
+            with open("/app/deploy_state.json") as f:
+                import json as _json
+                deploy = _json.load(f)
+                result["deploy_timestamp"] = deploy.get("timestamp", "unknown")
+                result["deploy_commit"] = deploy.get("commit_sha", "unknown")
+    except Exception:
+        pass
+
+    # Build time from Dockerfile COPY timestamp
+    try:
+        # Use __file__ of a known source file as proxy
+        import os as _os
+        mtime = _os.path.getmtime("/app/server.py")
+        from datetime import datetime, timezone
+        result["build_time"] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        pass
+
+    return result
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1832,6 +1937,63 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as ml_err:
                 logger.debug("Could not add ML metrics: %s", ml_err)
 
+            # Resource monitoring metrics
+            try:
+                from health_monitor import get_system_metrics
+                res = get_system_metrics(db_size=True, disk=True)
+
+                # Memory metrics
+                mem = res.get("memory", {})
+                if "error" not in mem:
+                    out.append("# HELP agent_memory_usage_bytes Agent memory usage in bytes")
+                    out.append("# TYPE agent_memory_usage_bytes gauge")
+                    out.append(f"agent_memory_usage_bytes {int(mem.get('used_mb', 0) * 1024 * 1024)}")
+                    out.append("# HELP agent_memory_total_bytes Agent total memory in bytes")
+                    out.append("# TYPE agent_memory_total_bytes gauge")
+                    out.append(f"agent_memory_total_bytes {int(mem.get('total_mb', 0) * 1024 * 1024)}")
+                    out.append("# HELP agent_memory_usage_pct Agent memory usage percentage")
+                    out.append("# TYPE agent_memory_usage_pct gauge")
+                    out.append(f"agent_memory_usage_pct {mem.get('pct_used', 0)}")
+
+                # CPU metrics
+                cpu = res.get("cpu", {})
+                if "error" not in cpu:
+                    out.append("# HELP agent_cpu_usage_pct Agent CPU usage percentage")
+                    out.append("# TYPE agent_cpu_usage_pct gauge")
+                    out.append(f"agent_cpu_usage_pct {cpu.get('usage_pct', 0)}")
+
+                # Load average metrics
+                load = res.get("load_avg", {})
+                if "error" not in load:
+                    out.append("# HELP agent_load_avg_1m Agent 1-minute load average")
+                    out.append("# TYPE agent_load_avg_1m gauge")
+                    out.append(f"agent_load_avg_1m {load.get('1m', 0)}")
+                    out.append("# HELP agent_load_avg_5m Agent 5-minute load average")
+                    out.append("# TYPE agent_load_avg_5m gauge")
+                    out.append(f"agent_load_avg_5m {load.get('5m', 0)}")
+                    out.append("# HELP agent_load_avg_15m Agent 15-minute load average")
+                    out.append("# TYPE agent_load_avg_15m gauge")
+                    out.append(f"agent_load_avg_15m {load.get('15m', 0)}")
+
+                # DB size metrics
+                db = res.get("db_size", {})
+                if "error" not in db:
+                    out.append("# HELP agent_db_size_bytes Agent database size in bytes")
+                    out.append("# TYPE agent_db_size_bytes gauge")
+                    out.append(f"agent_db_size_bytes {db.get('bytes', 0)}")
+
+                # Disk metrics
+                disk = res.get("disk", {})
+                if "error" not in disk:
+                    out.append("# HELP agent_disk_usage_pct Agent disk usage percentage")
+                    out.append("# TYPE agent_disk_usage_pct gauge")
+                    out.append(f"agent_disk_usage_pct {disk.get('pct_used', 0)}")
+                    out.append("# HELP agent_disk_free_bytes Agent disk free space in bytes")
+                    out.append("# TYPE agent_disk_free_bytes gauge")
+                    out.append(f"agent_disk_free_bytes {int(disk.get('free_mb', 0) * 1024 * 1024)}")
+            except Exception as res_err:
+                logger.debug("Could not add resource metrics: %s", res_err)
+
         except Exception as e:
             logger.error("Prometheus metrics generation failed: %s", e)
             out = [f"# ERROR: {e}"]
@@ -1993,6 +2155,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_geo())
             elif path == "/api/health":
                 self._send_json(query_health())
+            elif path == "/api/resources":
+                try:
+                    self._send_json(query_resources())
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            elif path == "/api/version":
+                self._send_json(query_version())
             elif path == "/api/alerts":
                 self._send_json(query_alerts())
             elif path == "/api/anomalies":
