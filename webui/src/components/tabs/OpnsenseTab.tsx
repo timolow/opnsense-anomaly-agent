@@ -6,15 +6,18 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { OpnsenseStatusData } from '@/types';
 import { Server, Cpu, MemoryStick, HardDrive, Network } from 'lucide-react';
+import { QueryErrorState } from '../TabErrorBoundary';
+import { TabSkeleton } from '../SkeletonLoaders';
 
 export default function OpnsenseTab() {
-  const { data } = useQuery<OpnsenseStatusData>({
+  const { data, error, isError, refetch } = useQuery<OpnsenseStatusData>({
     queryKey: ['opnsense'],
     queryFn: api.opnsense,
     refetchInterval: 30000,
   });
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="OPNsense Status" />;
+  if (!data) return <TabSkeleton tab="opnsense" />;
 
   const statusIcon = (status: string) => {
     switch (status.toLowerCase()) {

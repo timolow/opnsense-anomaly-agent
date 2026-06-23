@@ -3,8 +3,10 @@
 // ═══════════════════════════════════════════════════
 
 import React, { useState, useEffect } from 'react';
+import { TabSkeleton } from '../SkeletonLoaders';
 import { api } from '../../api';
 import type { NginxSummary, NginxAnomaly } from '../../types';
+import { TabQueryWrapper } from '../TabQueryWrapper';
 
 // Severity badge colors (cyberpunk theme)
 const severityColors: Record<string, { bg: string; text: string; glow: string }> = {
@@ -347,14 +349,7 @@ export const NginxTab: React.FC = () => {
   }, []);
 
   if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ fontSize: '24px', color: '#00ffaa', animation: 'pulse 1.5s ease-in-out infinite' }}>
-          ⚡ Loading nginx data...
-        </div>
-        <div style={{ fontSize: '12px', color: '#667788' }}>Fetching traffic metrics from database</div>
-      </div>
-    );
+    return <TabSkeleton tab="nginx" />;
   }
 
   if (error) {
@@ -368,7 +363,28 @@ export const NginxTab: React.FC = () => {
         color: '#ff0040',
       }}>
         <div style={{ fontSize: '18px', marginBottom: '8px' }}>⚠️ Error</div>
-        <div style={{ fontSize: '13px', color: '#ff8888' }}>{error}</div>
+        <div style={{ fontSize: '13px', color: '#ff8888', marginBottom: '12px' }}>{error}</div>
+        <button
+          onClick={() => {
+            setLoading(true);
+            setError(null);
+            api.getNginxSummary().then(s => setSummary(s)).catch(() => {});
+            api.getNginxAnomalies().then(a => setAnomalies(a)).catch(() => {});
+            Promise.all([
+              api.getNginxSummary(), api.getNginxAnomalies()
+            ]).then(([s, a]) => {
+              setSummary(s);
+              setAnomalies(a);
+              setLoading(false);
+            }).catch((err: unknown) => {
+              setError(err instanceof Error ? err.message : 'Failed to load nginx data');
+              setLoading(false);
+            });
+          }}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-cyber-accent/10 border border-cyber-accent/30 text-cyber-accent font-semibold text-sm hover:bg-cyber-accent/20 transition-all cursor-pointer"
+        >
+          ↻ Retry
+        </button>
       </div>
     );
   }

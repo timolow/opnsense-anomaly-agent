@@ -7,9 +7,11 @@ import { api } from '@/api';
 import type { RulesClassifiedData } from '@/types';
 import { Layers, Search, ThumbsUp, ThumbsDown, MessageSquare } from 'lucide-react';
 import { useState } from 'react';
+import { QueryErrorState } from '../TabErrorBoundary';
+import { TabSkeleton } from '../SkeletonLoaders';
 
 export default function RulesTab() {
-  const { data } = useQuery<RulesClassifiedData>({
+  const { data, error, isError, refetch } = useQuery<RulesClassifiedData>({
     queryKey: ['rules-classified'],
     queryFn: () => api.rulesClassified(false),
     refetchInterval: 60000,
@@ -19,6 +21,7 @@ export default function RulesTab() {
   const [selectedRule, setSelectedRule] = useState<string | null>(null);
   const [feedback, setFeedback] = useState({ label: 'GOOD', reason: '' });
 
+  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Firewall Rules" />;
   if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
 
   const filtered = data.rules.filter((r) =>

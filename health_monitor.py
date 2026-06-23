@@ -20,13 +20,60 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
-def get_system_metrics() -> Dict[str, Any]:
+def get_db_size_bytes() -> int:
+    """Query PostgreSQL for current database size in bytes.
+
+    Returns 0 if database is unreachable.
+    """
+    try:
+        import psycopg2
+        import os
+
+        db_host = os.environ.get("DB_HOST", "localhost")
+        db_port = os.environ.get("DB_PORT", "5432")
+        db_name = os.environ.get("DB_NAME", "opnsense")
+        db_user = os.environ.get("DB_USER", "opnsense")
+        db_pass = os.environ.get("DB_PASSWORD", "opnsense")
+
+        conn = psycopg2.connect(
+            host=db_host, port=db_port, dbname=db_name,
+            user=db_user, password=db_pass, connect_timeout=5
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT pg_database_size(current_database())")
+        size = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return size
+    except Exception as e:
+        logger.debug("DB size query failed: %s", e)
+        return 0
+
+
+def get_disk_usage(path: str = "/app") -> Dict[str, Any]:
+    """Get disk usage for the given path."""
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(path)
+        return {
+            "total_mb": round(total / (1024**2), 1),
+            "used_mb": round(used / (1024**2), 1),
+            "free_mb": round(free / (1024**2), 1),
+            "pct_used": round(used / total * 100, 1) if total > 0 else 0.0,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_system_metrics(db_size: bool = True, disk: bool = True) -> Dict[str, Any]:
     """Collect system-level metrics from /proc (no psutil dependency).
 
     Returns a dict with:
       - memory: {total_mb, used_mb, free_mb, cached_mb, pct_used}
       - cpu: {usage_pct}  (sampled over 0.5s)
       - load_avg: {1m, 5m, 15m}
+      - db_size: {bytes, mb}  (optional, if db_size=True)
+      - disk: {total_mb, used_mb, free_mb, pct_used}  (optional, if disk=True)
     """
     result: Dict[str, Any] = {}
 
@@ -92,6 +139,18 @@ def get_system_metrics() -> Dict[str, Any]:
     except Exception as e:
         result["load_avg"] = {"error": str(e)}
 
+    # --- Database size ---
+    if db_size:
+        db_size_bytes = get_db_size_bytes()
+        result["db_size"] = {
+            "bytes": db_size_bytes,
+            "mb": round(db_size_bytes / (1024**2), 1) if db_size_bytes > 0 else 0.0,
+        }
+
+    # --- Disk usage ---
+    if disk:
+        result["disk"] = get_disk_usage()
+
     return result
 
 
@@ -113,6 +172,10 @@ class HealthMonitor:
     EVENT_BUFFER_WARN = 5000
     EVENT_BUFFER_CRIT = 20000
     LOAD_WARN_MULTIPLIER = 2.0  # load > N * cpu_count
+    DB_SIZE_WARN_MB = 2048     # 2 GB
+    DB_SIZE_CRIT_MB = 5120     # 5 GB
+    DISK_WARN_PCT = 85.0
+    DISK_CRIT_PCT = 95.0
 
     def __init__(
         self,
@@ -219,6 +282,27 @@ class HealthMonitor:
                 issues.append(f"WARNING: event buffer depth {buffer_depth}")
         except Exception as e:
             issues.append(f"ERROR: cannot read event buffer: {e}")
+
+        # 2b. Database size
+        db_info = sys_metrics.get("db_size", {})
+        if "error" not in db_info:
+            db_mb = db_info.get("mb", 0)
+            if db_mb > 0:
+                details["db_size"] = db_info
+                if db_mb >= self.DB_SIZE_CRIT_MB:
+                    issues.append(f"CRITICAL: database size {db_mb:.0f} MB")
+                elif db_mb >= self.DB_SIZE_WARN_MB:
+                    issues.append(f"WARNING: database size {db_mb:.0f} MB")
+
+        # 2c. Disk usage
+        disk_info = sys_metrics.get("disk", {})
+        if "error" not in disk_info:
+            details["disk"] = disk_info
+            disk_pct = disk_info.get("pct_used", 0)
+            if disk_pct >= self.DISK_CRIT_PCT:
+                issues.append(f"CRITICAL: disk at {disk_pct}%")
+            elif disk_pct >= self.DISK_WARN_PCT:
+                issues.append(f"WARNING: disk at {disk_pct}%")
 
         # 3. Database connectivity
         db_ok = True

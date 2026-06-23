@@ -1342,20 +1342,37 @@ def query_version():
 # ZenArmor query helpers
 # ──────────────────────────────────────────────────────────────────────
 
-ZENARMOR_STATE_FILE = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "zenarmor_state.json")
-IDS_STATE_FILE = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "ids_state.json")
+STATE_FILE = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "state.json")
+
+def load_consolidated_state():
+    """Load the consolidated state.json, returning empty dict on failure."""
+    try:
+        with open(STATE_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 def load_json_state(filepath):
-    """Load a JSON state file, returning empty dict on failure."""
+    """Legacy: Load a JSON state file, returning empty dict on failure."""
     try:
         with open(filepath, 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
+def _get_zenarmor_state():
+    """Get ZenArmor classifier state from consolidated state.json."""
+    state = load_consolidated_state()
+    return state.get("zenarmor_classifier", {})
+
+def _get_ids_state():
+    """Get IDS analyzer state from consolidated state.json."""
+    state = load_consolidated_state()
+    return state.get("ids_analyzer", {})
+
 def query_zenarmor_summary():
     """Return ZenArmor policy summary matching frontend types."""
-    state = load_json_state(ZENARMOR_STATE_FILE)
+    state = _get_zenarmor_state()
     if not state:
         return {
             "total_events": 0,
@@ -1364,18 +1381,17 @@ def query_zenarmor_summary():
             "events_24h": 0,
         }
     policies_count = len(state.get("policies", {}))
-    anomalies = state.get("summary", {}).get("anomalies_detected", 0)
-    total_events = state.get("summary", {}).get("total_events", state.get("total_events", 0))
+    total_events = state.get("total_events", 0)
     return {
         "total_events": total_events,
         "policies_count": policies_count,
-        "anomalies_detected": anomalies,
+        "anomalies_detected": 0,  # tracked via DB anomalies table
         "events_24h": total_events,  # fallback: same as total
     }
 
 def query_zenarmor_policies():
     """Return all known ZenArmor policies matching frontend types."""
-    state = load_json_state(ZENARMOR_STATE_FILE)
+    state = _get_zenarmor_state()
     if not state:
         return []
     policies = []
@@ -1384,12 +1400,12 @@ def query_zenarmor_policies():
         actions = data.get("actions", {})
         action = "block" if actions.get("BLOCK", 0) > actions.get("PASS", 0) else "pass"
         policies.append({
-            "id": data.get("policy_id", name[:8]),
-            "name": data.get("policy_name", name),
-            "category": data.get("category", "general"),
-            "status": "active" if data.get("enabled", True) else "inactive",
+            "id": name[:8],
+            "name": name,
+            "category": "general",
+            "status": "active",
             "action": action,
-            "description": data.get("description", ""),
+            "description": "",
             "events": total_events,
         })
     return sorted(policies, key=lambda x: -x["events"])
@@ -1467,14 +1483,13 @@ def query_ids_summary():
         if conn:
             close_db(conn)
 
-    state = load_json_state(IDS_STATE_FILE)
+    state = _get_ids_state()
     sig_count = len(state.get("signatures", {})) if state else 0
-    anomalies = state.get("summary", {}).get("anomalies_detected", 0) if state else 0
 
     return {
         "total_events": max(db_total, sig_count),
         "signatures": max(db_signatures, sig_count),
-        "anomalies_detected": anomalies,
+        "anomalies_detected": 0,  # tracked via DB anomalies table
         "events_24h": db_24h,
     }
 
@@ -1509,7 +1524,7 @@ def query_ids_signatures():
             close_db(conn)
 
     # Merge with state file signatures (state file may have more details)
-    state = load_json_state(IDS_STATE_FILE)
+    state = _get_ids_state()
     if state:
         for name, data in state.get("signatures", {}).items():
             if name in db_sigs:
@@ -1520,9 +1535,9 @@ def query_ids_signatures():
             else:
                 pri = data.get("priority", 0)
                 db_sigs[name] = {
-                    "id": data.get("id", name[:8]),
-                    "name": data.get("name", name),
-                    "category": data.get("category", "unknown"),
+                    "id": name[:8],
+                    "name": name,
+                    "category": "unknown",
                     "severity": "HIGH" if pri <= 1 else "MEDIUM" if pri <= 3 else "LOW",
                     "triggered_count": data.get("trigger_count", 0),
                     "last_triggered": data.get("last_seen", ""),

@@ -7,9 +7,11 @@ import { api } from '@/api';
 import type { EventsData } from '@/types';
 import { FileText, Search, Filter } from 'lucide-react';
 import { useState } from 'react';
+import { QueryErrorState } from '../TabErrorBoundary';
+import { TabSkeleton } from '../SkeletonLoaders';
 
 export default function SyslogsTab() {
-  const { data } = useQuery<EventsData>({
+  const { data, error, isError, refetch } = useQuery<EventsData>({
     queryKey: ['events'],
     queryFn: () => api.events(100, 0),
     refetchInterval: 30000,
@@ -18,7 +20,9 @@ export default function SyslogsTab() {
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Syslogs" />;
+
+  if (!data) return <TabSkeleton tab="syslogs" />;
 
   const filtered = data.events.filter((e) => {
     if (filter && !e.raw?.toLowerCase().includes(filter.toLowerCase()) &&
