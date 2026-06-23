@@ -828,7 +828,7 @@ class OPNsenseAgent:
         if log_type == 'firewall' and self.drift_detector:
             self.drift_detector.process_event(event)
 
-    def _process_batch(self, events: list[dict]):
+    def _process_batch(self, events: list):
         """Process a batch of events using batch-optimized operations.
 
         Batches DB inserts, attack detection, geo lookup, concept drift,
@@ -928,11 +928,12 @@ class OPNsenseAgent:
         # Statistical model — batch add
         self.stat_model.add_events(events)
 
+        # Pre-filter firewall events for downstream consumers
+        fw_events = [e for e in events if e.get("log_type") == "firewall"]
+
         # Concept drift detection — batch process firewall events
-        if self.drift_detector:
-            fw_events = [e for e in events if e.get("log_type") == "firewall"]
-            if fw_events:
-                self.drift_detector.process_batch(fw_events)
+        if self.drift_detector and fw_events:
+            self.drift_detector.process_batch(fw_events)
 
         # ── Phase 4: Conditional log-type processing ─────────────────
         for event in events:
@@ -945,23 +946,19 @@ class OPNsenseAgent:
                 self.nginx_monitor.process_event(event)
 
         # Baseline engine — batch update for firewall events
-        if self.baseline_engine:
-            fw_events = [e for e in events if e.get("log_type") == "firewall"]
-            if fw_events:
-                # Group firewall events by rule for baseline engine
-                rules: dict[str, list] = {}
-                for e in fw_events:
-                    rule = e.get("rule_name", "unknown")
-                    rules.setdefault(rule, []).append(e)
-                for rule, rule_events in rules.items():
-                    self.baseline_engine.update_baseline(rule, rule_events)
+        if self.baseline_engine and fw_events:
+            # Group firewall events by rule for baseline engine
+            rules: Dict[str, list] = {}
+            for e in fw_events:
+                rule = e.get("rule_name", "unknown")
+                rules.setdefault(rule, []).append(e)
+            for rule, rule_events in rules.items():
+                self.baseline_engine.update_baseline(rule, rule_events)
 
         # Threat engine — batch ingest firewall events
-        if self.threat_engine:
-            fw_events = [e for e in events if e.get("log_type") == "firewall"]
-            if fw_events:
-                for e in fw_events:
-                    self.threat_engine.ingest_firewall_event(e)
+        if self.threat_engine and fw_events:
+            for e in fw_events:
+                self.threat_engine.ingest_firewall_event(e)
 
         # ── Phase 5: Batch attack detection ──────────────────────────
         attacks = self.attack_detector.check_events_batch(events)
@@ -1400,6 +1397,9 @@ class OPNsenseAgent:
         self.syslog_listener.stop()
         self._send_status()
         self.discord_bot.stop()
+        # Stop resource health monitor
+        if hasattr(self, "health_monitor") and self.health_monitor is not None:
+            self.health_monitor.stop()
         logger.info("Agent shutdown complete")
 
 
