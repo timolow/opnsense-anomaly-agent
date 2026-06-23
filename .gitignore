@@ -15,7 +15,6 @@ venv/
 # Secrets (keep local)
 !.env.example
 .env
-config.json
 
 # Node/React
 node_modules/

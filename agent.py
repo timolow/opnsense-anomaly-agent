@@ -46,12 +46,10 @@ except Exception:
 
 import requests
 
-# Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-)
+# Structured JSON logging
+from json_logging import setup_json_logging
+
+setup_json_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Paths
@@ -101,7 +99,11 @@ def _get_sse_publisher():
 
 # ── Config ─────────────────────────────────────────────────────────────
 class Config:
-    """All agent configuration via env vars with .json fallback."""
+    """Agent configuration via environment variables.
+
+    All settings are read from env vars (set via .env file or docker-compose).
+    No JSON config fallback — see .env.example for all available options.
+    """
 
     def __init__(self):
         self.opnsense = {
@@ -119,18 +121,6 @@ class Config:
         self.discord_channel_id = os.getenv("DISCORD_CHANNEL_ID", "")
         # Apprise multi-platform notifications (optional)
         self.apprise_urls = os.getenv("APPRISE_URLS", "")
-        config_path = BASE_DIR / "config.json"
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    cfg = json.load(f)
-                d = cfg.get("discord", {})
-                if not self.discord_token:
-                    self.discord_token = d.get("bot_token", "")
-                if not self.discord_channel_id:
-                    self.discord_channel_id = d.get("channel_id", "")
-            except Exception as e:
-                logger.warning("Could not load Discord config: %s", e)
         self.chat_port = int(os.getenv("CHAT_PORT", "8765"))
         # Database
         self.db_host = os.getenv("DB_HOST", "localhost")
@@ -473,6 +463,7 @@ class OPNsenseAgent:
 
     def __init__(self, config: Config | None = None):
         self.config = config or Config()
+        self.logger = logging.getLogger(__name__)
 
         # Sub-modules
         # In-memory event buffer and condition for callback → main loop signal
@@ -490,11 +481,7 @@ class OPNsenseAgent:
                     user=self.config.db_user,
                     password=self.config.db_password,
                 )
-                self.db.ensure_rule_baselines_migration()
-                self.db.ensure_tables()
-                self.db.ensure_indexes()
-                self.db.ensure_hostnames_migration()
-                self.db.ensure_threshold_tuning_migration()
+                self.db.ensure_tables()  # Creates tables + runs versioned schema migrations
                 logger.info("Connected to PostgreSQL %s:%s (%s)", self.config.db_host, self.config.db_port, self.config.db_name)
                 break
             except Exception as e:
@@ -522,11 +509,6 @@ class OPNsenseAgent:
 
         # vLLM (optional)
         self.vllm_client = VLLMClient(self.config)
-
-        # Unified threat engine + baseline engine (from Graylog training data)
-        self.baseline_engine = BaselineEngine(self.db)
-        self.threat_engine = ThreatEngine(self.db, self.baseline_engine)
-        logger.info("Initialized threat_engine and baseline_engine")
 
         # Syslog listener (built-in UDP)
         self.syslog_listener = SyslogListener(self.config, event_callback=self._on_event)
@@ -561,6 +543,15 @@ class OPNsenseAgent:
         dashboard_thread.start()
         logger.info("Dashboard API server started on port 8766")
 
+        # Resource health monitoring (memory, CPU, DB size, disk)
+        try:
+            from health_monitor import HealthMonitor
+            self.health_monitor = HealthMonitor(self, self.discord_bot, interval=300, alert_cooldown=3600)
+            self.health_monitor.start()
+            logger.info("Resource health monitor started (interval=300s)")
+        except Exception as e:
+            logger.warning("Failed to start resource health monitor: %s", e)
+
         # Adaptive parser instance
         self.adaptive_parser = AdaptiveParser()
         
@@ -587,12 +578,11 @@ class OPNsenseAgent:
         self.last_syslog_anomaly_check = time.time()
         self.last_wan_flap_check = time.time()
 
-        # Unified threat engine + baseline engine (new architecture)
         try:
+            # Unified threat engine + baseline engine
             self.baseline_engine = BaselineEngine(self.db)
             self.threat_engine = ThreatEngine(self.db, baseline_engine=self.baseline_engine)
-            logger.info("Unified threat engine initialized")
-
+            logger.info("Initialized threat_engine and baseline_engine")
             # Initialize threshold auto-tuner (Phase 5)
             self.threshold_tuner = ThresholdTuner(self.db)
             logger.info("Threshold auto-tuner initialized")
@@ -606,6 +596,7 @@ class OPNsenseAgent:
             self.baseline_engine = None
             self.threat_engine = None
             self.threshold_tuner = None
+            self.anomaly_detector = None
         self._adapt_cycle = 0
 
         # Concept drift detector — monitors traffic distribution changes
@@ -627,19 +618,15 @@ class OPNsenseAgent:
         
         # ZenArmor policy classifier — tracks security gateway policies
         self.zenarmor_classifier = ZenArmorClassifier()
-        self.zenarmor_classifier.load_state()
-        
+
         # IDS signature analyzer — tracks IDS/Snort/Suricata signatures
         self.ids_analyzer = IDSSignatureAnalyzer()
-        self.ids_analyzer.load_state()
-        
+
         # Nginx web server monitor — tracks requests, detects attacks
         self.nginx_monitor = NginxMonitor()
         self.nginx_monitor.db = self.db
-        self.nginx_monitor.state_file = str(DATA_DIR / 'nginx_state.json')
-        self.nginx_monitor.load_state()
-        
-        # State persistence
+
+        # Load consolidated state (covers zenarmor, ids, nginx + all other modules)
         self.persistence.load(self)
         
         # Startup health checks
@@ -842,12 +829,180 @@ class OPNsenseAgent:
             self.drift_detector.process_event(event)
 
     def _process_batch(self, events: list[dict]):
-        """Process a batch of events."""
+        """Process a batch of events using batch-optimized operations.
+
+        Batches DB inserts, attack detection, geo lookup, concept drift,
+        and classifier updates to minimize per-event overhead at high volume.
+        """
+        if not events:
+            return
+
+        now = time.time()
+        processed_at = datetime.now(timezone.utc).isoformat()
+        db_tuples: list = []
+
+        # ── Phase 1: Pre-process all events ──────────────────────────
         for event in events:
-            try:
-                self._process_event(event)
-            except Exception as e:
-                logger.warning("Error processing event: %s", e)
+            event["processed_at"] = processed_at
+
+            # Map parser 'ruid' to PG column 'rule_name'
+            if "ruid" in event:
+                ruid = event.pop("ruid")
+                event["rule_name"] = self.rules_mapping.get(ruid, ruid)
+
+            # Tag event with log_type for DB storage
+            event.setdefault("log_type", "")
+
+            # Network classification
+            if self.network_classifier is not None:
+                event = self.network_classifier.record_event(event)
+
+            # Reverse DNS lookup
+            if self.reverse_dns.enabled:
+                for field in ("src_ip", "dst_ip"):
+                    ip = event.get(field)
+                    if ip:
+                        hostname = self.reverse_dns.lookup(ip)
+                        if hostname:
+                            event[f"{field}_hostname"] = hostname
+
+            # Build DB tuple for batch insert
+            raw = event.get("raw", "")
+            db_tuples.append((
+                event.get("timestamp"),
+                event.get("src_ip"),
+                event.get("dst_ip"),
+                event.get("src_hostname"),
+                event.get("dst_hostname"),
+                event.get("sport"),
+                event.get("dport"),
+                event.get("proto"),
+                event.get("action"),
+                event.get("interface"),
+                event.get("direction"),
+                event.get("version"),
+                event.get("ip_ttl"),
+                event.get("ip_total_length"),
+                event.get("tcp_flags_raw") or event.get("tcp_flags"),
+                event.get("tcp_seq"),
+                event.get("tcp_ack"),
+                event.get("tcp_window"),
+                event.get("tcp_options"),
+                event.get("udp_datalen"),
+                event.get("icmp_datalen"),
+                raw,
+                event.get("rule_name"),
+                event.get("log_type", ""),
+            ))
+
+        # ── Phase 2: Batch DB insert ─────────────────────────────────
+        try:
+            self.db.insert_events_batch(db_tuples)
+        except Exception as e:
+            logger.error("Batch DB insert failed: %s", e)
+            # Fallback: insert individually so events aren't lost
+            for i, event in enumerate(events):
+                try:
+                    self.db.insert_event(event, event.get("raw", ""))
+                except Exception:
+                    pass
+
+        # ── Phase 3: Batch classifier updates ────────────────────────
+        self.system_log_classifier.process_events(events)
+
+        # System log anomaly detection (periodic)
+        if now - self.last_syslog_anomaly_check >= self.config.learn_interval:
+            self._check_system_log_anomalies()
+            self.last_syslog_anomaly_check = now
+
+        # Rule-based learning (firewall rules only)
+        self.rule_classifier.process_events(events)
+
+        # Auto-retrain ML model when enough new data accumulates
+        if self.rule_classifier.should_retrain_ml():
+            self.rule_classifier.train_ml_model()
+
+        # Service monitor — process all events
+        self.service_monitor.process_events(events)
+
+        # Statistical model — batch add
+        self.stat_model.add_events(events)
+
+        # Concept drift detection — batch process firewall events
+        if self.drift_detector:
+            fw_events = [e for e in events if e.get("log_type") == "firewall"]
+            if fw_events:
+                self.drift_detector.process_batch(fw_events)
+
+        # ── Phase 4: Conditional log-type processing ─────────────────
+        for event in events:
+            log_type = event.get("log_type", "")
+            if log_type == "zenarmor":
+                self.zenarmor_classifier.process_event(event)
+            elif log_type == "ids":
+                self.ids_analyzer.process_event(event)
+            elif log_type == "nginx":
+                self.nginx_monitor.process_event(event)
+
+        # Baseline engine — batch update for firewall events
+        if self.baseline_engine:
+            fw_events = [e for e in events if e.get("log_type") == "firewall"]
+            if fw_events:
+                # Group firewall events by rule for baseline engine
+                rules: dict[str, list] = {}
+                for e in fw_events:
+                    rule = e.get("rule_name", "unknown")
+                    rules.setdefault(rule, []).append(e)
+                for rule, rule_events in rules.items():
+                    self.baseline_engine.update_baseline(rule, rule_events)
+
+        # Threat engine — batch ingest firewall events
+        if self.threat_engine:
+            fw_events = [e for e in events if e.get("log_type") == "firewall"]
+            if fw_events:
+                for e in fw_events:
+                    self.threat_engine.ingest_firewall_event(e)
+
+        # ── Phase 5: Batch attack detection ──────────────────────────
+        attacks = self.attack_detector.check_events_batch(events)
+        if attacks:
+            for attack in attacks:
+                attack.setdefault("timestamp", events[0].get("timestamp", ""))
+                src_ip = attack.get("src_ip", "")
+                attack_type = attack.get("attack_type", "")
+                if self._is_muted(src_ip, attack_type):
+                    logger.info("Alert suppressed (muted): %s from %s", attack_type, src_ip)
+                    continue
+                self.anomaly_count += 1
+                llm_analysis = None
+                if self.vllm_client.enabled:
+                    # Use first event as context for LLM analysis
+                    llm_analysis = self.vllm_client.analyze_anomaly(
+                        events[0], attack.get("attack_type", ""), attack.get("description", "")
+                    )
+                self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
+                self.apprise_notifier.send_alert(attack)
+
+        # ── Phase 6: Batch geo lookup ────────────────────────────────
+        geo_results = self.geo_lookup.check_events_batch(events)
+        if geo_results:
+            for geo_result in geo_results:
+                src_ip = geo_result.get("src_ip", "")
+                if self._is_muted(src_ip, "GEO_ANOMALY"):
+                    logger.info("Geo alert suppressed (muted): %s", src_ip)
+                    continue
+                self.anomaly_count += 1
+                self.discord_bot.send_alert(geo_result)
+                self.apprise_notifier.send_alert(geo_result)
+
+                # Track geo anomalies
+                if geo_result.get("type") == "geo_country_anomaly":
+                    cc = geo_result.get("country_code", "XX")
+                    logger.info(
+                        "New country detected: %s — %s events",
+                        cc, self.geo_lookup.country_events.get(cc, 0),
+                    )
+
         self.event_count += len(events)
 
     def _get_top_blocked(self) -> dict:
@@ -1173,12 +1328,9 @@ class OPNsenseAgent:
                         # Get baseline summary to persist
                         baseline_summary = self.stat_model.get_baseline_summary()
                         self.db._save_baselines(baseline_summary)
-                        # Persist all ML/tracking state to JSON file
+                        # Persist all ML/tracking state to consolidated state.json
                         self.persistence.save(self)
                         self.service_monitor.save()
-                        self.zenarmor_classifier.save_state()
-                        self.ids_analyzer.save_state()
-                        self.nginx_monitor.save_state()
 
                     # Phase 5: Periodic threshold auto-tuning (every 2 learn intervals)
                     if self.threshold_tuner and now - self.last_save >= self.config.learn_interval * 2:
@@ -1240,9 +1392,6 @@ class OPNsenseAgent:
                 self.db._save_baselines(baseline_summary)
             self.persistence.save(self)
             self.service_monitor.save()
-            self.zenarmor_classifier.save_state()
-            self.ids_analyzer.save_state()
-            self.nginx_monitor.save_state()
             logger.info("State saved successfully")
         except Exception as e:
             logger.warning("Failed to save state during shutdown: %s", e)
@@ -1265,7 +1414,6 @@ def _signal_handler(signum, frame, agent_ref):
 
 def main():
     parser = argparse.ArgumentParser(description="OPNsense Anomaly Detection Agent")
-    parser.add_argument("--config", type=str, default=None, help="Path to config.json")
     parser.add_argument("--portscan-window", type=int, default=None)
     parser.add_argument("--syn-threshold", type=int, default=None)
     args, unknown = parser.parse_known_args()
