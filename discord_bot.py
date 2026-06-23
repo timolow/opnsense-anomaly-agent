@@ -965,8 +965,8 @@ class DiscordBot:
         try:
             self._bot_client = OPNsenseBot(self)
             self._bot_client.run(self.config.discord_token)
-        except discord.errors.LoginError as e:
-            logger.error("Discord login failed (bad token?): %s", e)
+        except (discord.errors.LoginFailure, discord.errors.PrivilegedIntentsRequired) as e:
+            logger.error("Discord login failed (bad token or intents?): %s", e)
         except Exception as e:
             logger.error("Discord bot crashed: %s", e)
         finally:
