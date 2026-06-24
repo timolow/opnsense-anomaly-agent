@@ -90,6 +90,15 @@ class RotatingJSONLWriter:
 
         today = self._today_utc()
         rotated_name = self.base_path + "." + today
+        gz_name = rotated_name + ".gz"
+
+        # Check if today's rotated file already exists (same-day size rotation)
+        if os.path.exists(rotated_name) or os.path.exists(gz_name):
+            # Same-day rotation: find next available counter suffix
+            counter = 1
+            while os.path.exists(f"{rotated_name}.{counter}") or os.path.exists(f"{rotated_name}.{counter}.gz"):
+                counter += 1
+            rotated_name = f"{rotated_name}.{counter}"
 
         # Rename current file to date-stamped name
         if os.path.exists(self.base_path):
@@ -97,7 +106,7 @@ class RotatingJSONLWriter:
                 os.rename(self.base_path, rotated_name)
                 # Compress the rotated file
                 self._compress_file(rotated_name)
-            except OSError as e:
+            except OSError:
                 # If rename fails (e.g., race condition), just reopen
                 pass
 

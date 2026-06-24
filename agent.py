@@ -113,7 +113,7 @@ class Config:
             "port": int(os.getenv("OPN_PORT", "6666")),
             "verify_ssl": False,
         }
-        self.syslog_enabled = os.getenv("SYSLOG_ENABLED", "false").lower() == "true"
+        self.syslog_enabled = os.getenv("SYSLOG_ENABLED", "true").lower() == "true"
         self.syslog_port = int(os.getenv("SYSLOG_UDP_PORT", "1514"))
         self.vllm_base_url = os.getenv("VLLM_BASE_URL", "")
         self.vllm_model = os.getenv("VLLM_MODEL", "QuantTrio/Qwen3.6-35B-A3B-AWQ")
