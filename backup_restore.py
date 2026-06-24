@@ -96,20 +96,27 @@ def _list_backup_files() -> List[Dict[str, Any]]:
     """List all .sql.gz backup files in the backup directory."""
     _ensure_dirs()
     backups: List[Dict[str, Any]] = []
-    pattern = str(BACKUP_DIR / f"{DB_NAME}_backup_*.sql.gz")
-    for filepath in sorted(glob.glob(pattern)):
-        p = Path(filepath)
-        try:
-            st = p.stat()
-            backups.append({
-                "filename": p.name,
-                "path": str(p),
-                "size_bytes": st.st_size,
-                "size_human": _human_size(st.st_size),
-                "created": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
-            })
-        except OSError:
-            continue
+    seen: set[str] = set()
+    for pattern in (
+        str(BACKUP_DIR / f"{DB_NAME}_backup_*.sql.gz"),
+        str(BACKUP_DIR / f"{DB_NAME}_quick_*.sql.gz"),
+    ):
+        for filepath in sorted(glob.glob(pattern)):
+            if filepath in seen:
+                continue
+            seen.add(filepath)
+            p = Path(filepath)
+            try:
+                st = p.stat()
+                backups.append({
+                    "filename": p.name,
+                    "path": str(p),
+                    "size_bytes": st.st_size,
+                    "size_human": _human_size(st.st_size),
+                    "created": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                })
+            except OSError:
+                continue
     return backups
 
 
@@ -161,20 +168,27 @@ def check_trigger() -> Optional[str]:
 # ─── Cleanup ────────────────────────────────────────────────────────
 
 def cleanup_old_backups() -> Dict[str, Any]:
-    """Remove backups older than RETENTION_DAYS."""
+    """Remove backups older than RETENTION_DAYS (covers both _backup_ and _quick_ patterns)."""
     _ensure_dirs()
     cutoff = time.time() - (RETENTION_DAYS * 86400)
     removed: List[str] = []
-    pattern = str(BACKUP_DIR / f"{DB_NAME}_backup_*.sql.gz")
-    for filepath in glob.glob(pattern):
-        p = Path(filepath)
-        try:
-            if p.stat().st_mtime < cutoff:
-                p.unlink()
-                removed.append(p.name)
-                logger.info("Removed old backup: %s", p.name)
-        except OSError as e:
-            logger.warning("Failed to remove %s: %s", filepath, e)
+    seen: set[str] = set()
+    for pattern in (
+        str(BACKUP_DIR / f"{DB_NAME}_backup_*.sql.gz"),
+        str(BACKUP_DIR / f"{DB_NAME}_quick_*.sql.gz"),
+    ):
+        for filepath in glob.glob(pattern):
+            if filepath in seen:
+                continue
+            seen.add(filepath)
+            p = Path(filepath)
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    removed.append(p.name)
+                    logger.info("Removed old backup: %s", p.name)
+            except OSError as e:
+                logger.warning("Failed to remove %s: %s", filepath, e)
     return {"removed": removed, "count": len(removed), "retention_days": RETENTION_DAYS}
 
 
