@@ -694,54 +694,169 @@ def query_opnsense_status():
 
         results = {"status": "connected"}
 
-        # 1. Firmware/Version info
-        try:
+        def _api_get(path):
+            """Helper to GET an OPNsense API endpoint."""
             req = urllib.request.Request(
-                f"{opn_url}/api/core/firmware/status",
+                f"{opn_url}{path}",
                 headers={"Authorization": auth_header},
             )
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                sys_info = json.loads(resp.read().decode())
+                return json.loads(resp.read().decode())
+
+        # 1. Firmware/Version info
+        try:
+            sys_info = _api_get("/api/core/firmware/status")
             if isinstance(sys_info, dict):
                 product = sys_info.get("product", {})
                 results["opnsense_version"] = product.get("CORE_VERSION", product.get("CORE_SERIES", "unknown"))
+                results["os_version"] = sys_info.get("os_version", "")
             else:
                 results["opnsense_version"] = "unknown"
+                results["os_version"] = ""
             results["status"] = "connected"
         except Exception as e:
             print(f"OPNsense firmware status failed: {e}")
             results["opnsense_version"] = "error"
+            results["os_version"] = ""
 
-        # 1b. System Resources — memory, CPU load, uptime
-        # NOTE: OPNsense 26.4 systemResources only returns 'memory' — no loadavg or uptime.
-        results["cpu_usage"] = 0
+        # 2. Gateways — PRIMARY source (works on OPNsense 26.4)
+        results["gateways"] = []
+        raw_gateways = []
+        try:
+            gw_data = _api_get("/api/routing/settings/searchGateway")
+            raw_gateways = gw_data.get("rows", gw_data.get("gateways", []))
+            for gw in raw_gateways:
+                if gw.get("disabled"):
+                    continue
+                name = gw.get("name", gw.get("id", "unknown"))
+                interface = gw.get("interface", "")
+                iface_phys = gw.get("if", "")
+                interface_descr = gw.get("interface_descr", "")
+                gateway_ip = gw.get("gateway", "")
+                ip_protocol = gw.get("ipprotocol", "inet")
+                upstream = gw.get("upstream", False)
+                status = gw.get("status", "unknown")
+                # Parse delay/loss from string format "5.8 ms" / "0.0 %"
+                delay_raw = gw.get("delay", "~")
+                loss_raw = gw.get("loss", "~")
+                try:
+                    delay_val = float(str(delay_raw).replace(" ms", "").replace(" ", "")) if str(delay_raw) != "~" else 0
+                except (ValueError, TypeError):
+                    delay_val = 0
+                try:
+                    loss_val = float(str(loss_raw).replace(" %", "").replace(" ", "")) if str(loss_raw) != "~" else 0
+                except (ValueError, TypeError):
+                    loss_val = 0
+                results["gateways"].append({
+                    "name": name,
+                    "interface": interface_descr or interface,
+                    "interface_phys": iface_phys,
+                    "gateway_ip": gateway_ip,
+                    "ip_protocol": ip_protocol,
+                    "upstream": upstream,
+                    "vpn_gateway": bool(gw.get("gateway_interface", False)),
+                    "status": status.lower() if status else "unknown",
+                    "delay": delay_val,
+                    "loss": loss_val,
+                })
+        except Exception as e:
+            print(f"OPNsense gateways failed: {e}")
+
+        # 3. Derive interfaces from gateways (works on all OPNsense versions)
+        # /api/interfaces/assignments returns 404 on OPNsense 26.4
+        results["interfaces"] = []
+        iface_map = {}
+        for gw in raw_gateways:
+            if gw.get("disabled"):
+                continue
+            iface_phys = gw.get("if", "")
+            if not iface_phys:
+                continue
+            interface = gw.get("interface", "")
+            interface_descr = gw.get("interface_descr", "")
+            ip_protocol = gw.get("ipprotocol", "inet")
+            gateway_ip = gw.get("gateway", "")
+            upstream = gw.get("upstream", False)
+            gw_name = gw.get("name", "").upper()
+
+            if iface_phys not in iface_map:
+                # Detect type
+                is_vpn = (
+                    "VPN" in gw_name or "WG" in gw_name or
+                    iface_phys.startswith("ovpn") or iface_phys.startswith("wg") or
+                    iface_phys.startswith("tun") or gw.get("gateway_interface", False)
+                )
+                iface_type = "VPN" if is_vpn else ("WAN" if upstream else "LAN")
+                iface_map[iface_phys] = {
+                    "name": iface_phys,
+                    "description": interface_descr or interface or iface_type,
+                    "type": iface_type,
+                    "ipv4": "",
+                    "ipv6": "",
+                    "mac": "",
+                    "status": "online",  # default — update below
+                }
+
+            # Collect gateway IPs per interface
+            if gateway_ip:
+                if ":" in gateway_ip:
+                    if not iface_map[iface_phys]["ipv6"]:
+                        iface_map[iface_phys]["ipv6"] = gateway_ip
+                else:
+                    if not iface_map[iface_phys]["ipv4"]:
+                        iface_map[iface_phys]["ipv4"] = gateway_ip
+
+        # Update interface status from gateway status
+        for gw in raw_gateways:
+            if gw.get("disabled"):
+                continue
+            iface_phys = gw.get("if", "")
+            gw_status = (gw.get("status") or "").lower()
+            if iface_phys in iface_map and gw_status:
+                if gw_status == "online":
+                    iface_map[iface_phys]["status"] = "online"
+                elif gw_status in ("down", "offline", "fault"):
+                    iface_map[iface_phys]["status"] = gw_status
+                elif iface_map[iface_phys]["status"] != "online":
+                    iface_map[iface_phys]["status"] = gw_status
+
+        results["interfaces"] = list(iface_map.values())
+
+        # 4. System Resources — memory, CPU, uptime
+        # OPNsense 26.4 systemResources only returns 'memory' — no loadavg or uptime.
+        results["cpu_usage"] = -1  # -1 means "not available"
         results["memory_usage"] = 0
+        results["memory_total_gb"] = 0
+        results["memory_used_gb"] = 0
         results["uptime"] = ""
         results["uptime_seconds"] = 0
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/diagnostics/system/systemResources",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                sys_res = json.loads(resp.read().decode())
+            sys_res = _api_get("/api/diagnostics/system/systemResources")
             if isinstance(sys_res, dict):
-                # Memory
+                # Memory — handle both string and int values
                 mem = sys_res.get("memory", {})
-                total_mem = int(mem.get("total", 0))
-                used_mem = int(mem.get("used", 0))
+                total_mem_str = str(mem.get("total", 0))
+                used_mem_str = str(mem.get("used", 0))
+                try:
+                    total_mem = int(total_mem_str)
+                    used_mem = int(used_mem_str)
+                except (ValueError, TypeError):
+                    total_mem = 0
+                    used_mem = 0
                 if total_mem > 0:
                     results["memory_usage"] = round(used_mem / total_mem * 100, 1)
-                # CPU load — try loadavg if present (older OPNsense), otherwise skip
-                load_avg = sys_res.get("loadavg", {})
-                if load_avg:
+                    results["memory_total_gb"] = round(total_mem / (1024**3), 1)
+                    results["memory_used_gb"] = round(used_mem / (1024**3), 1)
+                # CPU load — only available on older OPNsense
+                load_avg = sys_res.get("loadavg", None)
+                if load_avg and isinstance(load_avg, dict):
                     try:
                         load1 = float(load_avg.get("loadavg_1m", load_avg.get("1", 0)))
                         results["cpu_usage"] = round(load1 * 100, 1)
                     except (ValueError, TypeError):
                         pass
-                # Uptime — try uptime field if present (older OPNsense)
-                uptime_raw = sys_res.get("uptime", {})
+                # Uptime — only available on older OPNsense
+                uptime_raw = sys_res.get("uptime", None)
                 if isinstance(uptime_raw, dict):
                     uptime_secs = int(uptime_raw.get("raw", 0))
                     results["uptime_seconds"] = uptime_secs
@@ -757,223 +872,119 @@ def query_opnsense_status():
         except Exception as e:
             print(f"OPNsense system resources failed: {e}")
 
-        # 1c. CPU load average + uptime via last_check timestamp fallback
-        # OPNsense 26.4 dropped loadavg/uptime from systemResources.
-        # Estimate uptime from firmware last_check and use service count as proxy.
-        if results["cpu_usage"] == 0 or not results["uptime"]:
-            try:
-                req = urllib.request.Request(
-                    f"{opn_url}/api/core/firmware/status",
-                    headers={"Authorization": auth_header},
-                )
-                with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                    fw_data = json.loads(resp.read().decode())
-                if isinstance(fw_data, dict):
-                    # Estimate uptime from last_check timestamp
-                    last_check = fw_data.get("last_check", "")
-                    if last_check:
-                        try:
-                            from datetime import datetime
-                            # Parse "Wed Jun 24 10:12:36 CDT 2026"
-                            check_time = datetime.strptime(last_check, "%a %b %d %H:%M:%S %Z %Y")
-                            now = datetime.now(check_time.tzinfo)
-                            uptime_secs = int((now - check_time).total_seconds())
-                            # last_check is when last update check ran, not boot time — skip
-                        except Exception:
-                            pass
-            except Exception as e:
-                print(f"OPNsense firmware fallback failed: {e}")
-
-        # 2. Interfaces - get IPv4/6 addresses, up/down status
-        results["interfaces"] = []
+        # 4b. Try alternate endpoints for CPU/uptime on OPNsense 26.4
+        # /api/diagnostics/system/system_information has hostname + version
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/interfaces/assignments",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                iface_data = json.loads(resp.read().decode())
-            rows = iface_data.get("interfaces", {}).get("row", [])
-            if not rows and isinstance(iface_data, dict) and "row" in iface_data:
-                rows = iface_data.get("row", [])
-            for iface in rows:
-                name = iface.get("if", iface.get("interface", "unknown"))
-                description = iface.get("descr", "")
-                mac = iface.get("mac", "")
-                ipv4 = iface.get("ipaddr", "")
-                ipv6 = iface.get("ipv6addr", "")
-                subnet4 = iface.get("subnet", "")
-                subnet6 = iface.get("ipv6mode", "")
-                results["interfaces"].append({
-                    "name": name,
-                    "description": description,
-                    "mac": mac,
-                    "ipv4": ipv4,
-                    "ipv6": ipv6,
-                    "subnet4": subnet4,
-                    "subnet6": subnet6,
-                })
+            sys_info = _api_get("/api/diagnostics/system/system_information")
+            if isinstance(sys_info, dict):
+                results["hostname"] = sys_info.get("name", "")
         except Exception as e:
-            print(f"OPNsense interfaces failed: {e}")
+            print(f"OPNsense system_information failed: {e}")
 
-        # 3. Gateways - get WAN gateways with IPv4/6
-        results["gateways"] = []
+        # Try /api/diagnostics/system/memory for vmstat (CPU threads as proxy)
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/routing/settings/searchGateway",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                gw_data = json.loads(resp.read().decode())
-            rows = gw_data.get("rows", gw_data.get("gateways", []))
-            for gw in rows:
-                if gw.get("disabled"):
-                    continue
-                name = gw.get("name", gw.get("id", "unknown"))
-                interface = gw.get("if", gw.get("interface", ""))
-                gateway_ip = gw.get("gateway", gw.get("gatewayv6", ""))
-                source_ip = gw.get("source", "")
-                upstream = gw.get("upstream", False)
-                is_vpn = gw.get("vpn_gateway", False)
-                status = gw.get("status", "unknown")
-                # Parse delay/loss from string format "5.8 ms" / "0.0 %"
-                delay_raw = gw.get("delay", "~")
-                loss_raw = gw.get("loss", "~")
-                try:
-                    delay_val = float(str(delay_raw).replace(" ms", "").replace(" ", "")) if str(delay_raw) != "~" else 0
-                except (ValueError, TypeError):
-                    delay_val = 0
-                try:
-                    loss_val = float(str(loss_raw).replace(" %", "").replace(" ", "")) if str(loss_raw) != "~" else 0
-                except (ValueError, TypeError):
-                    loss_val = 0
-                results["gateways"].append({
-                    "name": name,
-                    "interface": interface,
-                    "gateway_ip": gateway_ip,
-                    "source_ip": source_ip,
-                    "upstream": upstream,
-                    "vpn_gateway": is_vpn,
-                    "status": status.lower() if status else "unknown",
-                    "delay": delay_val,
-                    "loss": loss_val,
-                })
+            vm_data = _api_get("/api/diagnostics/system/memory")
+            if isinstance(vm_data, dict):
+                vmstat = vm_data.get("vmstat", {})
+                malloc_stats = vmstat.get("malloc-statistics", {}).get("memory", [])
+                # Sum malloc requests as a rough activity indicator
+                total_requests = sum(m.get("requests", 0) for m in malloc_stats)
+                results["malloc_requests"] = total_requests
         except Exception as e:
-            print(f"OPNsense gateways failed: {e}")
+            print(f"OPNsense vmstat failed: {e}")
 
-        # 3b. Derive interfaces from gateways if API didn't return any
-        if not results["interfaces"]:
-            iface_data = {}
-            for gw in results["gateways"]:
-                iface_name = gw.get("interface", "")
-                gw_ip = gw.get("gateway_ip", "")
-                gw_name = gw.get("name", "")
-                if not iface_name:
-                    continue
-                if iface_name not in iface_data:
-                    iface_data[iface_name] = {"ipv4": "", "ipv6": "", "upstream": False, "vpn": False}
-                if gw_ip:
-                    if gw_ip.startswith("fe80:") or gw_ip.startswith("fe8") or ":" in gw_ip:
-                        # IPv6 address
-                        if not iface_data[iface_name]["ipv6"]:
-                            iface_data[iface_name]["ipv6"] = gw_ip
-                    else:
-                        # IPv4 address
-                        if not iface_data[iface_name]["ipv4"]:
-                            iface_data[iface_name]["ipv4"] = gw_ip
-                # Track upstream flag
-                if gw.get("upstream"):
-                    iface_data[iface_name]["upstream"] = True
-                # Detect VPN from gateway name or interface name pattern
-                gw_name_upper = gw_name.upper()
-                if ("VPN" in gw_name_upper or
-                    "WG" in gw_name_upper or
-                    iface_name.startswith("ovpn") or
-                    iface_name.startswith("wg") or
-                    iface_name.startswith("tun")):
-                    iface_data[iface_name]["vpn"] = True
-            for iface_name, data in iface_data.items():
-                # Classify: WAN if upstream, VPN if vpn flag, otherwise LAN
-                if data.get("upstream"):
-                    desc = "WAN"
-                elif data.get("vpn"):
-                    desc = "VPN"
-                elif not data.get("ipv4"):
-                    desc = "LAN"
-                else:
-                    desc = "WAN"
-                results["interfaces"].append({
-                    "name": iface_name,
-                    "description": desc,
-                    "mac": "",
-                    "ipv4": data.get("ipv4", ""),
-                    "ipv6": data.get("ipv6", ""),
-                    "subnet4": "",
-                    "subnet6": "",
-                })
-
-        # 4. Interface status - up/down states
-        results["interface_status"] = {}
+        # 5. Interface statistics — bandwidth data
+        # /api/diagnostics/interface/getInterfaceStatistics returns bytes/packets per interface
+        interface_stats = {}
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/interfaces/status",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                status_data = json.loads(resp.read().decode())
-            rows = status_data.get("interfaces", {}).get("row", [])
-            for row in rows:
-                name = row.get("interface", row.get("name", ""))
-                state = row.get("state", row.get("status", "unknown"))
-                media = row.get("media", "")
-                results["interface_status"][name] = {
-                    "state": state,
-                    "media": media,
-                }
+            stats_data = _api_get("/api/diagnostics/interface/getInterfaceStatistics")
+            if isinstance(stats_data, dict):
+                stats = stats_data.get("statistics", {})
+                for key, val in stats.items():
+                    if not isinstance(val, dict):
+                        continue
+                    iface_name = val.get("name", "")
+                    if not iface_name:
+                        continue
+                    if iface_name not in interface_stats:
+                        interface_stats[iface_name] = {
+                            "received_bytes": 0,
+                            "sent_bytes": 0,
+                            "received_packets": 0,
+                            "sent_packets": 0,
+                            "received_errors": 0,
+                            "send_errors": 0,
+                            "dropped_packets": 0,
+                        }
+                    current = interface_stats[iface_name]
+                    # Only count from the link-level entry (Link#N), skip IP-level dupes
+                    if "<Link" in str(val.get("network", "")):
+                        current["received_bytes"] = int(str(val.get("received-bytes", 0)))
+                        current["sent_bytes"] = int(str(val.get("sent-bytes", 0)))
+                        current["received_packets"] = int(str(val.get("received-packets", 0)))
+                        current["sent_packets"] = int(str(val.get("sent-packets", 0)))
+                        current["received_errors"] = int(str(val.get("received-errors", 0)))
+                        current["send_errors"] = int(str(val.get("send-errors", 0)))
+                        current["dropped_packets"] = int(str(val.get("dropped-packets", 0)))
+                    # Collect MAC from the link-level entry
+                    mac = val.get("address", "")
+                    if mac and "<Link" in str(val.get("network", "")):
+                        current["mac"] = mac
         except Exception as e:
-            print(f"OPNsense interface status failed: {e}")
+            print(f"OPNsense interface stats failed: {e}")
 
-        # 5. DHCP leases count
-        results["dhcp_leases"] = 0
+        # Enrich interface data with bandwidth stats
+        for iface in results.get("interfaces", []):
+            name = iface.get("name", "")
+            if name in interface_stats:
+                st = interface_stats[name]
+                iface["received_bytes"] = st.get("received_bytes", 0)
+                iface["sent_bytes"] = st.get("sent_bytes", 0)
+                iface["received_packets"] = st.get("received_packets", 0)
+                iface["sent_packets"] = st.get("sent_packets", 0)
+                iface["received_errors"] = st.get("received_errors", 0)
+                iface["send_errors"] = st.get("send_errors", 0)
+                iface["dropped_packets"] = st.get("dropped_packets", 0)
+                mac = st.get("mac", "")
+                if mac and not iface.get("mac"):
+                    iface["mac"] = mac
+
+        # 6. Services count
+        results["services_total"] = 0
+        results["services_running"] = 0
+        results["services"] = []
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/dhcpd/status",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                dhcp_data = json.loads(resp.read().decode())
-            leases_list = dhcp_data.get("leases", {}).get("row", [])
-            if not leases_list and isinstance(dhcp_data, dict):
-                leases_list = dhcp_data.get("row", [])
-            results["dhcp_leases"] = len(leases_list)
+            svc_data = _api_get("/api/core/service/search")
+            if isinstance(svc_data, dict):
+                svc_rows = svc_data.get("rows", [])
+                results["services_total"] = svc_data.get("total", len(svc_rows))
+                running_count = sum(1 for s in svc_rows if s.get("running") == 1)
+                results["services_running"] = running_count
+                # Include top services in response
+                for svc in svc_rows[:10]:
+                    results["services"].append({
+                        "name": svc.get("name", svc.get("id", "")),
+                        "status": "running" if svc.get("running") == 1 else "stopped",
+                        "description": svc.get("description", ""),
+                    })
         except Exception as e:
-            print(f"OPNsense DHCP failed: {e}")
+            print(f"OPNsense service search failed: {e}")
 
-        # 6. Firewall rules count
+        # 7. Firewall rules count
         results["firewall_rules"] = 0
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/filter/rules",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                rules_data = json.loads(resp.read().decode())
-            rules_list = rules_data.get("rules", {}).get("row", [])
-            if not rules_list and isinstance(rules_data, dict):
-                rules_list = rules_data.get("row", [])
-            results["firewall_rules"] = len(rules_list)
+            rules_data = _api_get("/api/firewall/rules/search")
+            if isinstance(rules_data, dict):
+                results["firewall_rules"] = rules_data.get("total", 0)
+            elif isinstance(rules_data, list):
+                results["firewall_rules"] = len(rules_data)
         except Exception as e:
             print(f"OPNsense rules failed: {e}")
 
-        # 7. OpenVPN status
+        # 6. OpenVPN status
         results["openvpn_tunnels"] = []
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/services/openvpn/status",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                vpn_data = json.loads(resp.read().decode())
+            vpn_data = _api_get("/api/services/openvpn/status")
             if isinstance(vpn_data, dict):
                 for key, status in vpn_data.items():
                     if isinstance(status, dict):
@@ -989,15 +1000,10 @@ def query_opnsense_status():
         except Exception as e:
             print(f"OPNsense OpenVPN failed: {e}")
 
-        # 8. NTP status
+        # 7. NTP status
         results["ntp_status"] = {}
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/services/ntp/status",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                ntp_data = json.loads(resp.read().decode())
+            ntp_data = _api_get("/api/services/ntp/status")
             if isinstance(ntp_data, dict):
                 results["ntp_status"] = {
                     "status": ntp_data.get("status", ntp_data.get("state", "unknown")),
@@ -1007,32 +1013,38 @@ def query_opnsense_status():
         except Exception as e:
             print(f"OPNsense NTP failed: {e}")
 
-        # 9. DNSMasq status
-        results["dnsmasq_status"] = {}
+        # 8. DNS status (try dnsmasq first, then unbound)
+        results["dns_status"] = {}
         try:
-            req = urllib.request.Request(
-                f"{opn_url}/api/services/dnsmasq/status",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
-                dns_data = json.loads(resp.read().decode())
+            dns_data = _api_get("/api/services/dnsmasq/status")
             if isinstance(dns_data, dict):
-                results["dnsmasq_status"] = {
+                results["dns_status"] = {
                     "status": dns_data.get("status", dns_data.get("state", "unknown")),
-                    "leases": dns_data.get("leases", dns_data.get("current_leases", 0)),
+                    "type": "dnsmasq",
                 }
-        except Exception as e:
-            print(f"OPNsense DNSMasq failed: {e}")
+        except Exception:
+            try:
+                dns_data = _api_get("/api/services/unbound/status")
+                if isinstance(dns_data, dict):
+                    results["dns_status"] = {
+                        "status": dns_data.get("status", dns_data.get("state", "unknown")),
+                        "type": "unbound",
+                    }
+            except Exception:
+                pass
 
         return results
     except Exception as e:
         return {
             "status": "disconnected", "error": str(e),
-            "opnsense_version": "unknown", "interfaces": [],
-            "gateways": [], "interface_status": {},
-            "dhcp_leases": 0, "firewall_rules": 0,
-            "openvpn_tunnels": [], "ntp_status": {},
-            "dnsmasq_status": {},
+            "opnsense_version": "unknown", "os_version": "",
+            "interfaces": [], "gateways": [],
+            "cpu_usage": -1, "memory_usage": 0, "uptime": "", "uptime_seconds": 0,
+            "memory_total_gb": 0, "memory_used_gb": 0,
+            "hostname": "",
+            "firewall_rules": 0, "openvpn_tunnels": [],
+            "services_total": 0, "services_running": 0, "services": [],
+            "ntp_status": {}, "dns_status": {},
         }
 
 def query_alerts():
@@ -2254,28 +2266,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # ═══════════════════════════════════════════════
             # -style visualizations (read from PostgreSQL)
             # ═══════════════════════════════════════════════
-            elif path == "/api//traffic-flow":
+            elif path == "/api/traffic-flow":
                 self._send_json(query__traffic_flow())
-            elif path == "/api//protocols":
+            elif path == "/api/protocols":
                 self._send_json(query__protocol_distribution())
-            elif path == "/api//actions":
+            elif path == "/api/actions":
                 self._send_json(query__action_distribution())
-            elif path == "/api//timeline":
+            elif path == "/api/timeline":
                 query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 period = query.get("period", ["7d"])[0]
                 granularity = query.get("granularity", ["hour"])[0]
                 start = int(query["start"][0]) if "start" in query else None
                 end = int(query["end"][0]) if "end" in query else None
                 self._send_json(query__timeline(period=period, granularity=granularity, start=start, end=end))
-            elif path == "/api//blocked-ips":
+            elif path == "/api/blocked-ips":
                 self._send_json(query__blocked_ips())
-            elif path == "/api//top-ports":
+            elif path == "/api/top-ports":
                 self._send_json(query__top_ports())
-            elif path == "/api//rule-heatmap":
+            elif path == "/api/rule-heatmap":
                 self._send_json(query__rule_heatmap())
-            elif path == "/api//directions":
+            elif path == "/api/directions":
                 self._send_json(query__direction_distribution())
-            elif path == "/api//rule-actions":
+            elif path == "/api/rule-actions":
                 self._send_json(query__rule_action_breakdown())
             elif path == "/api/heatmap":
                 self._send_json(query_heatmap())
@@ -3604,7 +3616,7 @@ def query__timeline(period="7d", granularity="hour", start=None, end=None):
                 %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """, query_params)
+            """ % where_clause, query_params)
         rows = cur.fetchall()
         timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in rows]
 
@@ -3626,7 +3638,7 @@ def query__timeline(period="7d", granularity="hour", start=None, end=None):
                 %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """, blocked_params)
+            """ % where_blocked, blocked_params)
         blocked_rows = cur.fetchall()
         blocked_timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in blocked_rows]
 

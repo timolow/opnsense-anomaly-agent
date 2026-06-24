@@ -346,7 +346,7 @@ def discover_firmware():
         })
     return results
 
-def discover_services():
+def discover_system_services():
     """Discover system services."""
     endpoint = "/api/core/service/search"
     status, data, raw = api_get(endpoint)
@@ -368,12 +368,76 @@ def discover_services():
     }
 
 def discover_interface_stats():
-    """Discover interface statistics."""
+    """Discover interface statistics and bandwidth data."""
     endpoints = [
         "/api/diagnostics/interface/get_interface_statistics",
         "/api/diagnostics/interface/getInterfaceStats",
+        "/api/diagnostics/interface/getInterfaceStatistics",
         "/api/diagnostics/system/systemResources",
         "/api/diagnostics/system/system_resources",
+    ]
+    results = []
+    for endpoint in endpoints:
+        status, data, raw = api_get(endpoint)
+        results.append({
+            "endpoint": endpoint,
+            "method": "GET",
+            "status": status,
+            "schema": describe_schema(data) if data else None,
+            "sample_keys": list(data.keys())[:5] if isinstance(data, dict) else [],
+        })
+    return results
+
+def discover_system_stats():
+    """Discover system CPU, memory, uptime endpoints."""
+    endpoints = [
+        "/api/diagnostics/system/systemResources",
+        "/api/diagnostics/system/system_information",
+        "/api/diagnostics/system/systeminformation",
+        "/api/diagnostics/system/memory",
+        "/api/diagnostics/system/cpu",
+        "/api/diagnostics/system/uptime",
+        "/api/core/system/status",
+        "/api/core/firmware/status",
+    ]
+    results = []
+    for endpoint in endpoints:
+        status, data, raw = api_get(endpoint)
+        results.append({
+            "endpoint": endpoint,
+            "method": "GET",
+            "status": status,
+            "schema": describe_schema(data) if data else None,
+            "sample_keys": list(data.keys())[:5] if isinstance(data, dict) else [],
+        })
+    return results
+
+def discover_services():
+    """Discover system services endpoints."""
+    endpoints = [
+        "/api/core/service/search",
+        "/api/core/service/status",
+        "/api/core/service/get",
+    ]
+    results = []
+    for endpoint in endpoints:
+        status, data, raw = api_get(endpoint)
+        results.append({
+            "endpoint": endpoint,
+            "method": "GET",
+            "status": status,
+            "schema": describe_schema(data) if data else None,
+            "sample_keys": list(data.keys())[:5] if isinstance(data, dict) else [],
+        })
+    return results
+
+def discover_firewall_rules():
+    """Discover firewall rule endpoints."""
+    endpoints = [
+        "/api/firewall/rules/search",
+        "/api/firewall/rules/get",
+        "/api/firewall/filter/rules",
+        "/api/filter/rules",
     ]
     results = []
     for endpoint in endpoints:

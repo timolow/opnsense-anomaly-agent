@@ -108,9 +108,15 @@ export interface AlertsData {
 
 export interface OpnsenseStatusData {
   version: string;
+  hostname: string;
   uptime: string;
   cpu_usage: number;
   memory_usage: number;
+  memory_total_gb: number;
+  memory_used_gb: number;
+  firewall_rules: number;
+  services_total: number;
+  services_running: number;
   interfaces: Array<{
     name: string;
     description: string;
@@ -121,6 +127,13 @@ export interface OpnsenseStatusData {
     bandwidth_in: string;
     bandwidth_out: string;
     status_icon: string;
+    received_bytes?: number;
+    sent_bytes?: number;
+    received_packets?: number;
+    sent_packets?: number;
+    received_errors?: number;
+    send_errors?: number;
+    dropped_packets?: number;
   }>;
   gateways: Array<{
     name: string;
@@ -135,7 +148,7 @@ export interface OpnsenseStatusData {
   services: Array<{
     name: string;
     status: string;
-    pid: string;
+    description: string;
   }>;
 }
 
