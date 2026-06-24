@@ -587,6 +587,9 @@ class OPNsenseAgent:
         self.last_status = time.time()
         self.last_syslog_anomaly_check = time.time()
         self.last_wan_flap_check = time.time()
+        self.last_backup = time.time()
+        # Scheduled backups: daily by default, configurable via BACKUP_INTERVAL_SECONDS
+        self.backup_interval = int(os.getenv("BACKUP_INTERVAL_SECONDS", "86400"))
 
         try:
             # Unified threat engine + baseline engine
@@ -643,6 +646,14 @@ class OPNsenseAgent:
         self._check_startup_health()
         self._start_maintenance_thread()
 
+        # Run an initial backup immediately (don't wait for first scheduled interval)
+        try:
+            logger.info("Running initial database backup on startup...")
+            self._scheduled_backup()
+            self.last_backup = time.time()
+        except Exception as e:
+            logger.warning(f"Initial startup backup failed: {e}")
+
     def _check_startup_health(self):
         """Verify connectivity to critical services before starting."""
         logger.info("Running startup health checks...")
@@ -696,6 +707,16 @@ class OPNsenseAgent:
                     self._prune_events()
                 except Exception as e:
                     logger.warning(f"Maintenance task failed: {e}")
+
+                # Scheduled database backup
+                now = time.time()
+                if now - self.last_backup >= self.backup_interval:
+                    try:
+                        self._scheduled_backup()
+                    except Exception as e:
+                        logger.warning(f"Scheduled backup failed: {e}")
+                    self.last_backup = now
+
                 self._shutdown.wait(3600)  # Run every hour
         
         t = threading.Thread(target=maintenance_loop, daemon=True)
@@ -722,6 +743,22 @@ class OPNsenseAgent:
         finally:
             if conn and self.db:
                 self.db.putconn(conn)
+
+    def _scheduled_backup(self):
+        """Run a scheduled in-container backup using psycopg2 COPY."""
+        try:
+            from backup_restore import quick_backup, cleanup_old_backups
+            result = quick_backup()
+            if result.get("success"):
+                logger.info(f"Scheduled backup completed: {result.get('filename', 'unknown')} ({result.get('size_human', '?')})")
+                # Enforce retention after successful backup
+                cleanup_result = cleanup_old_backups()
+                if cleanup_result["count"] > 0:
+                    logger.info(f"Backup cleanup: removed {cleanup_result['count']} old backup(s)")
+            else:
+                logger.error(f"Scheduled backup failed: {result.get('error', 'unknown')}")
+        except Exception as e:
+            logger.error(f"Scheduled backup error: {e}")
 
     # ── event callback (from syslog listener thread) ─────────────────
     def _on_event(self, event: dict):

@@ -79,6 +79,10 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-50}
       - LEARN_INTERVAL=${LEARN_INTERVAL:-300}
+      # Scheduled backups (in-container via psycopg2 COPY, daily by default)
+      - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      - BACKUP_DIR=${BACKUP_DIR:-/app/backups}
       # Internal IP prefixes (comma-separated, overrides defaults)
       - INTERNAL_IP_PREFIXES=${INTERNAL_IP_PREFIXES:-}
       # GeoLite2 / MaxMind (optional)
