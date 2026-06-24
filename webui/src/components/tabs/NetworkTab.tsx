@@ -391,26 +391,24 @@ function TopSourcesTable({ stats }: { stats: any }) {
 }
 
 // ── Main NetworkTab Component ──
+import { NetworkSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function NetworkTab() {
-  const { data: flowData } = useQuery<IpFlowData>({
+  const { data: flowData, isLoading: flowLoading, isError: flowError, error: flowErrorObj, refetch: flowRefetch } = useQuery<IpFlowData>({
     queryKey: ['ip-flow'],
     queryFn: api.ipFlow,
     refetchInterval: 30000,
   });
 
-  const { data: stats } = useQuery<any>({
+  const { data: stats, isLoading: statsLoading } = useQuery<any>({
     queryKey: ['stats'],
     queryFn: api.stats,
     refetchInterval: 30000,
   });
 
-  if (!flowData || !stats) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
-      </div>
-    );
-  }
+  if (flowLoading || statsLoading) return <NetworkSkeleton />;
+  if (flowError && flowErrorObj) return <TabQueryError error={flowErrorObj} isError={flowError} onRetry={flowRefetch} tabName="Network Topology" />;
 
   const nodes = flowData.nodes.slice(0, 30);
   const edges = flowData.edges.slice(0, 60);

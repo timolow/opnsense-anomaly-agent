@@ -319,6 +319,9 @@ function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
 }
 
 // ── Main NginxTab Component ──
+import { NginxSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export const NginxTab: React.FC = () => {
   const [summary, setSummary] = useState<NginxSummary | null>(null);
   const [anomalies, setAnomalies] = useState<NginxAnomaly[]>([]);
@@ -346,30 +349,16 @@ export const NginxTab: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ fontSize: '24px', color: '#00ffaa', animation: 'pulse 1.5s ease-in-out infinite' }}>
-          ⚡ Loading nginx data...
-        </div>
-        <div style={{ fontSize: '12px', color: '#667788' }}>Fetching traffic metrics from database</div>
-      </div>
-    );
-  }
+  if (loading) return <NginxSkeleton />;
 
   if (error) {
     return (
-      <div style={{
-        background: 'rgba(255, 0, 64, 0.1)',
-        border: '1px solid rgba(255, 0, 64, 0.3)',
-        borderRadius: '8px',
-        padding: '20px',
-        textAlign: 'center',
-        color: '#ff0040',
-      }}>
-        <div style={{ fontSize: '18px', marginBottom: '8px' }}>⚠️ Error</div>
-        <div style={{ fontSize: '13px', color: '#ff8888' }}>{error}</div>
-      </div>
+      <TabQueryError
+        error={new Error(error)}
+        isError={true}
+        onRetry={() => { setLoading(true); setError(null); api.getNginxSummary().then(setSummary).catch(() => setError('Failed to reload')) }}
+        tabName="Nginx Monitor"
+      />
     );
   }
 

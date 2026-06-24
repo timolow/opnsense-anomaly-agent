@@ -131,6 +131,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
           values: (v: number[] | number) => {
             const arr = Array.isArray(v) ? v : [v];
             return arr.map(n => {
+              if (!Number.isFinite(n)) return '-';
               if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
               if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
               return Math.round(n).toString();

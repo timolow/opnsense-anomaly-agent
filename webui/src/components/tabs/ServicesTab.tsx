@@ -7,14 +7,18 @@ import { api } from '@/api';
 import type { ServiceStatusData } from '@/types';
 import { Cpu, Server, Database, Wifi, GitBranch } from 'lucide-react';
 
+import { ServicesSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function ServicesTab() {
-  const { data } = useQuery<ServiceStatusData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<ServiceStatusData>({
     queryKey: ['service-status'],
     queryFn: api.serviceStatus,
     refetchInterval: 30000,
   });
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isLoading) return <ServicesSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Services" />;
 
   const statusIcon = (s: string) => {
     const up = ['up', 'running', 'ok', 'online', 'active'].includes(s.toLowerCase());

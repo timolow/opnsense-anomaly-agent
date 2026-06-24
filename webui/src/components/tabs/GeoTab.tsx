@@ -14,14 +14,18 @@ const FLAG_MAP: Record<string, string> = {
   'IR': '🇮🇷', 'KP': '🇰🇵', 'UA': '🇺🇦', 'SE': '🇸🇪', 'NO': '🇳🇴',
 };
 
+import { GeoSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function GeoTab() {
-  const { data } = useQuery<GeoData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<GeoData>({
     queryKey: ['geo'],
     queryFn: api.geo,
     refetchInterval: 60000,
   });
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isLoading) return <GeoSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Geography" />;
 
   const topCountries = data.countries.slice(0, 20);
   const totalEvents = topCountries.reduce((s, c) => s + c.count, 0);
