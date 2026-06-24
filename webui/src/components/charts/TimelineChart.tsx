@@ -1,5 +1,5 @@
 // TimelineChart - uPlot time series chart for event data
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import uPlot from 'uplot';
 import { Activity } from 'lucide-react';
 
@@ -19,9 +19,13 @@ interface TimelineChartProps {
 
 const COLORS = {
   events: '#06b6d4',
-  grid: 'rgba(148, 163, 184, 0.1)',
-  tick: 'rgba(148, 163, 184, 0.2)',
+  eventsFill: 'rgba(6, 182, 212, 0.3)',
+  blocked: '#ff1744',
+  blockedFill: 'rgba(255, 23, 68, 0.2)',
+  grid: 'rgba(148, 163, 184, 0.15)',
+  tick: 'rgba(148, 163, 184, 0.3)',
   label: '#94a3b8',
+  bg: '#0d1117',
 };
 
 const TimelineChart: React.FC<TimelineChartProps> = ({
@@ -35,49 +39,85 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
 
-  useEffect(() => {
-    if (!containerRef.current || !data.length) return;
-
+  // Pre-compute series data as Float64Arrays
+  const seriesData = useMemo(() => {
+    if (!data.length) return null;
     const times = new Float64Array(data.map(d => d.time));
     const values = new Float64Array(data.map(d => d.value));
+    return [times, values];
+  }, [data]);
+
+  useEffect(() => {
+    if (!containerRef.current || !seriesData) return;
+
+    const width = containerRef.current.clientWidth;
+    const [times, values] = seriesData;
+
+    // Compute y-axis range - use log-friendly scale for extreme variance
+    const maxVal = Math.max(...Array.from(values));
+    const minVal = Math.min(...Array.from(values).filter(v => v > 0));
+    const yMin = 0;
+    const yMax = maxVal * 1.1; // 10% headroom
 
     const opts: any = {
-      title,
-      width: containerRef.current.clientWidth,
+      title: '',
+      width,
       height,
-      padding: [10, 20, 30, 60],
+      padding: [12, 20, 40, 65],
+      focus: {
+        alpha: true,
+      },
       scales: {
         x: {
           time: true,
           range: [times[0], times[times.length - 1]],
         },
+        y: {
+          range: [yMin, yMax],
+        },
       },
       axes: [
-        null,
+        null, // x bottom
         {
           scale: 'x',
-          space: 50,
+          space: 40,
           grid: { show: false },
-          ticks: { show: false },
+          size: 35,
           values: (splits: number[] | number) => {
             const arr = Array.isArray(splits) ? splits : [splits];
             return arr.map(val => {
               const date = new Date(val * 1000);
-              const hours = date.getHours().toString().padStart(2, '0');
-              const minutes = date.getMinutes().toString().padStart(2, '0');
-              return `${hours}:${minutes}`;
+              const h = date.getHours().toString().padStart(2, '0');
+              const m = date.getMinutes().toString().padStart(2, '0');
+              return `${h}:${m}`;
             });
           },
-          font: 'Inter, system-ui, sans-serif',
+          font: '11px Inter, system-ui, monospace',
           stroke: COLORS.label,
+          splits: (scaleMin: number, scaleMax: number, foundSplits: number[]) => {
+            // Limit to ~6 time labels
+            const range = scaleMax - scaleMin;
+            const target = Math.min(6, foundSplits.length);
+            const step = Math.ceil(foundSplits.length / target);
+            return foundSplits.filter((_, i) => i % step === 0);
+          },
         },
         {
           scale: 'y',
           side: 0,
+          size: 60,
           stroke: COLORS.label,
-          font: 'Inter, system-ui, sans-serif',
+          font: '11px Inter, system-ui, monospace',
           grid: { stroke: COLORS.grid, width: 1 },
           ticks: { stroke: COLORS.tick, width: 1 },
+          values: (v: number[] | number) => {
+            const arr = Array.isArray(v) ? v : [v];
+            return arr.map(n => {
+              if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+              if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
+              return Math.round(n).toString();
+            });
+          },
         },
       ],
       series: [
@@ -86,22 +126,36 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
           label: 'Events',
           stroke: COLORS.events,
           width: 2,
-          fill: COLORS.events + '20',
-          points: { show: false },
+          fill: COLORS.eventsFill,
+          points: {
+            show: true,
+            size: 2,
+            stroke: COLORS.events,
+            fill: '#0d1117',
+            filter: (self: any, idx: number) => {
+              // Show ~8 points max
+              const total = self.data[1].length;
+              const step = Math.max(1, Math.floor(total / 8));
+              return idx % step === 0;
+            },
+          },
         },
       ],
       cursor: {
         lock: true,
-        points: { size: 5, width: 2 },
-        y: { show: false },
+        points: { size: 6, width: 2, stroke: COLORS.events, fill: '#0d1117' },
+        y: { show: true, size: 6, stroke: COLORS.label, font: '11px monospace' },
       },
-      legend: { show: true },
+      legend: {
+        show: true,
+        mime: false,
+      },
     };
-
-    const seriesData = [times, values];
 
     if (chartRef.current) {
       chartRef.current.setData(seriesData);
+      // Resize in case container changed
+      chartRef.current.resize(width, height, true);
     } else {
       chartRef.current = new uPlot(opts, seriesData, containerRef.current);
     }
@@ -112,7 +166,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
         chartRef.current = null;
       }
     };
-  }, [data, title, height]);
+  }, [seriesData, title, height]);
 
   if (isLoading) {
     return (
