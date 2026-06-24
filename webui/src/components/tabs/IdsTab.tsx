@@ -7,8 +7,11 @@ import { api } from '@/api';
 import type { IdsData } from '@/types';
 import { Eye, AlertTriangle, Shield } from 'lucide-react';
 
+import { IdsSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function IdsTab() {
-  const { data: summary } = useQuery<IdsData['summary']>({
+  const { data: summary, isLoading, isError, error, refetch } = useQuery<IdsData['summary']>({
     queryKey: ['ids-summary'],
     queryFn: api.idsSummary,
     refetchInterval: 30000,
@@ -26,9 +29,8 @@ export default function IdsTab() {
     refetchInterval: 30000,
   });
 
-  if (!summary) {
-    return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
-  }
+  if (isLoading) return <IdsSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="IDS" />;
 
   const totalEvents = summary.total_events ?? 0;
   const sigCount = summary.signatures ?? 0;

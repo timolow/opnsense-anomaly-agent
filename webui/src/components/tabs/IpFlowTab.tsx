@@ -7,14 +7,18 @@ import { api } from '@/api';
 import type { IpFlowData } from '@/types';
 import { Network } from 'lucide-react';
 
+import { IpFlowSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function IpFlowTab() {
-  const { data } = useQuery<IpFlowData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<IpFlowData>({
     queryKey: ['ip-flow'],
     queryFn: api.ipFlow,
     refetchInterval: 30000,
   });
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isLoading) return <IpFlowSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="IP Flow" />;
 
   // Aggregate edges by source-destination pair
   const edgeMap = new Map<string, { source: string; target: string; value: number }>();

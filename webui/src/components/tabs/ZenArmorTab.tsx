@@ -7,8 +7,11 @@ import { api } from '@/api';
 import type { ZenArmorData } from '@/types';
 import { Shield, BarChart3, AlertTriangle, Target } from 'lucide-react';
 
+import { ZenArmorSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function ZenArmorTab() {
-  const { data: summary } = useQuery<ZenArmorData['summary'] | null>({
+  const { data: summary, isLoading: summaryLoading, isError: summaryIsError, error: summaryError, refetch: summaryRefetch } = useQuery<ZenArmorData['summary'] | null>({
     queryKey: ['zenarmor-summary'],
     queryFn: api.zenarmorSummary,
     refetchInterval: 30000,
@@ -26,9 +29,8 @@ export default function ZenArmorTab() {
     refetchInterval: 30000,
   });
 
-  if (!summary) {
-    return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
-  }
+  if (summaryLoading) return <ZenArmorSkeleton />;
+  if (summaryIsError && summaryError) return <TabQueryError error={summaryError} isError={summaryIsError} onRetry={summaryRefetch} tabName="ZenArmor" />;
 
   const totalEvents = summary.total_events ?? 0;
   const policiesCount = summary.policies_count ?? 0;
