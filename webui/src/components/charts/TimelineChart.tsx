@@ -59,8 +59,9 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
           space: 50,
           grid: { show: false },
           ticks: { show: false },
-          values: (splits: number[]) => {
-            return splits.map(val => {
+          values: (splits: number[] | number) => {
+            const arr = Array.isArray(splits) ? splits : [splits];
+            return arr.map(val => {
               const date = new Date(val * 1000);
               const hours = date.getHours().toString().padStart(2, '0');
               const minutes = date.getMinutes().toString().padStart(2, '0');
