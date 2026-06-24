@@ -6,12 +6,16 @@ import { useState } from 'react';
 import { Database, Search, Filter } from 'lucide-react';
 import type { Event } from '@/types';
 
+import { LogsQuerySkeleton } from '../../components/SkeletonLoaders';
+
 export default function LogsQueryTab() {
   const [srcIp, setSrcIp] = useState('');
   const [days, setDays] = useState('7');
   const [results, setResults] = useState<Event[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  if (loading && results.length === 0) return <LogsQuerySkeleton />;
 
   const handleSearch = async () => {
     setLoading(true);

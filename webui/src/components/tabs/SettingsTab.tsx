@@ -7,13 +7,16 @@ import { api } from '@/api';
 import { Settings as SettingsIcon, Save, RefreshCw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
+import { SettingsSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function SettingsTab() {
   const queryClient = useQueryClient();
   const [settings, setSettings] = useState<Record<string, string | number>>({});
   const [saved, setSaved] = useState(false);
 
   // Load current settings
-  const { data: settingsData } = useQuery<Record<string, string | number>>({
+  const { data: settingsData, isLoading, isError, error, refetch } = useQuery<Record<string, string | number>>({
     queryKey: ['settings'],
     queryFn: async () => {
       try {
@@ -23,6 +26,9 @@ export default function SettingsTab() {
       } catch { return {}; }
     },
   });
+
+  if (isLoading) return <SettingsSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Settings" />;
 
   useEffect(() => {
     if (settingsData) setSettings(settingsData);

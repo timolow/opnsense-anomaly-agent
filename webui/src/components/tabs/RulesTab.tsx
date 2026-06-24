@@ -8,9 +8,12 @@ import type { RulesClassifiedData } from '@/types';
 import { Layers, Search, ThumbsUp, ThumbsDown, AlertTriangle, Lightbulb, CheckCircle, XCircle } from 'lucide-react';
 import { useState, useCallback } from 'react';
 
+import { RulesSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function RulesTab() {
   const queryClient = useQueryClient();
-  const { data } = useQuery<RulesClassifiedData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<RulesClassifiedData>({
     queryKey: ['rules-classified'],
     queryFn: () => api.rulesClassified(false),
     refetchInterval: 60000,
@@ -46,7 +49,8 @@ export default function RulesTab() {
     submitFeedback.mutate({ ruleName, label });
   }, [submitFeedback]);
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isLoading) return <RulesSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Firewall Rules" />;
 
   const filtered = data.rules.filter((r) =>
     r.name.toLowerCase().includes(filter.toLowerCase()) ||

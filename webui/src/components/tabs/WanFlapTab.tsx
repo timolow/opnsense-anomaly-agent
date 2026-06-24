@@ -7,8 +7,11 @@ import { api } from '@/api';
 import { Radio, AlertTriangle, RefreshCw } from 'lucide-react';
 import TimelineChart from '../../components/charts/TimelineChart';
 
+import { WanFlapSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function WanFlapTab() {
-  const { data } = useQuery<any>({
+  const { data, isLoading, isError, error, refetch } = useQuery<any>({
     queryKey: ['wan-flap'],
     queryFn: async () => {
       try {
@@ -22,6 +25,9 @@ export default function WanFlapTab() {
 
   const flapData = data?.flaps || [];
   const stats = data?.stats || { total_flaps: 0, last_flap: 'N/A', avg_duration: 'N/A' };
+
+  if (isLoading) return <WanFlapSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="WAN Flap Detection" />;
 
   // Convert flap data to TimelineChart format
   const timelineData = flapData.slice(-24).map((f: { time: string; count: number }) => ({
