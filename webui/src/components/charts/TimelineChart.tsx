@@ -19,7 +19,7 @@ interface TimelineChartProps {
 
 const COLORS = {
   events: '#06b6d4',
-  eventsFill: 'rgba(6, 182, 212, 0.3)',
+  eventsFill: 'rgba(6, 182, 212, 0.5)',
   blocked: '#ff1744',
   blockedFill: 'rgba(255, 23, 68, 0.2)',
   grid: 'rgba(148, 163, 184, 0.15)',

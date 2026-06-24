@@ -82,14 +82,14 @@ function SeverityChart({ data }: { data: StatsData }) {
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 30 }}>
           <XAxis type="number" hide />
-          <YAxis dataKey="name" type="category" width={60} tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} />
+          <YAxis dataKey="name" type="category" width={70} tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} />
           <Tooltip
             contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
             itemStyle={{ fontFamily: 'monospace' }}
           />
-          <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24}>
             {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} style={{ filter: `drop-shadow(0 0 6px ${entry.color}40)` }} />
+              <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Bar>
         </BarChart>

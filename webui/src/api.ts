@@ -227,7 +227,7 @@ export const api = {
   alerts: async (): Promise<AlertsData> => {
     const raw = await json<Array<unknown>>('/alerts');
     const anomalies = raw.map((a: any) => ({
-      timestamp: '',
+      timestamp: a.timestamp || '',
       type: a.attack_type || 'UNKNOWN',
       severity: a.severity || 'MEDIUM',
       source_ip: a.ip || '0.0.0.0',
