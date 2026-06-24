@@ -16,8 +16,6 @@
 #   SYSLOG_ENABLED=true           - agent runs built-in UDP listener on
 #     port 1514, parses syslog, writes to JSONL, feeds detection pipeline
 
-version: "3.8"
-
 services:
   agent:
     # Image to use - set AGENT_IMAGE in .env or via deploy.sh

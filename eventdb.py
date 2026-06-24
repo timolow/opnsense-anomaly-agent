@@ -113,9 +113,33 @@ class EventDatabase:
         """Close the database connection (return to pool)."""
         # No-op with connection pooling — connections are managed by the pool
     
+    class _PoolCursor:
+        """Cursor wrapper that returns the underlying connection to the pool on close()."""
+        __slots__ = ("_conn", "_pool", "_cur")
+        def __init__(self, conn, pool, cur):
+            self._conn = conn
+            self._pool = pool
+            self._cur = cur
+        def execute(self, *a, **kw): return self._cur.execute(*a, **kw)
+        def executemany(self, *a, **kw): return self._cur.executemany(*a, **kw)
+        def fetchone(self): return self._cur.fetchone()
+        def fetchmany(self, *a, **kw): return self._cur.fetchmany(*a, **kw)
+        def fetchall(self): return self._cur.fetchall()
+        def close(self):
+            self._cur.close()
+            try:
+                self._pool.putconn(self._conn)
+            except Exception:
+                pass
+        @property
+        def rowcount(self): return self._cur.rowcount
+        def __getattr__(self, name): return getattr(self._cur, name)
+
     def _new_cursor(self):
-        """Get a new cursor from the connection."""
-        return self.connect().cursor()
+        """Get a new cursor that auto-returns the connection to the pool on close()."""
+        conn = self.connect()
+        cur = conn.cursor()
+        return _PoolCursor(conn, EventDatabase._pool, cur)
     
     def insert_event(self, event_data: Dict[str, Any], raw_message: str = "") -> int:
         """Insert a single parsed event and return its ID."""
