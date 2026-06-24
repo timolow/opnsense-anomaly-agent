@@ -65,10 +65,6 @@ interface AppState {
   Connected: boolean;
   setConnected: (connected: boolean) => void;
 
-  // Per-tab loading/error state (for TabShell)
-  tabLoadingState: Record<string, { loading: boolean; error: string | null }>;
-  setTabLoadingState: (tab: string, state: { loading: boolean; error: string | null }) => void;
-
   // Time range (Grafana-like time selection)
   timeRange: TimeRange;
   setTimeRange: (range: TimeRange) => void;
@@ -103,9 +99,6 @@ export const useStore = create<AppState>((set) => ({
   setQuickFilterType: (type) => set({ quickFilterType: type }),
   Connected: false,
   setConnected: (connected: boolean) => set({ Connected: connected }),
-  tabLoadingState: {},
-  setTabLoadingState: (tab: string, state: { loading: boolean; error: string | null }) =>
-    set((s) => ({ tabLoadingState: { ...s.tabLoadingState, [tab]: state } })),
   timeRange: '24h',
   setTimeRange: (range: TimeRange) => set({ timeRange: range }),
   customTimeRange: undefined,

@@ -39,11 +39,13 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
 
-  // Pre-compute series data as Float64Arrays
+  // Pre-compute series data as Float64Arrays, filtering NaN
   const seriesData = useMemo(() => {
     if (!data.length) return null;
-    const times = new Float64Array(data.map(d => d.time));
-    const values = new Float64Array(data.map(d => d.value));
+    const valid = data.filter(d => Number.isFinite(d.time) && Number.isFinite(d.value));
+    if (!valid.length) return null;
+    const times = new Float64Array(valid.map(d => d.time));
+    const values = new Float64Array(valid.map(d => d.value));
     return [times, values];
   }, [data]);
 

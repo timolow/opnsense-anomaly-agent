@@ -186,10 +186,15 @@ export default function OverviewTab() {
         const result = await api.timeline({ period, granularity, start, end });
 
         if (!cancelled && result.timeline) {
-          const data = result.timeline.map((item) => ({
-            time: Math.floor(new Date(item.time).getTime() / 1000),
-            value: item.count,
-          }));
+          const data = result.timeline
+            .map((item) => {
+              // Handle PG timestamp format "2026-06-17 16:00:00+00:00" (space instead of T)
+              const isoStr = item.time.replace(' ', 'T');
+              const ts = Math.floor(new Date(isoStr).getTime() / 1000);
+              if (!Number.isFinite(ts) || !Number.isFinite(item.count)) return null;
+              return { time: ts, value: item.count };
+            })
+            .filter(Boolean) as { time: number; value: number }[];
           setTimelineData(data);
         }
       } catch (error) {
