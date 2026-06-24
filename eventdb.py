@@ -139,7 +139,7 @@ class EventDatabase:
         """Get a new cursor that auto-returns the connection to the pool on close()."""
         conn = self.connect()
         cur = conn.cursor()
-        return _PoolCursor(conn, EventDatabase._pool, cur)
+        return self._PoolCursor(conn, EventDatabase._pool, cur)
     
     def insert_event(self, event_data: Dict[str, Any], raw_message: str = "") -> int:
         """Insert a single parsed event and return its ID."""
