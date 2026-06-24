@@ -646,14 +646,6 @@ class OPNsenseAgent:
         self._check_startup_health()
         self._start_maintenance_thread()
 
-        # Run an initial backup immediately (don't wait for first scheduled interval)
-        try:
-            logger.info("Running initial database backup on startup...")
-            self._scheduled_backup()
-            self.last_backup = time.time()
-        except Exception as e:
-            logger.warning(f"Initial startup backup failed: {e}")
-
     def _check_startup_health(self):
         """Verify connectivity to critical services before starting."""
         logger.info("Running startup health checks...")
