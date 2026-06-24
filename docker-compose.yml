@@ -20,13 +20,10 @@ version: "3.8"
 
 services:
   agent:
-    # To use a pre-built image from GHCR, set AGENT_IMAGE in .env:
-    #   AGENT_IMAGE=ghcr.io/timolow/opnsense-anomaly-agent:latest
-    # Otherwise docker-compose will build from the Dockerfile
-    image: ${AGENT_IMAGE:-}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Image to use - set AGENT_IMAGE in .env or via deploy.sh
+    # For local dev: docker build -t opnsense-anomaly-agent:latest .
+    # For deploy: deploy.sh builds and sets AGENT_IMAGE automatically
+    image: ${AGENT_IMAGE:-opnsense-anomaly-agent:latest}
     container_name: anomaly-agent
     restart: unless-stopped
     depends_on:
@@ -107,6 +104,29 @@ services:
       - "${CHAT_PORT:-8765}:8765/tcp"
       # Dashboard API server
       - "8766:8766/tcp"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "7"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8766/api/health | python3 -c 'import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get(\"status\") in (\"healthy\",\"active\",\"cold-start\") else 1)' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        order: stop-first
 
   postgres:
     image: postgres:16-alpine
