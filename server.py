@@ -377,9 +377,10 @@ def query_stats():
     ip_data = nc.get("ip_data", {})
     ip_classifications = len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0])
     
-    # 24h action counts for blocked/passed
+    # 24h action counts for blocked/passed + unique IPs
     blocked_24h = 0
     passed_24h = 0
+    unique_ips = ip_classifications  # fallback
     if conn:
         try:
             cur2 = conn.cursor()
@@ -387,6 +388,8 @@ def query_stats():
             blocked_24h = cur2.fetchone()[0]
             cur2.execute("SELECT COUNT(*) FROM events WHERE action = 'PASS' AND timestamp > NOW() - INTERVAL '24 hours'")
             passed_24h = cur2.fetchone()[0]
+            cur2.execute("SELECT COUNT(DISTINCT src_ip) FROM events WHERE timestamp > NOW() - INTERVAL '24 hours' AND src_ip IS NOT NULL AND src_ip != ''")
+            unique_ips = cur2.fetchone()[0]
             cur2.close()
         except Exception:
             pass
@@ -406,6 +409,7 @@ def query_stats():
         "by_severity": by_severity, "top_sources": top_sources[:20],
         "categories": dict(categories), "active_mutes": len(load_mutes()),
         "ip_classifications": ip_classifications,
+        "unique_ips": unique_ips,
         "total_ips": total_events,
         "total_events": db_event_count,
         "time_range": "24h",
@@ -709,6 +713,7 @@ def query_opnsense_status():
             results["opnsense_version"] = "error"
 
         # 1b. System Resources — memory, CPU load, uptime
+        # NOTE: OPNsense 26.4 systemResources only returns 'memory' — no loadavg or uptime.
         results["cpu_usage"] = 0
         results["memory_usage"] = 0
         results["uptime"] = ""
@@ -727,21 +732,19 @@ def query_opnsense_status():
                 used_mem = int(mem.get("used", 0))
                 if total_mem > 0:
                     results["memory_usage"] = round(used_mem / total_mem * 100, 1)
-                # CPU load (1-min average normalized to percentage)
+                # CPU load — try loadavg if present (older OPNsense), otherwise skip
                 load_avg = sys_res.get("loadavg", {})
                 if load_avg:
                     try:
                         load1 = float(load_avg.get("loadavg_1m", load_avg.get("1", 0)))
-                        # FreeBSD exposes load average as fractional CPU utilization
                         results["cpu_usage"] = round(load1 * 100, 1)
                     except (ValueError, TypeError):
                         pass
-                # Uptime
+                # Uptime — try uptime field if present (older OPNsense)
                 uptime_raw = sys_res.get("uptime", {})
                 if isinstance(uptime_raw, dict):
                     uptime_secs = int(uptime_raw.get("raw", 0))
                     results["uptime_seconds"] = uptime_secs
-                    # Format human-readable
                     days = uptime_secs // 86400
                     hours = (uptime_secs % 86400) // 3600
                     mins = (uptime_secs % 3600) // 60
@@ -753,6 +756,33 @@ def query_opnsense_status():
                         results["uptime"] = f"{mins}m"
         except Exception as e:
             print(f"OPNsense system resources failed: {e}")
+
+        # 1c. CPU load average + uptime via last_check timestamp fallback
+        # OPNsense 26.4 dropped loadavg/uptime from systemResources.
+        # Estimate uptime from firmware last_check and use service count as proxy.
+        if results["cpu_usage"] == 0 or not results["uptime"]:
+            try:
+                req = urllib.request.Request(
+                    f"{opn_url}/api/core/firmware/status",
+                    headers={"Authorization": auth_header},
+                )
+                with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                    fw_data = json.loads(resp.read().decode())
+                if isinstance(fw_data, dict):
+                    # Estimate uptime from last_check timestamp
+                    last_check = fw_data.get("last_check", "")
+                    if last_check:
+                        try:
+                            from datetime import datetime
+                            # Parse "Wed Jun 24 10:12:36 CDT 2026"
+                            check_time = datetime.strptime(last_check, "%a %b %d %H:%M:%S %Z %Y")
+                            now = datetime.now(check_time.tzinfo)
+                            uptime_secs = int((now - check_time).total_seconds())
+                            # last_check is when last update check ran, not boot time — skip
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"OPNsense firmware fallback failed: {e}")
 
         # 2. Interfaces - get IPv4/6 addresses, up/down status
         results["interfaces"] = []
@@ -1011,7 +1041,7 @@ def query_alerts():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT src_ip, COUNT(*) as cnt, COUNT(DISTINCT dst_ip) as unique_dst, interface
+            SELECT src_ip, COUNT(*) as cnt, COUNT(DISTINCT dst_ip) as unique_dst, interface, MAX(timestamp) as latest_timestamp
             FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY src_ip, interface
             HAVING COUNT(*) > 1000
@@ -1023,7 +1053,16 @@ def query_alerts():
         for row in rows:
             cnt = row["cnt"]
             severity = "CRITICAL" if cnt > 10000 else "WARNING"
-            alerts.append({"ip": row["src_ip"], "attack_type": f"{classify_interface(row['interface'])} traffic", "count": cnt, "severity": severity, "unique_destinations": row["unique_dst"], "interface": row["interface"]})
+            alerts.append({
+                "ip": row["src_ip"] or "0.0.0.0",
+                "attack_type": f"{classify_interface(row['interface'])} traffic",
+                "count": cnt,
+                "severity": severity,
+                "unique_destinations": row["unique_dst"],
+                "interface": row["interface"],
+                "timestamp": str(row["latest_timestamp"]) if row["latest_timestamp"] else "",
+                "_fix": "v2",  # debug marker
+            })
         return alerts
     except Exception as e:
         print(f"Alerts query failed: {e}")
