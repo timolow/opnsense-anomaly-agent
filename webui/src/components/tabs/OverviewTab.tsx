@@ -13,8 +13,6 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useStore } from '../../store';
 import TimelineChart from '../../components/charts/TimelineChart';
-import { QueryErrorState } from '../TabErrorBoundary';
-import { TabQueryWrapper } from '../../components/TabQueryWrapper';
 
 function StatBox({ value, label, color, change }: {
   value: string | number;
@@ -144,27 +142,14 @@ export default function OverviewTab() {
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [sseTimelineData, setSSETimelineData] = useState<{ time: number; value: number }[]>([]);
 
-  const { data: stats, isLoading: statsLoading, isError: statsError, error: statsErrorObj, refetch: refetchStats } = useQuery<StatsData>({
+  const { data: stats } = useQuery<StatsData>({
     queryKey: ['stats'],
     queryFn: api.stats,
   });
-  const { data: alerts, isError: alertsError, error: alertsErrorObj, refetch: refetchAlerts } = useQuery<AlertsData>({
+  const { data: alerts } = useQuery<AlertsData>({
     queryKey: ['alerts'],
     queryFn: api.alerts,
   });
-
-  // Show error state for the first query that fails
-  if (statsError) return <QueryErrorState error={statsErrorObj} isError={statsError} onRetry={refetchStats} tabName="Overview" />;
-  if (alertsError) return <QueryErrorState error={alertsErrorObj} isError={alertsError} onRetry={refetchAlerts} tabName="Overview" />;
-
-  // Show loading state while stats are being fetched
-  if (statsLoading || !stats) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
-      </div>
-    );
-  }
 
   // Fetch timeline data based on time range
   useEffect(() => {
@@ -292,10 +277,17 @@ export default function OverviewTab() {
       .sort((a, b) => a.time - b.time);
   }, [timelineData, sseTimelineData]);
 
+  if (!stats) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
+      </div>
+    );
+  }
+
   return (
-    <TabQueryWrapper tab="overview" isLoading={statsLoading} isError={statsError} error={statsErrorObj} onRetry={refetchStats}>
-      <div className="space-y-6">
-        <ThreatSummary data={stats} />
+    <div className="space-y-6">
+      <ThreatSummary data={stats} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatBox value={(stats.events_24h || 0).toLocaleString()} label="Events (24h)" change={{ value: 12, positive: true }} />
@@ -323,7 +315,6 @@ export default function OverviewTab() {
         </div>
         <ActivityFeed alerts={alerts || { anomalies: [] }} />
       </div>
-      </div>
-    </TabQueryWrapper>
+    </div>
   );
 }

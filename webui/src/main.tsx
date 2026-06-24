@@ -10,7 +10,6 @@ const queryClient = new QueryClient({
       refetchInterval: 30000,
       staleTime: 10000,
       retry: 2,
-      networkMode: 'online',
     },
   },
 });

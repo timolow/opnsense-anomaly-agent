@@ -6,11 +6,9 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { IdsData } from '@/types';
 import { Eye, AlertTriangle, Shield } from 'lucide-react';
-import { TabSkeleton } from '../SkeletonLoaders';
-import { QueryErrorState } from '../TabErrorBoundary';
 
 export default function IdsTab() {
-  const { data: summary, error: summaryError, isError: summaryIsError, refetch: refetchSummary } = useQuery<IdsData['summary']>({
+  const { data: summary } = useQuery<IdsData['summary']>({
     queryKey: ['ids-summary'],
     queryFn: api.idsSummary,
     refetchInterval: 30000,
@@ -28,9 +26,8 @@ export default function IdsTab() {
     refetchInterval: 30000,
   });
 
-  if (summaryIsError && summaryError) return <QueryErrorState error={summaryError} isError={summaryIsError} onRetry={refetchSummary} tabName="IDS" />;
   if (!summary) {
-    return <TabSkeleton tab="ids" />;
+    return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
   }
 
   const totalEvents = summary.total_events ?? 0;
