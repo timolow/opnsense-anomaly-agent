@@ -331,41 +331,14 @@ class BaselineEngine:
         try:
             conn = self.db.connect()
             cur = conn.cursor()
-            
-            # Migration: ensure new columns exist alongside legacy ones
-            cur.execute("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                        WHERE table_name='rule_baselines' AND column_name='rule') THEN
-                        ALTER TABLE rule_baselines ADD COLUMN rule TEXT;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                        WHERE table_name='rule_baselines' AND column_name='ip') THEN
-                        ALTER TABLE rule_baselines ADD COLUMN ip TEXT;
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                        WHERE table_name='rule_baselines' AND column_name='hour') THEN
-                        ALTER TABLE rule_baselines ADD COLUMN hour INTEGER;
-                    END IF;
-                    -- Drop conflicting unique constraint on legacy column
-                    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rule_baselines_rule_name_key') THEN
-                        ALTER TABLE rule_baselines DROP CONSTRAINT rule_baselines_rule_name_key;
-                    END IF;
-                    -- Add composite unique on new columns
-                    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rule_baselines_rule_key') THEN
-                        ALTER TABLE rule_baselines ADD CONSTRAINT rule_baselines_rule_key UNIQUE (rule, ip, hour);
-                    END IF;
-                END $$;
-            """)
-            
+
             for key, baseline in self._baselines.items():
                 try:
                     cur.execute("""
-                        INSERT INTO rule_baselines 
+                        INSERT INTO rule_baselines
                         (rule, ip, hour, avg_events_per_hour, std_events_per_hour,
                          max_events_per_hour, min_events_per_hour, protocol_distribution,
-                         avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio, 
+                         avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio,
                          block_ratio, hourly_distribution, sample_count, last_updated)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (rule, ip, hour) DO UPDATE SET
@@ -402,7 +375,7 @@ class BaselineEngine:
                     ))
                 except Exception as e:
                     logger.error(f"Failed to save baseline for {baseline.rule}: {e}")
-            
+
             cur.close()
             logger.info(f"Saved {len(self._baselines)} baselines to database")
         except Exception as e:

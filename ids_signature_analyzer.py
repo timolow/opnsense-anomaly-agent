@@ -21,12 +21,10 @@ This complements the attack detectors by adding IDS-specific analysis
 on top of the existing event pipeline.
 """
 
-import os
-import json
 import logging
 from datetime import datetime, timezone, timedelta
-from collections import defaultdict, Counter
-from typing import Dict, Any, List, Optional, Set, Tuple
+from collections import Counter
+from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -297,61 +295,5 @@ class IDSSignatureAnalyzer:
             ],
         }
 
-    def save_state(self, filepath: str = None):
-        """Save signature profiles to disk."""
-        if filepath is None:
-            base_dir = os.environ.get("AGENT_DATA_DIR", "/app/agent_data")
-            filepath = os.path.join(base_dir, "ids_state.json")
-        
-        state = {
-            'signatures': {name: {
-                'name': p.name,
-                'priority': p.priority,
-                'trigger_count': p.trigger_count,
-                'first_seen': p.first_seen.isoformat() if p.first_seen else None,
-                'last_seen': p.last_seen.isoformat() if p.last_seen else None,
-                'trigger_history': p._trigger_history,
-            } for name, p in self.signatures.items()},
-            'summary': self.get_summary(),
-            'total_events': self.total_events,
-            'events_with_signature': self.events_with_signature,
-            'events_without_signature': self.events_without_signature,
-        }
-        
-        with open(filepath, 'w') as f:
-            json.dump(state, f, indent=2, default=str)
-        logger.info("IDS analyzer state saved to %s", filepath)
-
-    def load_state(self, filepath: str = None):
-        """Load signature profiles from disk."""
-        if filepath is None:
-            base_dir = os.environ.get("AGENT_DATA_DIR", "/app/agent_data")
-            filepath = os.path.join(base_dir, "ids_state.json")
-        
-        if not os.path.exists(filepath):
-            logger.info("No IDS state file found at %s", filepath)
-            return
-        
-        try:
-            with open(filepath, 'r') as f:
-                state = json.load(f)
-            
-            for name, data in state.get('signatures', {}).items():
-                profile = IDSSignature(
-                    name=data['name'],
-                    priority=data.get('priority', 0),
-                    trigger_count=data.get('trigger_count', 0),
-                )
-                profile.first_seen = datetime.fromisoformat(data['first_seen']) if data.get('first_seen') else None
-                profile.last_seen = datetime.fromisoformat(data['last_seen']) if data.get('last_seen') else None
-                profile._trigger_history = data.get('trigger_history', [])
-                self.signatures[name] = profile
-            
-            self.total_events = state.get('total_events', 0)
-            self.events_with_signature = state.get('events_with_signature', 0)
-            self.events_without_signature = state.get('events_without_signature', 0)
-            
-            logger.info("IDS analyzer state loaded from %s (%d signatures)",
-                       filepath, len(self.signatures))
-        except Exception as e:
-            logger.error("Failed to load IDS state: %s", e)
+    # State persistence is handled centrally by StatePersistence in state_persistence.py
+    # (saves to state.json alongside all other agent modules)

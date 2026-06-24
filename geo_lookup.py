@@ -382,11 +382,11 @@ class GeoAnomalyDetector:
 
 class GeoLookup:
     """Thin wrapper around GeoAnomalyDetector providing the GeoLookup interface."""
-    
+
     def __init__(self, db_path=None):
         self._detector = GeoAnomalyDetector()
         self.country_events = self._detector._country_events
-    
+
     def check_event(self, event):
         """Check event for geo anomalies. Returns detection dict or None."""
         try:
@@ -394,6 +394,21 @@ class GeoLookup:
         except Exception as e:
             logger.warning("Geo lookup error: %s", e)
             return None
-    
+
+    def check_events_batch(self, events: List[Dict]) -> List[Dict]:
+        """Check a batch of events for geo anomalies.
+
+        Returns a list of detection dicts (non-None results only).
+        """
+        results = []
+        for event in events:
+            try:
+                detection = self._detector.process_event(event)
+                if detection is not None:
+                    results.append(detection)
+            except Exception as e:
+                logger.warning("Geo lookup batch error: %s", e)
+        return results
+
     def is_available(self):
         return self._detector.is_available()

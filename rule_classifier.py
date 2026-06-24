@@ -507,7 +507,12 @@ class RuleClassifier:
         else:
             self.events_without_rule += 1
             self._update_traffic_baseline(action, src_ip, dst_ip, dst_port)
-    
+
+    def process_events(self, events: List[Dict[str, Any]]):
+        """Process a batch of events and update rule profiles."""
+        for event in events:
+            self.process_event(event)
+
     def _update_rule_profile(self, rule_name: str, action: str,
                              src_ip: Optional[str], dst_ip: Optional[str],
                              dst_port: Optional[int], timestamp: Optional[datetime]):

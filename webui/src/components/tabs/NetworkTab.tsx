@@ -1,16 +1,24 @@
 // ═══════════════════════════════════════════════════
 // Network Tab - Interactive network topology dashboard
+// Performance-optimized for 200+ nodes via:
+//   - Node pagination (top-N by count)
+//   - Edge filtering (top-N by weight, prevents O(N²))
+//   - Non-mutating hover highlight (nodeColor callback)
+//   - Adaptive simulation params (cooldownTicks, link force)
+//   - Canvas draw optimization (skip glow/labels for high counts)
 // ═══════════════════════════════════════════════════
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ForceGraph2D from 'react-force-graph-2d';
+import { forceLink } from 'd3-force';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { api } from '@/api';
 import type { IpFlowData } from '@/types';
+import { TabQueryWrapper } from '../../components/TabQueryWrapper';
 import {
   Network, Activity, Globe, Shield, Server, Wifi, Radio,
   ArrowUpRight, ArrowDownRight, Eye, MousePointer2,
@@ -51,18 +59,36 @@ function StatCard({ title, value, subtitle, icon, color, trend }: {
   );
 }
 
-// ── Force Graph Component ──
-function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
+// ── Force Graph Component (performance-optimized) ──
+function NetworkGraph({ nodes, edges, maxNodes, activeCategories, totalNodeCount, totalEdgeCount }: {
+  nodes: any[]; edges: any[]; maxNodes?: number; activeCategories?: Set<string>; totalNodeCount?: number; totalEdgeCount?: number;
+}) {
   const graphRef = useRef<any>(null);
-  const [hoveredNode, setHoveredNode] = useState<any>(null);
-  const [showControls, setShowControls] = useState(true);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set());
+  const [zoom, setZoom] = useState(1);
 
-  // Prepare graph data
+  // Sort nodes by count desc so top nodes always appear when paginated
+  const sortedNodes = useMemo(() => {
+    return [...nodes].sort((a, b) => (b.count || 0) - (a.count || 0));
+  }, [nodes]);
+
+  // Apply category filter + pagination (top-N by count)
+  const filteredNodes = useMemo(() => {
+    let result = sortedNodes;
+    if (activeCategories && activeCategories.size > 0) {
+      result = result.filter(n => activeCategories.has(n.category));
+    }
+    const limit = maxNodes ?? result.length;
+    return result.slice(0, limit);
+  }, [sortedNodes, maxNodes, activeCategories]);
+
+  // Prepare graph data with EDGE FILTERING (top-N by weight)
   const graphData = useMemo(() => {
     const nodeMap = new Map<string, any>();
 
-    // Add nodes
-    nodes.forEach(node => {
+    // Add visible nodes
+    filteredNodes.forEach(node => {
       const id = node.id || node.label;
       nodeMap.set(id, {
         id,
@@ -74,84 +100,185 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
       });
     });
 
-    // Add edges
-    const graphEdges = edges.filter(edge => {
-      const src = nodeMap.has(edge.source);
-      const tgt = nodeMap.has(edge.target);
-      return src && tgt;
-    }).map(edge => ({
+    // Filter edges: only between visible nodes
+    const visibleEdges = edges.filter(edge =>
+      nodeMap.has(edge.source) && nodeMap.has(edge.target)
+    );
+
+    // Edge pagination: sort by weight, keep top-N
+    // This prevents O(N²) edge explosion with hundreds of nodes
+    const nodeCount = nodeMap.size;
+    const maxEdges = nodeCount > 200 ? 500 : nodeCount > 100 ? 300 : visibleEdges.length;
+    const sortedEdges = [...visibleEdges].sort((a, b) => (b.value || 0) - (a.value || 0));
+    const paginatedEdges = sortedEdges.slice(0, maxEdges);
+
+    const graphEdges = paginatedEdges.map(edge => ({
       source: edge.source,
       target: edge.target,
       weight: edge.value || 1,
       color: COLORS[edge.source?.category || 'UNKNOWN'],
     }));
 
-    return { nodes: Array.from(nodeMap.values()), links: graphEdges };
-  }, [nodes, edges]);
+    return { nodes: Array.from(nodeMap.values()), links: graphEdges, edgeCount: graphEdges.length };
+  }, [filteredNodes, edges]);
 
-  const getNodeColor = (node: any) => node.color || '#64748b';
+  // Adaptive simulation params based on node count
+  const nodeCount = graphData.nodes.length;
+  const linkCount = graphData.edgeCount;
+  // Aggressive cooldown reduction for large graphs:
+  // 200+ nodes -> 20 ticks (quick initial layout only)
+  // 100-200 nodes -> 50 ticks
+  // <100 nodes -> 150 ticks (full simulation)
+  const cooldownTicks = nodeCount > 200 ? 20 : nodeCount > 100 ? 50 : 150;
+  const linkDistance = Math.max(20, Math.min(60, 3000 / Math.max(nodeCount, 10)));
+
   const getLinkColor = (link: any) => {
     const baseColor = link.color || '#64748b';
-    return baseColor + '40'; // Add transparency
+    return baseColor + '40';
   };
 
-  const getNodeCanvasObjectDraw = useCallback((node: any, ctx: any, color: string, scale: number) => {
-    const label = node.label || node.id;
-    const fontSize = 8;
-    const textWidth = ctx.measureText(label).width;
+  // Node color callback for hover highlighting (no mutation!)
+  // Replaces the old onNodeHover mutation pattern which triggered simulation recalc
+  const getNodeColor = useCallback((node: any) => {
+    if (!hoveredNodeId) {
+      return node.color || '#64748b';
+    }
+    // Dim unconnected nodes, keep connected nodes bright
+    const isConnected = connectedIds.has(node.id);
+    const baseColor = node.color || '#64748b';
+    // Apply opacity via hex alpha channel (no re-render since node object unchanged)
+    return isConnected ? baseColor : baseColor + '25';
+  }, [hoveredNodeId, connectedIds]);
 
-    // Draw glow effect
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
+  // Optimized canvas draw: skip expensive ops for high node counts
+  const getNodeCanvasObjectDraw = useCallback((node: any, ctx: any, globalScale: number) => {
+    const nodeColor = node.color || '#64748b';
+    const isDimmed = hoveredNodeId && !connectedIds.has(node.id);
+
+    // Glow: only for larger nodes AND when not too many nodes (expensive!)
+    if (node.size >= 10 && nodeCount <= 100 && !isDimmed) {
+      ctx.shadowColor = nodeColor;
+      ctx.shadowBlur = 8;
+    } else {
+      ctx.shadowBlur = 0;
+    }
+
     ctx.beginPath();
     ctx.arc(node.x || 0, node.y || 0, node.size, 0, 2 * Math.PI);
-    ctx.fillStyle = color + '80';
+
+    // Fill with alpha for dimming (canvas-level, no state mutation)
+    if (isDimmed) {
+      ctx.fillStyle = nodeColor + '25';
+    } else {
+      ctx.fillStyle = nodeColor + '80';
+    }
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Draw label
-    ctx.font = `${fontSize}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillText(label, node.x || 0, node.y || 0);
-  }, []);
+    // Label threshold: only draw labels for larger nodes OR when zoomed in > 2x
+    // Skip labels entirely when node count is high (performance)
+    const maxNodesForLabels = nodeCount > 150 ? 12 : nodeCount > 80 ? 8 : 6;
+    const showLabel = node.size >= maxNodesForLabels || globalScale > 2;
+    if (showLabel && !isDimmed) {
+      const label = node.label || node.id;
+      const fontSize = 8;
+      ctx.font = `${fontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText(label, node.x || 0, (node.y || 0) - node.size - 4);
+    }
+  }, [hoveredNodeId, connectedIds, nodeCount]);
+
+  // Hover handler: compute connected IDs without mutating graph data
+  const handleNodeHover = useCallback((node: any) => {
+    if (node) {
+      setHoveredNodeId(node.id);
+      const connected = new Set<string>();
+      connected.add(node.id);
+      graphData.links.forEach((link: any) => {
+        if (link.source.id === node.id) connected.add(link.target.id);
+        if (link.target.id === node.id) connected.add(link.source.id);
+      });
+      setConnectedIds(connected);
+    } else {
+      setHoveredNodeId(null);
+      setConnectedIds(new Set());
+    }
+  }, [graphData.links]);
+
+  // Configure d3 force simulation params via instance methods
+  // (linkDistance, linkStrength are NOT React props in react-force-graph-2d v1.29+)
+  useEffect(() => {
+    const fg = graphRef.current;
+    if (!fg) return;
+    // Create a properly configured link force instance
+    const linkStrengthVal = nodeCount > 100 ? 0.2 : 0.5;
+    fg.d3Force('link', forceLink().distance(linkDistance).strength(linkStrengthVal));
+  }, [nodeCount, linkDistance]);
+
+  // Find hovered node data for tooltip
+  const hoveredNodeData = hoveredNodeId ? graphData.nodes.find((n: any) => n.id === hoveredNodeId) : null;
+
+  const visibleCount = graphData.nodes.length;
 
   return (
     <div className="relative">
       {/* Graph Controls */}
-      {showControls && (
-        <div className="absolute top-2 right-2 z-10 flex gap-2">
-          <button
-            onClick={() => graphRef.current?.zoomIn()}
-            className="w-8 h-8 rounded-md bg-cyber-panel border border-cyber-border flex items-center justify-center text-cyber-textMuted hover:text-cyber-accent hover:border-cyber-accent/50"
-            title="Zoom In"
-          >
-            <Maximize2 size={12} />
-          </button>
-          <button
-            onClick={() => graphRef.current?.zoomOut()}
-            className="w-8 h-8 rounded-md bg-cyber-panel border border-cyber-border flex items-center justify-center text-cyber-textMuted hover:text-cyber-accent hover:border-cyber-accent/50"
-            title="Zoom Out"
-          >
-            <Minimize2 size={12} />
-          </button>
-          <button
-            onClick={() => graphRef.current?.centerAt(600, 300).zoom(1)}
-            className="w-8 h-8 rounded-md bg-cyber-panel border border-cyber-border flex items-center justify-center text-cyber-textMuted hover:text-cyber-accent hover:border-cyber-accent/50"
-            title="Reset View"
-          >
-            <Eye size={12} />
-          </button>
+      <div className="absolute top-2 right-2 z-10 flex gap-2">
+        <button
+          onClick={() => { graphRef.current?.zoomIn(); setZoom(z => z * 1.2); }}
+          className="w-8 h-8 rounded-md bg-cyber-panel border border-cyber-border flex items-center justify-center text-cyber-textMuted hover:text-cyber-accent hover:border-cyber-accent/50"
+          title="Zoom In"
+        >
+          <Maximize2 size={12} />
+        </button>
+        <button
+          onClick={() => { graphRef.current?.zoomOut(); setZoom(z => z / 1.2); }}
+          className="w-8 h-8 rounded-md bg-cyber-panel border border-cyber-border flex items-center justify-center text-cyber-textMuted hover:text-cyber-accent hover:border-cyber-accent/50"
+          title="Zoom Out"
+        >
+          <Minimize2 size={12} />
+        </button>
+        <button
+          onClick={() => { graphRef.current?.centerAt(600, 300).zoom(1); setZoom(1); }}
+          className="w-8 h-8 rounded-md bg-cyber-panel border border-cyber-border flex items-center justify-center text-cyber-textMuted hover:text-cyber-accent hover:border-cyber-accent/50"
+          title="Reset View"
+        >
+          <Eye size={12} />
+        </button>
+      </div>
+
+      {/* Node + Edge Count Badge */}
+      <div className="absolute top-2 left-2 z-10 flex items-center gap-2">
+        <div className="cyber-card px-3 py-1.5 text-xs font-mono flex items-center gap-2">
+          <span className="text-cyber-textMuted">{visibleCount} nodes</span>
+          {totalNodeCount && totalNodeCount > visibleCount && (
+            <>
+              <span className="text-cyber-textMuted/50">/</span>
+              <span className="text-cyber-textMuted/50">{totalNodeCount} total</span>
+            </>
+          )}
+          <span className="text-cyber-textMuted/50">·</span>
+          <span className="text-cyber-textMuted">{linkCount} edges</span>
+          {totalEdgeCount && totalEdgeCount > linkCount && (
+            <>
+              <span className="text-cyber-textMuted/50">/</span>
+              <span className="text-cyber-textMuted/50">{totalEdgeCount}</span>
+            </>
+          )}
+          {nodeCount > 100 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyber-accent/10 text-cyber-accent">optimized</span>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Hover Info */}
-      {hoveredNode && (
-        <div className="absolute top-2 left-2 z-10 cyber-card p-3 text-xs font-mono">
-          <div className="font-semibold" style={{ color: hoveredNode.color }}>{hoveredNode.label}</div>
-          <div className="text-cyber-textMuted">Category: {hoveredNode.category}</div>
-          <div className="text-cyber-textMuted">Events: {(hoveredNode.count || 0).toLocaleString()}</div>
+      {hoveredNodeData && (
+        <div className="absolute bottom-2 left-2 z-10 cyber-card p-3 text-xs font-mono max-w-[280px]">
+          <div className="font-semibold" style={{ color: hoveredNodeData.color }}>{hoveredNodeData.label}</div>
+          <div className="text-cyber-textMuted">Category: {hoveredNodeData.category}</div>
+          <div className="text-cyber-textMuted">Events: {(hoveredNodeData.count || 0).toLocaleString()}</div>
         </div>
       )}
 
@@ -159,35 +286,18 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
       <div className="cyber-card p-4 scanlines" style={{ height: '150px' }}>
         <ForceGraph2D
           ref={graphRef}
-          graphData={graphData}
+          graphData={{ nodes: graphData.nodes, links: graphData.links }}
           nodeLabel="label"
           nodeCanvasObject={getNodeCanvasObjectDraw}
+          nodeColor={getNodeColor}
           linkColor={getLinkColor}
           linkWidth={(link: any) => Math.max(0.5, Math.min(3, (link.weight || 1) / 20))}
           linkDirectionalArrowLength={(link: any) => Math.max(4, (link.weight || 1) / 5)}
           linkDirectionalArrowRelPos={1}
           linkCurvature={0.15}
-          onNodeHover={(node) => {
-            setHoveredNode(node || null);
-            if (node) {
-              // Highlight connected nodes
-              const connectedIds = new Set<string>();
-              connectedIds.add(node.id);
-              graphData.links.forEach((link: any) => {
-                if (link.source.id === node.id) connectedIds.add(link.target.id);
-                if (link.target.id === node.id) connectedIds.add(link.source.id);
-              });
-              graphData.nodes.forEach((n: any) => {
-                n.opacity = connectedIds.has(n.id) ? 1 : 0.2;
-              });
-            } else {
-              graphData.nodes.forEach((n: any) => { n.opacity = 1; });
-            }
-          }}
-          cooldownTicks={150}
-          d3Force="forceLink"
-          linkForce={-0.5}
-          nodeRelSize={8}
+          onNodeHover={handleNodeHover}
+          cooldownTicks={cooldownTicks}
+          nodeRelSize={Math.max(4, Math.min(8, 800 / Math.max(nodeCount, 10)))}
           width={1200}
           height={450}
         />
@@ -392,7 +502,7 @@ function TopSourcesTable({ stats }: { stats: any }) {
 
 // ── Main NetworkTab Component ──
 export default function NetworkTab() {
-  const { data: flowData } = useQuery<IpFlowData>({
+  const { data: flowData, isLoading: flowLoading, isError: flowError, error: flowErrorObj, refetch: refetchFlow } = useQuery<IpFlowData>({
     queryKey: ['ip-flow'],
     queryFn: api.ipFlow,
     refetchInterval: 30000,
@@ -404,31 +514,98 @@ export default function NetworkTab() {
     refetchInterval: 30000,
   });
 
-  if (!flowData || !stats) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
-      </div>
-    );
-  }
+  // Pagination state
+  const [maxNodes, setMaxNodes] = useState(50);
+  const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
 
-  const nodes = flowData.nodes.slice(0, 30);
-  const edges = flowData.edges.slice(0, 60);
-  const totalEvents = edges.reduce((sum, e) => sum + (e.value || 0), 0);
-  const uniqueNodes = new Set(nodes.map(n => n.id)).size;
-  const categories = Array.from(new Set(nodes.map(n => n.category))).length;
+  // Toggle category filter
+  const toggleCategory = useCallback((cat: string) => {
+    setActiveCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) {
+        next.delete(cat);
+      } else {
+        next.add(cat);
+      }
+      return next;
+    });
+  }, []);
+
+  // Select all / clear all categories
+  const allCategories = flowData ? Array.from(new Set(flowData.nodes.map(n => n.category))) : [];
+  const selectAllCategories = () => setActiveCategories(new Set(allCategories));
+  const clearCategories = () => setActiveCategories(new Set());
+
+  // Pass ALL data -- NetworkGraph handles filtering internally
+  const allNodes = flowData?.nodes ?? [];
+  const allEdges = flowData?.edges ?? [];
+  const totalEvents = allEdges.reduce((sum, e) => sum + (e.value || 0), 0);
+  const uniqueNodes = new Set(allNodes.map(n => n.id)).size;
+  const categoryList = Array.from(new Set(allNodes.map(n => n.category)));
 
   return (
+    <TabQueryWrapper tab="network" isLoading={flowLoading} isError={flowError} error={flowErrorObj} onRetry={refetchFlow}>
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
-          <Network size={16} className="text-cyber-accent" />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
+            <Network size={16} className="text-cyber-accent" />
+          </div>
+          <h2 className="text-lg font-bold">Network Topology</h2>
+          <span className="text-xs text-cyber-textMuted font-mono">
+            {uniqueNodes} nodes · {allEdges.length} connections · {(totalEvents || 0).toLocaleString()} events
+          </span>
         </div>
-        <h2 className="text-lg font-bold">Network Topology</h2>
-        <span className="text-xs text-cyber-textMuted font-mono">
-          {uniqueNodes} nodes · {edges.length} connections · {(totalEvents || 0).toLocaleString()} events
-        </span>
+
+        {/* Pagination Slider */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-cyber-textMuted font-mono">Show top:</span>
+          <input
+            type="range"
+            min={10}
+            max={Math.min(500, allNodes.length)}
+            step={10}
+            value={maxNodes}
+            onChange={e => setMaxNodes(Number(e.target.value))}
+            className="w-32 accent-cyber-accent"
+          />
+          <span className="text-xs font-mono text-cyber-accent w-10">{maxNodes}</span>
+        </div>
+      </div>
+
+      {/* Category Filters */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-cyber-textMuted font-mono mr-2">Filter:</span>
+        <button
+          onClick={activeCategories.size > 0 ? clearCategories : selectAllCategories}
+          className={`text-xs px-2 py-1 rounded font-mono border transition-colors ${
+            activeCategories.size === 0
+              ? 'bg-cyber-accent/10 border-cyber-accent/30 text-cyber-accent'
+              : 'bg-cyber-panel border-cyber-border text-cyber-textMuted hover:border-cyber-accent/30'
+          }`}
+        >
+          {activeCategories.size > 0 ? 'Clear filters' : 'All' }
+        </button>
+        {categoryList.map(cat => {
+          const isActive = activeCategories.size === 0 || activeCategories.has(cat);
+          const color = COLORS[cat] || '#64748b';
+          return (
+            <button
+              key={cat}
+              onClick={() => toggleCategory(cat)}
+              className={`text-xs px-2 py-1 rounded font-mono border transition-colors flex items-center gap-1.5 ${
+                isActive
+                  ? 'bg-cyber-panelHover border-cyber-border'
+                  : 'bg-cyber-panel/50 border-cyber-border/30 opacity-50'
+              }`}
+              style={isActive ? {} : {}}
+            >
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+              <span className={isActive ? 'text-cyber-text' : 'text-cyber-textMuted/50'}>{cat}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Stat Cards */}
@@ -450,7 +627,7 @@ export default function NetworkTab() {
         />
         <StatCard
           title="Categories"
-          value={categories}
+          value={categoryList.length}
           subtitle="Traffic types"
           icon={<Globe size={14} className="text-cyber-green" />}
           color="#00ff88"
@@ -465,7 +642,14 @@ export default function NetworkTab() {
       </div>
 
       {/* Main Visualization */}
-      <NetworkGraph nodes={nodes} edges={edges} />
+      <NetworkGraph
+        nodes={allNodes}
+        edges={allEdges}
+        maxNodes={maxNodes}
+        activeCategories={activeCategories}
+        totalNodeCount={uniqueNodes}
+        totalEdgeCount={allEdges.length}
+      />
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -479,5 +663,6 @@ export default function NetworkTab() {
         <TopSourcesTable stats={stats} />
       </div>
     </div>
+    </TabQueryWrapper>
   );
 }

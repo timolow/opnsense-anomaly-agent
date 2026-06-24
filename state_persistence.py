@@ -44,7 +44,7 @@ class StatePersistence:
         
         try:
             state = {
-                "version": 1,
+                "version": 2,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "agent_counters": {
                     "event_count": agent.event_count,
@@ -59,8 +59,11 @@ class StatePersistence:
                 "geo_detector": self._save_geo_detector(agent),
                 "reverse_dns": self._save_reverse_dns(agent),
                 "system_log_classifier": self._save_system_log_classifier(agent),
+                "zenarmor_classifier": self._save_zenarmor_classifier(agent),
+                "ids_analyzer": self._save_ids_analyzer(agent),
+                "nginx_monitor": self._save_nginx_monitor(agent),
             }
-            
+
             with open(self.state_file, "w") as f:
                 json.dump(state, f, indent=2, default=str)
             
@@ -102,6 +105,9 @@ class StatePersistence:
             self._load_geo_detector(agent, state.get("geo_detector", {}))
             self._load_reverse_dns(agent, state.get("reverse_dns", {}))
             self._load_system_log_classifier(agent, state.get("system_log_classifier", {}))
+            self._load_zenarmor_classifier(agent, state.get("zenarmor_classifier", {}))
+            self._load_ids_analyzer(agent, state.get("ids_analyzer", {}))
+            self._load_nginx_monitor(agent, state.get("nginx_monitor", {}))
             
             logger.info("Agent state loaded successfully")
             
@@ -538,6 +544,213 @@ class StatePersistence:
         
         if loaded > 0:
             logger.info("Restored geo detector data: %d entries", loaded)
+    
+    # ── ZenArmorClassifier persistence ───────────────────────────────
+    
+    def _save_zenarmor_classifier(self, agent) -> Dict:
+        """Save ZenArmor policy classifier data."""
+        if not hasattr(agent, "zenarmor_classifier") or not agent.zenarmor_classifier:
+            return {}
+        
+        zac = agent.zenarmor_classifier
+        data = {}
+        
+        # Save policy profiles
+        policies = {}
+        for name, profile in zac.policies.items():
+            policies[name] = {
+                "name": profile.name,
+                "actions": dict(profile.actions),
+                "total_events": profile.total_events,
+                "first_seen": profile.first_seen.isoformat() if profile.first_seen else None,
+                "last_seen": profile.last_seen.isoformat() if profile.last_seen else None,
+                "action_history": profile._action_history,
+            }
+        
+        if policies:
+            data["policies"] = policies
+        
+        # Save classifier-level counters
+        data["total_events"] = zac.total_events
+        data["events_with_policy"] = zac.events_with_policy
+        data["events_without_policy"] = zac.events_without_policy
+        
+        return data
+    
+    def _load_zenarmor_classifier(self, agent, saved_data: Dict) -> None:
+        """Load and restore ZenArmor classifier data."""
+        if not hasattr(agent, "zenarmor_classifier") or not agent.zenarmor_classifier:
+            return
+        
+        zac = agent.zenarmor_classifier
+        loaded = 0
+        
+        # Restore policy profiles
+        if "policies" in saved_data:
+            for name, pdata in saved_data["policies"].items():
+                try:
+                    from zenarmor_classifier import ZenArmorPolicy
+                    from collections import Counter
+                    from datetime import datetime, timezone
+                    
+                    profile = ZenArmorPolicy(
+                        name=pdata["name"],
+                        total_events=pdata.get("total_events", 0),
+                    )
+                    profile.actions = Counter(pdata.get("actions", {}))
+                    if pdata.get("first_seen"):
+                        ts = datetime.fromisoformat(pdata["first_seen"])
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        profile.first_seen = ts
+                    if pdata.get("last_seen"):
+                        ts = datetime.fromisoformat(pdata["last_seen"])
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        profile.last_seen = ts
+                    profile._action_history = pdata.get("action_history", [])
+                    
+                    zac.policies[name] = profile
+                    loaded += 1
+                except Exception as e:
+                    logger.warning("Failed to restore ZenArmor policy '%s': %s", name, e)
+        
+        if "total_events" in saved_data:
+            zac.total_events = saved_data["total_events"]
+        if "events_with_policy" in saved_data:
+            zac.events_with_policy = saved_data["events_with_policy"]
+        if "events_without_policy" in saved_data:
+            zac.events_without_policy = saved_data["events_without_policy"]
+        
+        if loaded > 0:
+            logger.info("Restored %d ZenArmor policies", loaded)
+    
+    # ── IDSSignatureAnalyzer persistence ─────────────────────────────
+    
+    def _save_ids_analyzer(self, agent) -> Dict:
+        """Save IDS signature analyzer data."""
+        if not hasattr(agent, "ids_analyzer") or not agent.ids_analyzer:
+            return {}
+        
+        ids = agent.ids_analyzer
+        data = {}
+        
+        # Save signature profiles
+        signatures = {}
+        for name, profile in ids.signatures.items():
+            signatures[name] = {
+                "name": profile.name,
+                "priority": profile.priority,
+                "trigger_count": profile.trigger_count,
+                "first_seen": profile.first_seen.isoformat() if profile.first_seen else None,
+                "last_seen": profile.last_seen.isoformat() if profile.last_seen else None,
+                "trigger_history": profile._trigger_history,
+            }
+        
+        if signatures:
+            data["signatures"] = signatures
+        
+        # Save analyzer-level counters
+        data["total_events"] = ids.total_events
+        data["events_with_signature"] = ids.events_with_signature
+        data["events_without_signature"] = ids.events_without_signature
+        
+        return data
+    
+    def _load_ids_analyzer(self, agent, saved_data: Dict) -> None:
+        """Load and restore IDS signature analyzer data."""
+        if not hasattr(agent, "ids_analyzer") or not agent.ids_analyzer:
+            return
+        
+        ids = agent.ids_analyzer
+        loaded = 0
+        
+        # Restore signature profiles
+        if "signatures" in saved_data:
+            for name, sdata in saved_data["signatures"].items():
+                try:
+                    from ids_signature_analyzer import IDSSignature
+                    from datetime import datetime, timezone
+                    
+                    profile = IDSSignature(
+                        name=sdata["name"],
+                        priority=sdata.get("priority", 0),
+                        trigger_count=sdata.get("trigger_count", 0),
+                    )
+                    if sdata.get("first_seen"):
+                        ts = datetime.fromisoformat(sdata["first_seen"])
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        profile.first_seen = ts
+                    if sdata.get("last_seen"):
+                        ts = datetime.fromisoformat(sdata["last_seen"])
+                        if ts.tzinfo is None:
+                            ts = ts.replace(tzinfo=timezone.utc)
+                        profile.last_seen = ts
+                    profile._trigger_history = sdata.get("trigger_history", [])
+                    
+                    ids.signatures[name] = profile
+                    loaded += 1
+                except Exception as e:
+                    logger.warning("Failed to restore IDS signature '%s': %s", name, e)
+        
+        if "total_events" in saved_data:
+            ids.total_events = saved_data["total_events"]
+        if "events_with_signature" in saved_data:
+            ids.events_with_signature = saved_data["events_with_signature"]
+        if "events_without_signature" in saved_data:
+            ids.events_without_signature = saved_data["events_without_signature"]
+        
+        if loaded > 0:
+            logger.info("Restored %d IDS signatures", loaded)
+    
+    # ── NginxMonitor persistence ─────────────────────────────────────
+    
+    def _save_nginx_monitor(self, agent) -> Dict:
+        """Save nginx monitor data."""
+        if not hasattr(agent, "nginx_monitor") or not agent.nginx_monitor:
+            return {}
+        
+        ng = agent.nginx_monitor
+        data = {}
+        
+        # Save aggregated counts (the per-IP time-series are transient windows)
+        if ng.request_counts:
+            data["request_counts"] = dict(ng.request_counts.most_common(200))
+        if ng.ip_request_counts:
+            data["ip_request_counts"] = dict(ng.ip_request_counts.most_common(200))
+        if ng.status_counts:
+            data["status_counts"] = dict(ng.status_counts)
+        if ng.method_counts:
+            data["method_counts"] = dict(ng.method_counts)
+        
+        return data
+    
+    def _load_nginx_monitor(self, agent, saved_data: Dict) -> None:
+        """Load and restore nginx monitor data."""
+        if not hasattr(agent, "nginx_monitor") or not agent.nginx_monitor:
+            return
+        
+        from collections import Counter
+        
+        ng = agent.nginx_monitor
+        loaded = 0
+        
+        if "request_counts" in saved_data:
+            ng.request_counts = Counter(saved_data["request_counts"])
+            loaded += 1
+        if "ip_request_counts" in saved_data:
+            ng.ip_request_counts = Counter(saved_data["ip_request_counts"])
+            loaded += 1
+        if "status_counts" in saved_data:
+            ng.status_counts = Counter(saved_data["status_counts"])
+            loaded += 1
+        if "method_counts" in saved_data:
+            ng.method_counts = Counter(saved_data["method_counts"])
+            loaded += 1
+        
+        if loaded > 0:
+            logger.info("Restored nginx monitor data: %d counters", loaded)
     
     # ── ReverseDNS persistence ───────────────────────────────────────
     

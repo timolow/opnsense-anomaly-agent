@@ -209,31 +209,9 @@ class TestZenArmorClassifier:
         assert summary['total_events'] == 1
         assert summary['events_with_policy'] == 1
         assert summary['known_policies_count'] == 1
-    
-    def test_save_and_load_state(self, tmp_path):
-        """Test save and load state persistence."""
-        filepath = str(tmp_path / "zenarmor_state.json")
-        c = ZenArmorClassifier(min_events=1)
-        
-        # Process some events
-        event = {
-            'rule': 'Test Policy',
-            'action': 'BLOCK',
-            'src_ip': '1.2.3.4',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-        }
-        c.process_event(event)
-        
-        # Save
-        c.save_state(filepath)
-        assert os.path.exists(filepath)
-        
-        # Load into new instance
-        c2 = ZenArmorClassifier(min_events=1)
-        c2.load_state(filepath)
-        
-        assert 'Test Policy' in c2.policies
-        assert c2.policies['Test Policy'].total_events == 1
+
+    # State persistence is handled centrally by StatePersistence in
+    # state_persistence.py (see _save_zenarmor_classifier / _load_zenarmor_classifier)
     
     def test_multiple_policies(self):
         """Process events for multiple policies."""

@@ -315,6 +315,13 @@ class TestAnalyzeBatch(unittest.TestCase):
 class TestFeedbackLoop(unittest.TestCase):
     """Test P2-2 feedback loop integration."""
 
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import sklearn  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sklearn not available")
+
     def test_profile_confidence_calculation(self):
         """Confidence should reflect event count and feedback."""
         from rule_classifier import RuleProfile, MIN_RULE_EVENTS

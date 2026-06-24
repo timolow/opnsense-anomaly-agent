@@ -520,3 +520,54 @@ class AttackDetector:
     def _dedup_key(self, det: Dict[str, Any]) -> str:
         """Create a dedup key from detection attributes."""
         return f"{det['attack_type']}|{det['src_ip']}|{det.get('dst_port', 'any')}|{det.get('scan_subtype', '')}"
+
+    def check_events_batch(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Run all detectors against a batch of events and return all detected attacks.
+
+        Optimized for high-volume processing: runs each detector across the entire
+        batch before moving to the next detector, minimizing per-event overhead.
+        Deduplication is applied across the full batch.
+        """
+        if not events:
+            return []
+
+        all_detections: List[Dict[str, Any]] = []
+        timestamps: List[Optional[str]] = []
+
+        for event in events:
+            ts = event.get('timestamp')
+            timestamps.append(ts)
+
+            # Port scan detection
+            ps = self.port_scan.check(event)
+            if ps:
+                all_detections.append(ps)
+
+            # SYN flood detection
+            sf = self.syn_flood.check(event)
+            if sf:
+                all_detections.append(sf)
+
+            # Brute force detection
+            bf = self.brute_force.check(event)
+            if bf:
+                all_detections.append(bf)
+
+            # Probe detection
+            pd = self.probe.check(event)
+            if pd:
+                all_detections.append(pd)
+
+        # Apply dedup across the entire batch
+        now = time.time()
+        self._dedup = {k: v for k, v in self._dedup.items() if now - v < self._dedup_seconds}
+
+        results: List[Dict[str, Any]] = []
+        for det in all_detections:
+            key = self._dedup_key(det)
+            if key in self._dedup:
+                continue
+            self._dedup[key] = now
+            results.append(det)
+
+        return results

@@ -229,6 +229,11 @@ class SystemLogClassifier:
             except Exception as e:
                 logger.debug("Timestamp parsing error for service %s: %s", service, e)
 
+    def process_events(self, events: List[Dict[str, Any]]):
+        """Process a batch of events and update service profiles."""
+        for event in events:
+            self.process_event(event)
+
     def detect_anomalies(self) -> List[Dict[str, Any]]:
         """Detect anomalies in system log patterns."""
         anomalies = []

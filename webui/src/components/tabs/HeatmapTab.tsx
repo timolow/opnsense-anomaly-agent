@@ -6,28 +6,25 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
 import { Flame } from 'lucide-react';
-import { QueryErrorState } from '../TabErrorBoundary';
 
 export default function HeatmapTab() {
   const [tooltip, setTooltip] = useState<{ col: number; row: number; val: number; ip: string; hour: string } | null>(null);
 
-  const { data, isLoading, error, isError, refetch } = useQuery<HeatmapData>({
+  const { data, isLoading } = useQuery<HeatmapData>({
     queryKey: ['heatmap'],
     queryFn: () => api.heatmap(),
     refetchInterval: 60000,
   });
 
-  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Traffic Heatmap" />;
-
-  const { maxVal } = useMemo(() => {
-    if (!data) return { maxVal: 0 };
+  const maxVal = useMemo(() => {
+    if (!data) return 0;
     let maxVal = 0;
     for (const row of data.matrix) {
       for (const v of row) {
         if (v > maxVal) maxVal = v;
       }
     }
-    return { maxVal };
+    return maxVal;
   }, [data]);
 
   const handleCellEnter = useCallback((e: React.MouseEvent<SVGRectElement>, col: number, row: number) => {
@@ -50,7 +47,11 @@ export default function HeatmapTab() {
   };
 
   if (isLoading || !data) {
-    return <TabSkeleton tab="heatmap" />;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
+      </div>
+    );
   }
 
   const { matrix, labels, rowLabels } = data;
@@ -92,7 +93,6 @@ export default function HeatmapTab() {
                   className="cursor-crosshair"
                   onMouseLeave={() => setTooltip(null)}
                 >
-                  {/* Glow filter */}
                   <defs>
                     <filter id="heatmap-glow">
                       <feGaussianBlur stdDeviation="3" result="coloredBlur" />
@@ -102,7 +102,6 @@ export default function HeatmapTab() {
                       </feMerge>
                     </filter>
                   </defs>
-                  {/* Heatmap cells */}
                   {matrix.map((row, i) =>
                     row.map((val, j) => {
                       const intensity = maxVal > 0 ? val / maxVal : 0;
@@ -133,7 +132,6 @@ export default function HeatmapTab() {
                       );
                     })
                   )}
-                  {/* Row labels (IPs) */}
                   {rowLabels.map((label, i) => {
                     const short = label.length > 15 ? label.slice(0, 13) + '...' : label;
                     return (
@@ -151,7 +149,6 @@ export default function HeatmapTab() {
                       </text>
                     );
                   })}
-                  {/* Column labels (hours) */}
                   {labels.map((label, j) => (
                     <text
                       key={`col-${j}`}
@@ -172,15 +169,10 @@ export default function HeatmapTab() {
           </ResponsiveContainer>
         </div>
 
-        {/* Tooltip */}
         {tooltip && (
           <div
             className="cyber-card p-3 text-xs font-mono absolute z-50 pointer-events-none"
-            style={{
-              right: 16,
-              bottom: 16,
-              minWidth: 160,
-            }}
+            style={{ right: 16, bottom: 16, minWidth: 160 }}
           >
             <div className="font-semibold">{tooltip.ip}</div>
             <div className="text-cyber-textMuted">{tooltip.hour}</div>
