@@ -412,6 +412,71 @@ The project includes a comprehensive GitHub Actions CI pipeline:
 - **Every Push** — All tests run automatically on every commit to `master`
 - **Tag Releases** — Docker images are tagged with commit SHA and `latest`
 
+## Zero-Downtime Deployment
+
+The project includes `deploy.sh` and `rollback.sh` for blue-green deployments with health-check gating.
+
+### How It Works
+
+1. **Build** — New image is tagged with the current git commit SHA
+2. **Staging** — New container starts on port 8767 (staging) with syslog disabled
+3. **Health Check** — Script waits for `/api/health` to return healthy/active/cold-start
+4. **Swap** — If staging passes, old container stops and new one starts on production ports
+5. **Verify** — Production health check confirms the new version is running correctly
+6. **Cleanup** — Deploy state is saved and old images are pruned (keeps last 5)
+
+If ANY step fails, the script aborts and leaves the old version running.
+
+### Deploy
+
+```bash
+# Deploy current HEAD (builds image tagged with commit SHA)
+./deploy.sh
+
+# Deploy with custom tag
+./deploy.sh --tag v1.2.3
+```
+
+### Rollback
+
+```bash
+# Rollback to previous version (from deploy_state.json)
+./rollback.sh
+
+# Rollback to a specific image
+./rollback.sh opnsense-anomaly-agent:abc1234
+```
+
+### Deploy State
+
+After a successful deploy, `deploy_state.json` is created with:
+
+```json
+{
+    "timestamp": "2026-06-23T12:00:00Z",
+    "commit_sha": "d5579cf",
+    "current_image": "opnsense-anomaly-agent:d5579cf",
+    "previous_image": "opnsense-anomaly-agent:abc1234"
+}
+```
+
+This enables instant rollback without rebuilding.
+
+### Local Development
+
+For local development (no zero-downtime needed):
+
+```bash
+# Build the image
+docker build -t opnsense-anomaly-agent:latest .
+
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f agent
+```
+
 ## Requirements
 
 - Python 3.11+ (for standalone syslog listener)
