@@ -2,11 +2,12 @@
 // Main App - React entry with sidebar and content area
 // ═══════════════════════════════════════════════════
 
-import { Suspense, lazy, useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
 import TimeRangePicker from './components/TimeRangePicker';
 import { Menu } from 'lucide-react';
+import { TabShell } from './components/TabShell';
 
 // ── Tab Components ──
 import OverviewTab from './components/tabs/OverviewTab';
@@ -52,29 +53,36 @@ const TAB_TITLE: Record<string, string> = {
 };
 
 function TabContent({ tab }: { tab: string }) {
-  switch (tab) {
-    case 'overview': return <OverviewTab />;
-    case 'heatmap': return <HeatmapTab />;
-    case 'flows': return <FlowsTab />;
-    case 'ipflow': return <IpFlowTab />;
-    case 'alerts': return <AlertsTab />;
-    case 'mutes': return <MutesTab />;
-    case 'zenarmor': return <ZenArmorTab />;
-    case 'ids': return <IdsTab />;
-    case 'geo': return <GeoTab />;
-    case 'opnsense': return <OpnsenseTab />;
-    case 'rules': return <RulesTab />;
-    case 'syslogs': return <SyslogsTab />;
-    case 'services': return <ServicesTab />;
-    case 'settings': return <SettingsTab />;
-    case 'logs': return <LogsQueryTab />;
-    case 'network': return <NetworkTab />;
-    case 'wan-flap': return <WanFlapTab />;
-    case 'rules-classified': return <RulesClassifiedTab />;
-    case '': return <OverviewTab />;
-    case 'nginx': return <NginxTab />;
-    default: return <OverviewTab />;
-  }
+  const title = TAB_TITLE[tab] || 'Dashboard';
+  return (
+    <TabShell tab={tab} tabName={title}>
+      {(() => {
+        switch (tab) {
+          case 'overview': return <OverviewTab />;
+          case 'heatmap': return <HeatmapTab />;
+          case 'flows': return <FlowsTab />;
+          case 'ipflow': return <IpFlowTab />;
+          case 'alerts': return <AlertsTab />;
+          case 'mutes': return <MutesTab />;
+          case 'zenarmor': return <ZenArmorTab />;
+          case 'ids': return <IdsTab />;
+          case 'geo': return <GeoTab />;
+          case 'opnsense': return <OpnsenseTab />;
+          case 'rules': return <RulesTab />;
+          case 'syslogs': return <SyslogsTab />;
+          case 'services': return <ServicesTab />;
+          case 'settings': return <SettingsTab />;
+          case 'logs': return <LogsQueryTab />;
+          case 'network': return <NetworkTab />;
+          case 'wan-flap': return <WanFlapTab />;
+          case 'rules-classified': return <RulesClassifiedTab />;
+          case '': return <OverviewTab />;
+          case 'nginx': return <NginxTab />;
+          default: return <OverviewTab />;
+        }
+      })()}
+    </TabShell>
+  );
 }
 
 function LoadingScreen() {
