@@ -306,6 +306,7 @@ class HealthMonitor:
 
         # 3. Database connectivity
         db_ok = True
+        conn = None
         try:
             if self.agent.db:
                 conn = self.agent.db.connect()
@@ -320,6 +321,9 @@ class HealthMonitor:
         except Exception as e:
             db_ok = False
             issues.append(f"ERROR: database check failed: {e}")
+        finally:
+            if conn:
+                self.agent.db.putconn(conn)
         details["database"] = {"connected": db_ok}
 
         # 4. Determine overall status

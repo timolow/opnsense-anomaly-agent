@@ -383,8 +383,10 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
                     })
                 elif endpoint == "anomalies":
                     # Get recent anomalies from DB
+                    conn = None
                     try:
-                        cur = a.db.connect().cursor()
+                        conn = a.db.connect()
+                        cur = conn.cursor()
                         cur.execute("""
                             SELECT id, type, severity, description, timestamp
                             FROM anomalies ORDER BY id DESC LIMIT 100
@@ -402,10 +404,15 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
                         self._send(200, {"anomalies": anomalies})
                     except Exception as e:
                         self._send(500, {"error": str(e)})
+                    finally:
+                        if conn:
+                            a.db.putconn(conn)
                 elif endpoint == "volume":
                     # Get hourly volume for last 24 hours
+                    conn = None
                     try:
-                        cur = a.db.connect().cursor()
+                        conn = a.db.connect()
+                        cur = conn.cursor()
                         cur.execute("""
                             SELECT DATE_TRUNC('hour', timestamp) as hour, COUNT(*)
                             FROM events
@@ -422,6 +429,9 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
                         self._send(200, {"volume": volume})
                     except Exception as e:
                         self._send(500, {"error": str(e)})
+                    finally:
+                        if conn:
+                            a.db.putconn(conn)
                 else:
                     self._send(404, {"error": f"unknown endpoint: {endpoint}"})
                 return
@@ -641,14 +651,18 @@ class OPNsenseAgent:
         max_retries = 5
         for i in range(max_retries):
             if self.db:
+                conn = None
                 try:
-                    self.db.connect()
+                    conn = self.db.connect()
                     logger.info("Database connection successful")
                     break
                 except Exception as e:
                     if i == max_retries - 1:
                         logger.error(f"Database connection failed after {max_retries} attempts: {e}")
                     time.sleep(2)
+                finally:
+                    if conn:
+                        self.db.putconn(conn)
             else:
                 break
         
@@ -690,6 +704,7 @@ class OPNsenseAgent:
 
     def _prune_events(self):
         """Prune old events from the database to prevent unlimited growth."""
+        conn = None
         try:
             if self.db:
                 conn = self.db.connect()
@@ -704,6 +719,9 @@ class OPNsenseAgent:
                         logger.info(f"Pruned {deleted} old events from database")
         except Exception as e:
             logger.error(f"Event pruning failed: {e}")
+        finally:
+            if conn and self.db:
+                self.db.putconn(conn)
 
     # ── event callback (from syslog listener thread) ─────────────────
     def _on_event(self, event: dict):
