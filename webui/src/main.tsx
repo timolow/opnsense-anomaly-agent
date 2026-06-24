@@ -15,11 +15,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Global query error handler — logs failures for debugging
-queryClient.getQueryCache().config.onError = (error, query) => {
-  console.error(`[QueryError] "${query.queryKey.join('.')}":`, error.message);
-};
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
