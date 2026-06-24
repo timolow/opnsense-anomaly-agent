@@ -94,12 +94,13 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
           },
           font: '11px Inter, system-ui, monospace',
           stroke: COLORS.label,
-          splits: (scaleMin: number, scaleMax: number, foundSplits: number[]) => {
-            // Limit to ~6 time labels
-            const range = scaleMax - scaleMin;
-            const target = Math.min(6, foundSplits.length);
-            const step = Math.ceil(foundSplits.length / target);
-            return foundSplits.filter((_, i) => i % step === 0);
+          splits: (scaleMin: number, scaleMax: number, foundSplits: number[] | number) => {
+            // foundSplits can be a number (count) or array depending on uPlot version
+            const arr = Array.isArray(foundSplits) ? foundSplits : [];
+            const target = Math.min(6, arr.length);
+            if (target === 0) return arr;
+            const step = Math.ceil(arr.length / target);
+            return arr.filter((_: number, i: number) => i % step === 0);
           },
         },
         {
