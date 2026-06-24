@@ -1,0 +1,6 @@
+{
+    "timestamp": "2026-06-24T14:34:58Z",
+    "commit_sha": "0caf522",
+    "current_image": "opnsense-anomaly-agent:0caf522",
+    "previous_image": "opnsense-anomaly-agent:latest"
+}
