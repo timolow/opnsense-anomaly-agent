@@ -192,29 +192,10 @@ class TestIDSSignatureAnalyzer:
         assert summary['total_events'] == 1
         assert summary['events_with_signature'] == 1
         assert summary['known_signatures_count'] == 1
-    
-    def test_save_and_load_state(self, tmp_path):
-        """Test save and load state persistence."""
-        filepath = str(tmp_path / "ids_state.json")
-        c = IDSSignatureAnalyzer(min_events=1)
-        
-        event = {
-            'rule': 'Test Sig',
-            'priority_score': 2,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-        }
-        c.process_event(event)
-        
-        # Save
-        c.save_state(filepath)
-        assert os.path.exists(filepath)
-        
-        # Load into new instance
-        c2 = IDSSignatureAnalyzer(min_events=1)
-        c2.load_state(filepath)
-        
-        assert 'Test Sig' in c2.signatures
-        assert c2.signatures['Test Sig'].trigger_count == 1
+
+
+# State persistence for IDSSignatureAnalyzer is handled centrally by
+# StatePersistence in state_persistence.py (see _save_ids_analyzer / _load_ids_analyzer)
 
 
 if __name__ == '__main__':

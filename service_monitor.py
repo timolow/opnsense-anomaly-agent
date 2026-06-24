@@ -315,12 +315,19 @@ class ServiceMonitor:
 
     def process_event(self, event: dict):
         """Route a single event to the correct service handler.
-        
+
         Note: Firewall filterlog events don't contain service-level syslog messages
         (DHCP/NTP/OpenVPN), so this is primarily a pass-through. Service monitoring
         is done via API polling in poll_api().
         """
         # No-op — service monitoring is API-driven, not syslog-driven
+        pass
+
+    def process_events(self, events: list):
+        """Route a batch of events to the correct service handler.
+
+        No-op since individual process_event is already a no-op.
+        """
         pass
 
     def check_all(self) -> list:

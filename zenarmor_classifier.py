@@ -21,11 +21,9 @@ This complements rule_classifier.py (firewall rules) by adding ZenArmor
 policy-level tracking on top of the existing event pipeline.
 """
 
-import os
-import json
 import logging
 from datetime import datetime, timezone, timedelta
-from collections import defaultdict, Counter
+from collections import Counter
 from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
 
@@ -292,61 +290,5 @@ class ZenArmorClassifier:
             ],
         }
 
-    def save_state(self, filepath: str = None):
-        """Save policy profiles to disk."""
-        if filepath is None:
-            base_dir = os.environ.get("AGENT_DATA_DIR", "/app/agent_data")
-            filepath = os.path.join(base_dir, "zenarmor_state.json")
-        
-        state = {
-            'policies': {name: {
-                'name': p.name,
-                'actions': dict(p.actions),
-                'total_events': p.total_events,
-                'first_seen': p.first_seen.isoformat() if p.first_seen else None,
-                'last_seen': p.last_seen.isoformat() if p.last_seen else None,
-                'action_history': p._action_history,
-            } for name, p in self.policies.items()},
-            'summary': self.get_summary(),
-            'total_events': self.total_events,
-            'events_with_policy': self.events_with_policy,
-            'events_without_policy': self.events_without_policy,
-        }
-        
-        with open(filepath, 'w') as f:
-            json.dump(state, f, indent=2, default=str)
-        logger.info("ZenArmor classifier state saved to %s", filepath)
-
-    def load_state(self, filepath: str = None):
-        """Load policy profiles from disk."""
-        if filepath is None:
-            base_dir = os.environ.get("AGENT_DATA_DIR", "/app/agent_data")
-            filepath = os.path.join(base_dir, "zenarmor_state.json")
-        
-        if not os.path.exists(filepath):
-            logger.info("No ZenArmor state file found at %s", filepath)
-            return
-        
-        try:
-            with open(filepath, 'r') as f:
-                state = json.load(f)
-            
-            for name, data in state.get('policies', {}).items():
-                profile = ZenArmorPolicy(
-                    name=data['name'],
-                    total_events=data.get('total_events', 0),
-                )
-                profile.actions = Counter(data.get('actions', {}))
-                profile.first_seen = datetime.fromisoformat(data['first_seen']) if data.get('first_seen') else None
-                profile.last_seen = datetime.fromisoformat(data['last_seen']) if data.get('last_seen') else None
-                profile._action_history = data.get('action_history', [])
-                self.policies[name] = profile
-            
-            self.total_events = state.get('total_events', 0)
-            self.events_with_policy = state.get('events_with_policy', 0)
-            self.events_without_policy = state.get('events_without_policy', 0)
-            
-            logger.info("ZenArmor classifier state loaded from %s (%d policies)", 
-                       filepath, len(self.policies))
-        except Exception as e:
-            logger.error("Failed to load ZenArmor state: %s", e)
+    # State persistence is handled centrally by StatePersistence in state_persistence.py
+    # (saves to state.json alongside all other agent modules)

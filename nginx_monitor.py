@@ -72,8 +72,7 @@ class NginxMonitor:
         self.status_counts = Counter()  # status_code -> count
         self.method_counts = Counter()  # method -> count
         
-        # State file
-        self.state_file = None  # set in agent.py
+        # State persistence handled centrally by StatePersistence
         
     def set_db(self, db):
         """Set database reference."""
@@ -82,10 +81,6 @@ class NginxMonitor:
     def set_vllm_client(self, vllm_client):
         """Set VLLM client for LLM analysis."""
         self.vllm_client = vllm_client
-        
-    def set_state_file(self, state_file):
-        """Set state file path for persistence."""
-        self.state_file = state_file
     
     def process_event(self, event: dict):
         """Process a single nginx event.
@@ -288,26 +283,3 @@ class NginxMonitor:
         if not self.db:
             return []
         return self.db.get_nginx_top_paths_timeline(hours)
-    
-    def save_state(self):
-        """Save state to JSON file for persistence."""
-        if not self.state_file or not self.db:
-            return
-        try:
-            summary = self.get_summary()
-            with open(self.state_file, 'w') as f:
-                import json
-                json.dump(summary, f, default=str)
-        except Exception as e:
-            logger.warning("Failed to save nginx state: %s", e)
-    
-    def load_state(self):
-        """Load state from JSON file."""
-        if not self.state_file:
-            return {}
-        try:
-            with open(self.state_file, 'r') as f:
-                import json
-                return json.load(f)
-        except Exception:
-            return {}

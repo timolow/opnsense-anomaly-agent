@@ -324,6 +324,11 @@ class StatisticalModel:
         """Alias for record_event, used by agent.py."""
         self.record_event(event)
 
+    def add_events(self, events: List[Dict[str, Any]]):
+        """Process a batch of events for the statistical model."""
+        for event in events:
+            self.record_event(event)
+
     def get_stats(self) -> Dict[str, Any]:
         """Return aggregate stats for status logging."""
         return {

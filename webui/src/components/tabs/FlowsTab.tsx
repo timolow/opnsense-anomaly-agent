@@ -9,8 +9,6 @@ import ForceGraph2D from 'react-force-graph-2d';
 import { api } from '@/api';
 import type { IpFlowData } from '@/types';
 import { GitMerge, Eye, Maximize2, Minimize2 } from 'lucide-react';
-import { QueryErrorState } from '../TabErrorBoundary';
-import { TabSkeleton } from '../SkeletonLoaders';
 
 // ── Color Scheme ──
 const COLORS: Record<string, string> = {
@@ -206,15 +204,14 @@ function FlowGraph({ nodes, edges }: { nodes: IpFlowData['nodes']; edges: IpFlow
 
 // ── Main FlowsTab Component ──
 export default function FlowsTab() {
-  const { data, isLoading, error, isError, refetch } = useQuery<IpFlowData>({
+  const { data, isLoading } = useQuery<IpFlowData>({
     queryKey: ['ip-flow'],
     queryFn: api.ipFlow,
     refetchInterval: 30000,
   });
 
-  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Flow Map" />;
   if (isLoading || !data) {
-    return <TabSkeleton tab="flows" />;
+    return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
   }
 
   return (

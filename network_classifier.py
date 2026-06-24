@@ -19,6 +19,7 @@ Config:
 """
 
 import ipaddress
+import requests
 from typing import Set, Dict, Optional, List
 from collections import defaultdict
 import os
