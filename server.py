@@ -1263,7 +1263,25 @@ def query_health():
     else:
         subsystems["database"] = {"status": "disconnected", "message": "Cannot connect to PostgreSQL"}
         overall_status = "degraded"
-        event_count = 0
+
+    # --- Connection pool metrics ---
+    try:
+        from eventdb import EventDatabase as _ED
+        _pool = _ED._pool
+        if _pool:
+            _used = len(getattr(_pool, "_used", {}))
+            _avail = len(getattr(_pool, "_pool", []))
+            _max = _pool.maxconn
+            subsystems["pool"] = {
+                "status": "ok",
+                "message": f"Pool: {_used}/{_max} active, {_avail} available",
+                "active": _used,
+                "available": _avail,
+                "max": _max,
+                "utilization_pct": round(_used / _max * 100, 1) if _max else 0,
+            }
+    except Exception:
+        subsystems["pool"] = {"status": "unknown", "message": "Could not read pool metrics"}
     
     # --- Redis ---
     r = get_redis()
