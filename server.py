@@ -12,7 +12,7 @@ import time
 import urllib.parse
 import threading as threading_lib
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Any, Dict
@@ -699,13 +699,60 @@ def query_opnsense_status():
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
                 sys_info = json.loads(resp.read().decode())
             if isinstance(sys_info, dict):
-                results["opnsense_version"] = sys_info.get("os_version", "unknown")
+                product = sys_info.get("product", {})
+                results["opnsense_version"] = product.get("CORE_VERSION", product.get("CORE_SERIES", "unknown"))
             else:
                 results["opnsense_version"] = "unknown"
             results["status"] = "connected"
         except Exception as e:
             print(f"OPNsense firmware status failed: {e}")
             results["opnsense_version"] = "error"
+
+        # 1b. System Resources — memory, CPU load, uptime
+        results["cpu_usage"] = 0
+        results["memory_usage"] = 0
+        results["uptime"] = ""
+        results["uptime_seconds"] = 0
+        try:
+            req = urllib.request.Request(
+                f"{opn_url}/api/diagnostics/system/systemResources",
+                headers={"Authorization": auth_header},
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+                sys_res = json.loads(resp.read().decode())
+            if isinstance(sys_res, dict):
+                # Memory
+                mem = sys_res.get("memory", {})
+                total_mem = int(mem.get("total", 0))
+                used_mem = int(mem.get("used", 0))
+                if total_mem > 0:
+                    results["memory_usage"] = round(used_mem / total_mem * 100, 1)
+                # CPU load (1-min average normalized to percentage)
+                load_avg = sys_res.get("loadavg", {})
+                if load_avg:
+                    try:
+                        load1 = float(load_avg.get("loadavg_1m", load_avg.get("1", 0)))
+                        # FreeBSD exposes load average as fractional CPU utilization
+                        results["cpu_usage"] = round(load1 * 100, 1)
+                    except (ValueError, TypeError):
+                        pass
+                # Uptime
+                uptime_raw = sys_res.get("uptime", {})
+                if isinstance(uptime_raw, dict):
+                    uptime_secs = int(uptime_raw.get("raw", 0))
+                    results["uptime_seconds"] = uptime_secs
+                    # Format human-readable
+                    days = uptime_secs // 86400
+                    hours = (uptime_secs % 86400) // 3600
+                    mins = (uptime_secs % 3600) // 60
+                    if days > 0:
+                        results["uptime"] = f"{days}d {hours}h"
+                    elif hours > 0:
+                        results["uptime"] = f"{hours}h {mins}m"
+                    else:
+                        results["uptime"] = f"{mins}m"
+        except Exception as e:
+            print(f"OPNsense system resources failed: {e}")
 
         # 2. Interfaces - get IPv4/6 addresses, up/down status
         results["interfaces"] = []
@@ -758,6 +805,18 @@ def query_opnsense_status():
                 source_ip = gw.get("source", "")
                 upstream = gw.get("upstream", False)
                 is_vpn = gw.get("vpn_gateway", False)
+                status = gw.get("status", "unknown")
+                # Parse delay/loss from string format "5.8 ms" / "0.0 %"
+                delay_raw = gw.get("delay", "~")
+                loss_raw = gw.get("loss", "~")
+                try:
+                    delay_val = float(str(delay_raw).replace(" ms", "").replace(" ", "")) if str(delay_raw) != "~" else 0
+                except (ValueError, TypeError):
+                    delay_val = 0
+                try:
+                    loss_val = float(str(loss_raw).replace(" %", "").replace(" ", "")) if str(loss_raw) != "~" else 0
+                except (ValueError, TypeError):
+                    loss_val = 0
                 results["gateways"].append({
                     "name": name,
                     "interface": interface,
@@ -765,6 +824,9 @@ def query_opnsense_status():
                     "source_ip": source_ip,
                     "upstream": upstream,
                     "vpn_gateway": is_vpn,
+                    "status": status.lower() if status else "unknown",
+                    "delay": delay_val,
+                    "loss": loss_val,
                 })
         except Exception as e:
             print(f"OPNsense gateways failed: {e}")
@@ -3443,54 +3505,74 @@ def query__timeline(period="7d", granularity="hour", start=None, end=None):
         return {"timeline": [], "blocked_timeline": []}
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        # Build time filter
-        time_filter = ""
-        params: list = []
+
+        # Compute the time window: prefer explicit start/end (unix ts), fallback to period
         if start and end:
-            time_filter = "AND timestamp >= %s AND timestamp <= %s"
-            params = [start, end]
-        
+            start_dt = datetime.fromtimestamp(start, tz=timezone.utc)
+            end_dt = datetime.fromtimestamp(end, tz=timezone.utc)
+        else:
+            now = datetime.now(tz=timezone.utc)
+            period_map = {
+                "1h": timedelta(hours=1),
+                "6h": timedelta(hours=6),
+                "24h": timedelta(days=1),
+                "7d": timedelta(days=7),
+                "30d": timedelta(days=30),
+            }
+            delta = period_map.get(period, timedelta(days=7))
+            end_dt = now
+            start_dt = now - delta
+
+        # Use the earlier of start_dt and (now - 7 days) so we always get recent data
+        fallback_start = datetime.now(tz=timezone.utc) - timedelta(days=7)
+        query_start = min(start_dt, fallback_start)
+
+        # Build WHERE clause with proper timestamp parameters
+        where_clause = "WHERE timestamp >= %s AND timestamp <= %s"
+        query_params = [query_start, end_dt]
+
         # Total events per time bucket
         if granularity == "hour":
             cur.execute("""
-                SELECT date_trunc('%s', timestamp) as bucket, COUNT(*) as event_count
+                SELECT date_trunc('hour', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days' %s
+                %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """ % (granularity, time_filter), tuple(params))
+            """ % where_clause, query_params)
         else:
             cur.execute("""
                 SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days' %s
+                %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """ % time_filter, tuple(params))
+            """, query_params)
         rows = cur.fetchall()
         timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in rows]
-        
+
         # Blocked events per time bucket
+        where_blocked = "WHERE timestamp >= %s AND timestamp <= %s AND action = 'BLOCK'"
+        blocked_params = [query_start, end_dt]
         if granularity == "hour":
             cur.execute("""
-                SELECT date_trunc('%s', timestamp) as bucket, COUNT(*) as event_count
+                SELECT date_trunc('hour', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days' %s AND action = 'BLOCK'
+                %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """ % (granularity, time_filter), tuple(params))
+            """ % where_blocked, blocked_params)
         else:
             cur.execute("""
                 SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
                 FROM events
-                WHERE timestamp > NOW() - INTERVAL '7 days' %s AND action = 'BLOCK'
+                %s
                 GROUP BY bucket
                 ORDER BY bucket
-            """ % time_filter, tuple(params))
+            """, blocked_params)
         blocked_rows = cur.fetchall()
         blocked_timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in blocked_rows]
-        
+
         cur.close()
         return {"timeline": timeline, "blocked_timeline": blocked_timeline, "period": period}
     except Exception as e:

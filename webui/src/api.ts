@@ -241,7 +241,6 @@ export const api = {
   // OPNsense
   opnsense: async (): Promise<OpnsenseStatusData> => {
     const raw = await json<Record<string, unknown>>('/opnsense');
-    const status = raw.status || 'unknown';
     const interfaces = Array.isArray(raw.interfaces) ? raw.interfaces : [];
     const interfacesMapped = interfaces.map((i: any) => ({
       name: i.name || '',
@@ -249,18 +248,29 @@ export const api = {
       mac: i.mac || '',
       ipv4: i.ipv4 || '',
       ipv6: i.ipv6 || '',
-      status: status,
+      status: i.status || (raw.status === 'connected' ? 'up' : 'down'),
       bandwidth_in: '',
       bandwidth_out: '',
-      status_icon: status === 'connected' ? 'connected' : 'disconnected',
+      status_icon: raw.status === 'connected' ? 'connected' : 'disconnected',
+    }));
+    const gateways = Array.isArray(raw.gateways) ? raw.gateways : [];
+    const gatewaysMapped = gateways.map((g: any) => ({
+      name: g.name || '',
+      gateway_ip: g.gateway_ip || '',
+      interface: g.interface || '',
+      delay: typeof g.delay === 'number' ? g.delay : 0,
+      loss: typeof g.loss === 'number' ? g.loss : 0,
+      status: g.status || 'unknown',
+      upstream: !!g.upstream,
+      vpn_gateway: !!g.vpn_gateway,
     }));
     return {
-      version: raw.opnsense_version || 'unknown',
-      uptime: '',
-      cpu_usage: 0,
-      memory_usage: 0,
+      version: (raw.opnsense_version as string) || 'unknown',
+      uptime: (raw.uptime as string) || '',
+      cpu_usage: typeof raw.cpu_usage === 'number' ? raw.cpu_usage : 0,
+      memory_usage: typeof raw.memory_usage === 'number' ? raw.memory_usage : 0,
       interfaces: interfacesMapped,
-      gateways: [],
+      gateways: gatewaysMapped,
       services: [],
     };
   },
@@ -400,6 +410,7 @@ export const api = {
         low_traffic: 0,
         abusive: (byClassification.ABUSIVE as number) || 0,
         good: (byClassification.GOOD as number) || 0,
+        uncertain: (byClassification.UNCERTAIN as number) || (byClassification.UNKNOWN as number) || 0,
       },
       rules: allRules.map((r: any) => ({
         uuid: r.rule_name || '',
@@ -447,7 +458,15 @@ export const api = {
   trafficFlow: () => json<TrafficFlow>('//traffic-flow'),
   protocolDistribution: () => json<ProtocolDistribution>('//protocols'),
   actionDistribution: () => json<ActionDistribution>('//actions'),
-  timeline: () => json<Timeline>('//timeline'),
+  timeline: (params?: { period?: string; granularity?: string; start?: number; end?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.period) qs.set('period', params.period);
+    if (params?.granularity) qs.set('granularity', params.granularity);
+    if (params?.start) qs.set('start', String(params.start));
+    if (params?.end) qs.set('end', String(params.end));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return json<Timeline>(`//timeline${suffix}`);
+  },
   blockedIps: () => json<BlockedIps>('//blocked-ips'),
   topPorts: () => json<TopPorts>('//top-ports'),
   ruleHeatmap: () => json<RuleHeatmap>('//rule-heatmap'),
@@ -467,7 +486,7 @@ export const api = {
 
   // Feedback
   submitFeedback: (data: RuleFeedback) =>
-    json<{ success: boolean }>(`/feedback?rule_name=${encodeURIComponent(data.rule_name)}&label=${encodeURIComponent(data.label)}&reason=${encodeURIComponent(data.reason)}&user_id=${encodeURIComponent(data.user_id)}`, {
+    json<{ success: boolean }>('/rule-feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
