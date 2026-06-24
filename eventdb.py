@@ -214,6 +214,7 @@ class EventDatabase:
             return len(events)
         finally:
             cur.close()
+            self.putconn(conn)
     
     def insert_anomaly(self, anomaly_data: Dict[str, Any]) -> int:
         """Insert a detected anomaly."""
@@ -298,6 +299,7 @@ class EventDatabase:
             return len(values)
         finally:
             cur.close()
+            self.putconn(conn)
     
     def update_alert_status(self, anomaly_id: int, alert_sent: bool = False, discord_sent: bool = False):
         """Mark an anomaly as having alerts sent."""
@@ -554,6 +556,7 @@ class EventDatabase:
     
     def health_check(self) -> Dict[str, Any]:
         """Check database connectivity and return status."""
+        conn = None
         try:
             conn = self.connect()
             cur = conn.cursor()
@@ -561,18 +564,43 @@ class EventDatabase:
             cur.close()
             
             event_count = self.get_event_count_windowed(window_minutes=60)
+            
+            # Pool metrics
+            pool = EventDatabase._pool
+            pool_stats = {
+                'pool_max': pool.maxconn if pool else 0,
+                'pool_min': pool.minconn if pool else 0,
+            }
+            if pool:
+                # _used tracks checked-out connections, _pool tracks available
+                used = len(getattr(pool, '_used', {}))
+                available = len(getattr(pool, '_pool', []))
+                pool_stats['pool_active'] = used
+                pool_stats['pool_available'] = available
+                pool_stats['pool_total'] = used + available
+                pool_stats['pool_utilization_pct'] = round(used / pool.maxconn * 100, 1) if pool.maxconn else 0.0
+            
             db_status = {
                 'connected': True,
                 'events_last_hour': event_count,
                 'host': self.host,
                 'database': self.database,
+                'pool': pool_stats,
             }
             return db_status
         except Exception as e:
             return {
                 'connected': False,
                 'error': str(e),
+                'pool': {
+                    'pool_active': len(getattr(EventDatabase._pool, '_used', {})) if EventDatabase._pool else 0,
+                    'pool_available': len(getattr(EventDatabase._pool, '_pool', [])) if EventDatabase._pool else 0,
+                    'pool_max': EventDatabase._pool.maxconn if EventDatabase._pool else 0,
+                },
             }
+        finally:
+            if conn:
+                self.putconn(conn)
 
     def search_anomalies(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Search anomalies by IP, attack_type, rule_name, or description.
@@ -1100,6 +1128,7 @@ class EventDatabase:
             }
         finally:
             cur.close()
+            self.putconn(conn)
 
     def get_nginx_anomalies(self, limit: int = 50) -> List[Dict]:
         """Get recent nginx anomalies."""

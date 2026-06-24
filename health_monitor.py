@@ -326,6 +326,33 @@ class HealthMonitor:
                 self.agent.db.putconn(conn)
         details["database"] = {"connected": db_ok}
 
+        # 3b. Connection pool metrics
+        pool = None
+        pool_info: Dict[str, Any] = {}
+        try:
+            from eventdb import EventDatabase
+            pool = EventDatabase._pool
+            if pool:
+                used = len(getattr(pool, "_used", {}))
+                available = len(getattr(pool, "_pool", []))
+                max_conn = pool.maxconn
+                pool_info = {
+                    "pool_active": used,
+                    "pool_available": available,
+                    "pool_max": max_conn,
+                    "pool_utilization_pct": round(used / max_conn * 100, 1) if max_conn else 0.0,
+                }
+                details["pool"] = pool_info
+                # Warn if pool utilization is high
+                if max_conn:
+                    util_pct = used / max_conn * 100
+                    if util_pct >= 90:
+                        issues.append(f"CRITICAL: connection pool at {util_pct:.0f}% ({used}/{max_conn})")
+                    elif util_pct >= 70:
+                        issues.append(f"WARNING: connection pool at {util_pct:.0f}% ({used}/{max_conn})")
+        except Exception as e:
+            logger.debug("Pool metrics check failed: %s", e)
+
         # 4. Determine overall status
         if any("CRITICAL" in i for i in issues):
             status = "critical"
@@ -349,11 +376,21 @@ class HealthMonitor:
         # Log
         if issues:
             logger.warning(
-                "Health check: %s (prev=%s) — %s",
-                status, prev_status, "; ".join(issues),
+                "Health check: %s (prev=%s) pool=[active=%d/avail=%d/%d] — %s",
+                status, prev_status,
+                pool_info.get("pool_active", "?"),
+                pool_info.get("pool_available", "?"),
+                pool_info.get("pool_max", "?"),
+                "; ".join(issues),
             )
         else:
-            logger.info("Health check: %s (prev=%s) — all clear", status, prev_status)
+            logger.info(
+                "Health check: %s (prev=%s) pool=[active=%d/avail=%d/%d] — all clear",
+                status, prev_status,
+                pool_info.get("pool_active", "?"),
+                pool_info.get("pool_available", "?"),
+                pool_info.get("pool_max", "?"),
+            )
 
         # Discord alert on state change to degraded/critical (with cooldown)
         now = time.time()
