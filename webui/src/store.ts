@@ -62,7 +62,7 @@ interface AppState {
   setQuickFilterType: (type: string) => void;
 
   //  connection status
-  connected: boolean;
+  Connected: boolean;
   setConnected: (connected: boolean) => void;
 
   // Time range (Grafana-like time selection)
@@ -97,8 +97,8 @@ export const useStore = create<AppState>((set) => ({
   setQuickFilter: (filter) => set({ quickFilter: filter }),
   quickFilterType: 'all',
   setQuickFilterType: (type) => set({ quickFilterType: type }),
-  connected: false,
-  setConnected: (connected: boolean) => set({ connected }),
+  Connected: false,
+  setConnected: (connected: boolean) => set({ Connected: connected }),
   timeRange: '24h',
   setTimeRange: (range: TimeRange) => set({ timeRange: range }),
   customTimeRange: undefined,

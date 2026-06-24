@@ -6,17 +6,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { ServiceStatusData } from '@/types';
 import { Cpu, Server, Database, Wifi, GitBranch } from 'lucide-react';
-import { QueryErrorState } from '../TabErrorBoundary';
-import { TabSkeleton } from '../SkeletonLoaders';
 
 export default function ServicesTab() {
-  const { data, error, isError, refetch } = useQuery<ServiceStatusData>({
+  const { data } = useQuery<ServiceStatusData>({
     queryKey: ['service-status'],
     queryFn: api.serviceStatus,
     refetchInterval: 30000,
   });
 
-  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Services" />;
   if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
 
   const statusIcon = (s: string) => {

@@ -9,7 +9,7 @@ import {
   Ban, Shield, Eye, Globe, Settings, Server, FileText,
   Activity, Cpu, Radio, Layers, TrendingUp, Database,
   Menu, X, ChevronDown, ChevronRight,
-  Flame, Wifi, Gauge,
+  Flame, Wifi,
 } from 'lucide-react';
 
 interface NavGroup {
@@ -53,7 +53,6 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'opnsense', label: 'OPNsense', icon: <Server size={14} /> },
       { id: 'services', label: 'Services', icon: <Cpu size={14} /> },
       { id: 'nginx', label: 'Nginx', icon: <Wifi size={14} /> },
-      { id: 'resources', label: 'Resources', icon: <Gauge size={14} /> },
       { id: 'network', label: 'Network', icon: <Network size={14} /> },
       { id: 'wan-flap', label: 'WAN Flap', icon: <Radio size={14} /> },
     ],

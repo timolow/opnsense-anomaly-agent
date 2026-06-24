@@ -8,23 +8,17 @@ import type { MutesData } from '@/types';
 import { Ban, Plus, Trash2, Search } from 'lucide-react';
 import { useState } from 'react';
 
-import { TabSkeleton } from '../SkeletonLoaders';
-import { QueryErrorState } from '../TabErrorBoundary';
-
 export default function MutesTab() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ ip: '', duration: '1h', reason: '' });
   const [search, setSearch] = useState('');
 
-  const { data: mutes = [], isLoading, error, isError, refetch } = useQuery<MutesData[]>({
+  const { data: mutes = [] } = useQuery<MutesData[]>({
     queryKey: ['mutes'],
     queryFn: api.mutes,
     refetchInterval: 15000,
   });
-
-  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Mutes" />;
-  if (isLoading) return <TabSkeleton tab="mutes" />;
 
   const createMute = useMutation({
     mutationFn: api.createMute,

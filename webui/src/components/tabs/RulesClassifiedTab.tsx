@@ -8,11 +8,9 @@ import type { RulesClassifiedData } from '@/types';
 import { TrendingUp, Brain, Target, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
-import { QueryErrorState } from '../TabErrorBoundary';
-import { TabSkeleton } from '../SkeletonLoaders';
 
 export default function RulesClassifiedTab() {
-  const { data, error, isError, refetch } = useQuery<RulesClassifiedData>({
+  const { data } = useQuery<RulesClassifiedData>({
     queryKey: ['rules-classified'],
     queryFn: () => api.rulesClassified(false),
     refetchInterval: 60000,
@@ -20,7 +18,6 @@ export default function RulesClassifiedTab() {
 
   const [refresh, setRefresh] = useState(false);
 
-  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="Rules ML" />;
   if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
 
   const pieData = [

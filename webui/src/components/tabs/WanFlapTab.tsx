@@ -6,11 +6,9 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import { Radio, AlertTriangle, RefreshCw } from 'lucide-react';
 import TimelineChart from '../../components/charts/TimelineChart';
-import { QueryErrorState } from '../TabErrorBoundary';
-import { TabSkeleton } from '../SkeletonLoaders';
 
 export default function WanFlapTab() {
-  const { data, isLoading, error, isError, refetch } = useQuery<any>({
+  const { data } = useQuery<any>({
     queryKey: ['wan-flap'],
     queryFn: async () => {
       try {
@@ -21,9 +19,6 @@ export default function WanFlapTab() {
     },
     refetchInterval: 30000,
   });
-
-  if (isError) return <QueryErrorState error={error} isError={isError} onRetry={refetch} tabName="WAN Flap Detection" />;
-  if (isLoading || !data) return <TabSkeleton tab="wan-flap" />;
 
   const flapData = data?.flaps || [];
   const stats = data?.stats || { total_flaps: 0, last_flap: 'N/A', avg_duration: 'N/A' };

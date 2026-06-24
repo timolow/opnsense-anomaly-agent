@@ -2,7 +2,7 @@
 // Main App - React entry with sidebar and content area
 // ═══════════════════════════════════════════════════
 
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
 import TimeRangePicker from './components/TimeRangePicker';
@@ -28,7 +28,6 @@ import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
 import NginxTab from './components/tabs/NginxTab';
-import ResourceTab from './components/tabs/ResourceTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Overview',
@@ -50,7 +49,6 @@ const TAB_TITLE: Record<string, string> = {
   'wan-flap': 'WAN Flap Detection',
   'rules-classified': 'Rules ML',
   nginx: 'Nginx Monitor',
-  resources: 'Resources',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -75,9 +73,20 @@ function TabContent({ tab }: { tab: string }) {
     case 'rules-classified': return <RulesClassifiedTab />;
     case '': return <OverviewTab />;
     case 'nginx': return <NginxTab />;
-    case 'resources': return <ResourceTab />;
     default: return <OverviewTab />;
   }
+}
+
+function LoadingScreen() {
+  return (
+    <div className="flex items-center justify-center h-screen bg-cyber-darker">
+      <div className="text-center">
+        <div className="w-12 h-12 mx-auto mb-4 rounded-full border-4 border-cyber-border border-t-cyber-accent animate-spin" />
+        <div className="text-lg font-bold text-gradient-cyber">Loading Dashboard...</div>
+        <div className="text-xs text-cyber-textMuted mt-2 font-mono">Initializing SOC monitoring</div>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -181,7 +190,9 @@ export default function App() {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-6">
-          <TabContent key={activeTab} tab={activeTab} />
+          <Suspense fallback={<LoadingScreen />}>
+            <TabContent key={activeTab} tab={activeTab} />
+          </Suspense>
         </div>
       </main>
     </div>
