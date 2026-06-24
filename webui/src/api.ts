@@ -249,9 +249,16 @@ export const api = {
       ipv4: i.ipv4 || '',
       ipv6: i.ipv6 || '',
       status: i.status || (raw.status === 'connected' ? 'up' : 'down'),
-      bandwidth_in: '',
-      bandwidth_out: '',
+      bandwidth_in: i.received_bytes ? `${(i.received_bytes / (1024**3)).toFixed(1)} GB` : '',
+      bandwidth_out: i.sent_bytes ? `${(i.sent_bytes / (1024**3)).toFixed(1)} GB` : '',
       status_icon: raw.status === 'connected' ? 'connected' : 'disconnected',
+      received_bytes: typeof i.received_bytes === 'number' ? i.received_bytes : 0,
+      sent_bytes: typeof i.sent_bytes === 'number' ? i.sent_bytes : 0,
+      received_packets: typeof i.received_packets === 'number' ? i.received_packets : 0,
+      sent_packets: typeof i.sent_packets === 'number' ? i.sent_packets : 0,
+      received_errors: typeof i.received_errors === 'number' ? i.received_errors : 0,
+      send_errors: typeof i.send_errors === 'number' ? i.send_errors : 0,
+      dropped_packets: typeof i.dropped_packets === 'number' ? i.dropped_packets : 0,
     }));
     const gateways = Array.isArray(raw.gateways) ? raw.gateways : [];
     const gatewaysMapped = gateways.map((g: any) => ({
@@ -266,12 +273,22 @@ export const api = {
     }));
     return {
       version: (raw.opnsense_version as string) || 'unknown',
+      hostname: (raw.hostname as string) || '',
       uptime: (raw.uptime as string) || '',
       cpu_usage: typeof raw.cpu_usage === 'number' ? raw.cpu_usage : 0,
       memory_usage: typeof raw.memory_usage === 'number' ? raw.memory_usage : 0,
+      memory_total_gb: typeof raw.memory_total_gb === 'number' ? raw.memory_total_gb : 0,
+      memory_used_gb: typeof raw.memory_used_gb === 'number' ? raw.memory_used_gb : 0,
+      firewall_rules: typeof raw.firewall_rules === 'number' ? raw.firewall_rules : 0,
+      services_total: typeof raw.services_total === 'number' ? raw.services_total : 0,
+      services_running: typeof raw.services_running === 'number' ? raw.services_running : 0,
       interfaces: interfacesMapped,
       gateways: gatewaysMapped,
-      services: [],
+      services: Array.isArray(raw.services) ? raw.services.map((s: any) => ({
+        name: s.name || '',
+        status: s.status || 'unknown',
+        description: s.description || '',
+      })) : [],
     };
   },
 
@@ -455,9 +472,9 @@ export const api = {
   },
 
   // ── -style visualizations ──
-  trafficFlow: () => json<TrafficFlow>('//traffic-flow'),
-  protocolDistribution: () => json<ProtocolDistribution>('//protocols'),
-  actionDistribution: () => json<ActionDistribution>('//actions'),
+  trafficFlow: () => json<TrafficFlow>('/traffic-flow'),
+  protocolDistribution: () => json<ProtocolDistribution>('/protocols'),
+  actionDistribution: () => json<ActionDistribution>('/actions'),
   timeline: (params?: { period?: string; granularity?: string; start?: number; end?: number }) => {
     const qs = new URLSearchParams();
     if (params?.period) qs.set('period', params.period);
@@ -465,13 +482,13 @@ export const api = {
     if (params?.start) qs.set('start', String(params.start));
     if (params?.end) qs.set('end', String(params.end));
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    return json<Timeline>(`//timeline${suffix}`);
+    return json<Timeline>(`/timeline${suffix}`);
   },
-  blockedIps: () => json<BlockedIps>('//blocked-ips'),
-  topPorts: () => json<TopPorts>('//top-ports'),
-  ruleHeatmap: () => json<RuleHeatmap>('//rule-heatmap'),
-  directionDistribution: () => json<DirectionDistribution>('//directions'),
-  ruleActionBreakdown: () => json<RuleActionBreakdown>('//rule-actions'),
+  blockedIps: () => json<BlockedIps>('/blocked-ips'),
+  topPorts: () => json<TopPorts>('/top-ports'),
+  ruleHeatmap: () => json<RuleHeatmap>('/rule-heatmap'),
+  directionDistribution: () => json<DirectionDistribution>('/directions'),
+  ruleActionBreakdown: () => json<RuleActionBreakdown>('/rule-actions'),
 
   // Mutes
   mutes: () => json<MutesData[]>('/mutes'),
