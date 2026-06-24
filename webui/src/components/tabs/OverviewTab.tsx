@@ -153,19 +153,26 @@ export default function OverviewTab() {
 
   // Fetch timeline data based on time range
   useEffect(() => {
+    let cancelled = false;
     const fetchData = async () => {
       setTimelineLoading(true);
       setSSETimelineData([]); // Clear SSE data when time range changes
       try {
         let start: number;
         let end: number;
+        let period: string;
+        let granularity: string;
 
         if (timeRange === 'custom' && customTimeRange) {
           start = customTimeRange.start;
           end = customTimeRange.end;
+          period = 'custom';
+          granularity = 'hour';
         } else {
           const now = Math.floor(Date.now() / 1000);
-          switch (timeRange) {
+          period = timeRange || '24h';
+          granularity = (period === '7d' || period === '30d') ? 'day' : 'hour';
+          switch (period) {
             case '1h': start = now - 3600; break;
             case '6h': start = now - 21600; break;
             case '24h': start = now - 86400; break;
@@ -176,24 +183,28 @@ export default function OverviewTab() {
           end = now;
         }
 
-        const response = await fetch(`/api//timeline?start=${start}&end=${end}`);
-        const result = await response.json();
+        const result = await api.timeline({ period, granularity, start, end });
 
-        if (result.timeline) {
-          const data = result.timeline.map((item: { time: string; count: number }) => ({
+        if (!cancelled && result.timeline) {
+          const data = result.timeline.map((item) => ({
             time: Math.floor(new Date(item.time).getTime() / 1000),
             value: item.count,
           }));
           setTimelineData(data);
         }
       } catch (error) {
-        console.error('Failed to fetch timeline data:', error);
+        if (!cancelled) {
+          console.error('Failed to fetch timeline data:', error);
+        }
       } finally {
-        setTimelineLoading(false);
+        if (!cancelled) {
+          setTimelineLoading(false);
+        }
       }
     };
 
     fetchData();
+    return () => { cancelled = true; };
   }, [timeRange, customTimeRange]);
 
   // SSE live updates - connect to SSE stream and merge with existing data

@@ -273,6 +273,7 @@ export interface RulesClassifiedData {
     low_traffic: number;
     abusive: number;
     good: number;
+    uncertain: number;
   };
   rules: Array<{
     uuid: string;
