@@ -7,9 +7,11 @@ import { api } from '@/api';
 import type { AlertsData } from '@/types';
 import { ShieldAlert, Search, Filter } from 'lucide-react';
 import { useState } from 'react';
+import { AlertsSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
 
 export default function AlertsTab() {
-  const { data } = useQuery<AlertsData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<AlertsData>({
     queryKey: ['alerts'],
     queryFn: api.alerts,
     refetchInterval: 30000,
@@ -18,7 +20,8 @@ export default function AlertsTab() {
   const [filter, setFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isLoading) return <AlertsSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Threat Alerts" />;
 
   const filtered = data.anomalies.filter((a) => {
     if (filter && !a.details.toLowerCase().includes(filter.toLowerCase()) &&

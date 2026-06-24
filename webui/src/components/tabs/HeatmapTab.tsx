@@ -5,11 +5,14 @@ import { api } from '@/api';
 import type { HeatmapData } from '@/types';
 import { Flame } from 'lucide-react';
 
+import { HeatmapSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function HeatmapTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string } | null>(null);
   
-  const { data, isLoading } = useQuery<HeatmapData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<HeatmapData>({
     queryKey: ['heatmap'],
     queryFn: () => api.heatmap(),
     refetchInterval: 60000,
@@ -107,11 +110,11 @@ export default function HeatmapTab() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
-      </div>
-    );
+    return <HeatmapSkeleton />;
+  }
+
+  if (isError && error) {
+    return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Traffic Heatmap" />;
   }
 
   return (

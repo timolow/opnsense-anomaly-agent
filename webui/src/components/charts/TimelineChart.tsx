@@ -50,10 +50,25 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
   }, [data]);
 
   useEffect(() => {
-    if (!containerRef.current || !seriesData) return;
+    if (!containerRef.current || !seriesData) {
+      if (seriesData === null && data.length > 0) {
+        console.warn('[TimelineChart] seriesData is null despite data.length=' + data.length + '. First 3 items:', JSON.stringify(data.slice(0, 3)));
+      }
+      return;
+    }
 
     const width = containerRef.current.clientWidth;
     const [times, values] = seriesData;
+
+    // Check for any NaN in the data
+    let hasNaN = false;
+    for (let i = 0; i < times.length; i++) {
+      if (!Number.isFinite(times[i]) || !Number.isFinite(values[i])) {
+        console.error('[TimelineChart] Invalid data at index ' + i + ': time=' + times[i] + ' value=' + values[i]);
+        hasNaN = true;
+      }
+    }
+    if (hasNaN) return; // Don't render chart with bad data
 
     // Compute y-axis range - use log-friendly scale for extreme variance
     const maxVal = Math.max(...Array.from(values));

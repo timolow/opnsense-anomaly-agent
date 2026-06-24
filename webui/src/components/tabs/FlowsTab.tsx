@@ -7,14 +7,18 @@ import { api } from '@/api';
 import type { IpFlowData } from '@/types';
 import { GitMerge } from 'lucide-react';
 
+import { FlowsSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
 export default function FlowsTab() {
-  const { data } = useQuery<IpFlowData>({
+  const { data, isLoading, isError, error, refetch } = useQuery<IpFlowData>({
     queryKey: ['ip-flow'],
     queryFn: api.ipFlow,
     refetchInterval: 30000,
   });
 
-  if (!data) return <div className="flex items-center justify-center h-64"><div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" /></div>;
+  if (isLoading) return <FlowsSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Flow Map" />;
 
   const nodes = data.nodes.slice(0, 20);
   const edges = data.edges.slice(0, 50);

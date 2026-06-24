@@ -13,6 +13,8 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useStore } from '../../store';
 import TimelineChart from '../../components/charts/TimelineChart';
+import { OverviewSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
 
 function StatBox({ value, label, color, change }: {
   value: string | number;
@@ -142,11 +144,11 @@ export default function OverviewTab() {
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [sseTimelineData, setSSETimelineData] = useState<{ time: number; value: number }[]>([]);
 
-  const { data: stats } = useQuery<StatsData>({
+  const { data: stats, isLoading: statsLoading, isError: statsError, error: statsErrorObj } = useQuery<StatsData>({
     queryKey: ['stats'],
     queryFn: api.stats,
   });
-  const { data: alerts } = useQuery<AlertsData>({
+  const { data: alerts, isError: alertsError, error: alertsErrorObj } = useQuery<AlertsData>({
     queryKey: ['alerts'],
     queryFn: api.alerts,
   });
@@ -294,11 +296,11 @@ export default function OverviewTab() {
   }, [timelineData, sseTimelineData]);
 
   if (!stats) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />
-      </div>
-    );
+    return <OverviewSkeleton />;
+  }
+
+  if (statsError && statsErrorObj) {
+    return <TabQueryError error={statsErrorObj} isError={statsError} onRetry={() => window.location.reload()} tabName="Overview" />;
   }
 
   return (
