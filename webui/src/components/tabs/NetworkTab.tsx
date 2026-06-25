@@ -280,7 +280,7 @@ function InterfaceTraffic({ stats }: { stats: any }) {
       </h3>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={interfaces} layout="vertical" margin={{ left: 0, right: 30 }}>
-          <XAxis type="number" hide />
+          <XAxis type="number" domain={[0, 'auto']} tick={{}} axisLine={false} tickLine={false} />
           <YAxis
             dataKey="name"
             type="category"

@@ -9,34 +9,172 @@ import type { StatsData, AlertsData, BaselineDeviationsData } from '@/types';
 import {
   AlertTriangle, Shield, Ban, Eye, TrendingUp,
   Activity, Clock, ArrowUpRight, ArrowDownRight,
-  BarChart3, Zap,
+  BarChart3, Zap, ChevronDown, ChevronUp,
+  RadioTower, Network, ShieldCheck, Bell, FileText, Volume2,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { useStore } from '../../store';
 import TimelineChart from '../../components/charts/TimelineChart';
 import { OverviewSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
 
-function StatBox({ value, label, color, change }: {
-  value: string | number;
-  label: string;
-  color?: string;
-  change?: { value: number; positive: boolean };
-}) {
+// ── Traffic Summary: consolidated panel ──
+
+function MiniSparkline({ data }: { data: { time: number; value: number }[] }) {
+  if (!data || data.length === 0) {
+    return <div className="h-[64px] flex items-center justify-center text-xs text-cyber-textMuted">No timeline data</div>;
+  }
+  const chartData = data.map((d, i) => ({ x: i, value: d.value }));
   return (
-    <div className="cyber-card p-4 cyber-card-hover group">
-      <div className="flex items-start justify-between mb-2">
-        <span className="cyber-stat-label">{label}</span>
-        {change && (
-          <span className={`flex items-center gap-0.5 text-xs font-mono ${change.positive ? 'text-cyber-green' : 'text-cyber-red'}`}>
-            {change.positive ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-            {change.value}%
-          </span>
-        )}
+    <ResponsiveContainer width="100%" height={64}>
+      <AreaChart data={chartData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#00ffd5" stopOpacity={0.35} />
+            <stop offset="95%" stopColor="#00ffd5" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <XAxis dataKey="x" domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
+        <YAxis domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
+        <Area
+          type="monotone"
+          dataKey="value"
+          stroke="#00ffd5"
+          strokeWidth={1.5}
+          fill="url(#sparkGrad)"
+          connectNulls
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function PassBlockBar({ passed, blocked }: { passed: number; blocked: number }) {
+  const total = passed + blocked;
+  if (total === 0) return null;
+  const passPct = Math.round((passed / total) * 100);
+  const blockPct = 100 - passPct;
+  return (
+    <div className="w-full">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-mono text-cyber-textMuted">Pass / Block ratio</span>
+        <span className="text-xs font-mono font-bold" style={{ color: '#00ffd5' }}>{passPct}% / {blockPct}%</span>
       </div>
-      <div className={`text-2xl font-bold font-mono ${color || 'text-neon-cyan'}`} style={color ? { textShadow: `0 0 20px ${color}` } : undefined}>
-        {typeof value === 'number' ? value.toLocaleString() : value}
+      <div className="h-3 w-full rounded-full overflow-hidden flex" style={{ background: 'rgba(255,255,255,0.04)' }}>
+        <div
+          className="h-full transition-all duration-500"
+          style={{ width: `${passPct}%`, background: 'linear-gradient(90deg, #00ff88, #00ffd5)' }}
+        />
+        <div
+          className="h-full transition-all duration-500"
+          style={{ width: `${blockPct}%`, background: 'linear-gradient(90deg, #ff1744, #ff5252)' }}
+        />
       </div>
+      <div className="flex justify-between mt-1">
+        <span className="text-[10px] font-mono" style={{ color: '#00ff88' }}>Passed {passed.toLocaleString()}</span>
+        <span className="text-[10px] font-mono" style={{ color: '#ff1744' }}>Blocked {blocked.toLocaleString()}</span>
+      </div>
+    </div>
+  );
+}
+
+function TrafficSummary({ stats, timelineData }: { stats: StatsData; timelineData: { time: number; value: number }[] }) {
+  return (
+    <div className="cyber-card p-5">
+      <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
+        <RadioTower size={14} /> Traffic Summary
+      </h3>
+
+      {/* Top section: large events number + sparkline */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+        <div className="lg:col-span-1 flex flex-col justify-center">
+          <div className="text-4xl font-bold font-mono text-neon-cyan" style={{ textShadow: '0 0 30px rgba(0,255,213,0.4)' }}>
+            {(stats.events_24h || 0).toLocaleString()}
+          </div>
+          <div className="text-sm text-cyber-textMuted mt-1">Total Events (24h)</div>
+        </div>
+        <div className="lg:col-span-2">
+          <MiniSparkline data={timelineData} />
+        </div>
+      </div>
+
+      {/* Middle: inline mini stats row */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(255,23,68,0.08)', border: '1px solid rgba(255,23,68,0.2)' }}>
+          <Ban size={16} className="mx-auto mb-1" style={{ color: '#ff1744' }} />
+          <div className="text-xl font-bold font-mono" style={{ color: '#ff1744' }}>{(stats.blocked_24h || 0).toLocaleString()}</div>
+          <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Blocked</div>
+        </div>
+        <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.2)' }}>
+          <ShieldCheck size={16} className="mx-auto mb-1" style={{ color: '#00ff88' }} />
+          <div className="text-xl font-bold font-mono" style={{ color: '#00ff88' }}>{(stats.passed_24h || 0).toLocaleString()}</div>
+          <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Passed</div>
+        </div>
+        <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)' }}>
+          <Network size={16} className="mx-auto mb-1" style={{ color: '#94a3b8' }} />
+          <div className="text-xl font-bold font-mono text-neon-cyan">{stats.unique_ips?.toLocaleString() || '0'}</div>
+          <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Unique IPs</div>
+        </div>
+      </div>
+
+      {/* Bottom: Pass/Block ratio bar */}
+      <PassBlockBar passed={stats.passed_24h || 0} blocked={stats.blocked_24h || 0} />
+    </div>
+  );
+}
+
+// ── Collapsible Agent Status ──
+
+const AGENT_STATUS_ICONS: Record<string, React.ComponentType<{ size: number }>> = {
+  'Anomalies': AlertTriangle,
+  'Alerts Sent': Bell,
+  'Rules Classified': FileText,
+  'Active Mutes': Volume2,
+};
+
+const AGENT_STATUS_COLORS: Record<string, string> = {
+  'Anomalies': '#ffbe0b',
+  'Alerts Sent': '#00ffd5',
+  'Rules Classified': '#a855f7',
+  'Active Mutes': '#94a3b8',
+};
+
+function AgentStatus({ stats }: { stats: StatsData }) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const items = [
+    { label: 'Anomalies', value: stats.anomalies_detected },
+    { label: 'Alerts Sent', value: stats.alerts_sent },
+    { label: 'Rules Classified', value: stats.rules_classified },
+    { label: 'Active Mutes', value: stats.mutes_active },
+  ];
+
+  return (
+    <div className="cyber-card overflow-hidden">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center justify-between p-4 cursor-pointer transition-colors hover:bg-white/5"
+      >
+        <span className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider flex items-center gap-2">
+          <Activity size={14} /> Agent Status
+        </span>
+        {collapsed ? <ChevronDown size={16} className="text-cyber-textMuted" /> : <ChevronUp size={16} className="text-cyber-textMuted" />}
+      </button>
+      {!collapsed && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 pb-4">
+          {items.map((item) => {
+            const Icon = AGENT_STATUS_ICONS[item.label] || Activity;
+            const color = AGENT_STATUS_COLORS[item.label] || '#e2e8f0';
+            return (
+              <div key={item.label} className="rounded-lg p-3 text-center" style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
+                <Icon size={16} className="mx-auto mb-1" style={{ color }} />
+                <div className="text-xl font-bold font-mono" style={{ color }}>{item.value.toLocaleString()}</div>
+                <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">{item.label}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -90,9 +228,9 @@ function SeverityChart({ data }: { data: StatsData }) {
         <TrendingUp size={14} /> Severity Distribution
       </h3>
       <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 30 }}>
-          <XAxis type="number" hide />
-          <YAxis dataKey="name" type="category" width={70} tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} />
+        <BarChart data={chartData} margin={{ left: 0, right: 30, top: 10, bottom: 0 }}>
+          <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+          <YAxis domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
           <Tooltip
             contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
             itemStyle={{ fontFamily: 'monospace' }}
@@ -395,16 +533,9 @@ export default function OverviewTab() {
     <div className="space-y-6">
       <ThreatSummary data={stats} />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <StatBox value={(stats.events_24h || 0).toLocaleString()} label="Events (24h)" change={{ value: 12, positive: true }} />
-        <StatBox value={(stats.blocked_24h || 0).toLocaleString()} label="Blocked" color="text-cyber-red" />
-        <StatBox value={(stats.passed_24h || 0).toLocaleString()} label="Passed" color="text-cyber-green" />
-        <StatBox value={stats.unique_ips} label="Unique IPs" />
-        <StatBox value={stats.anomalies_detected} label="Anomalies" color="text-cyber-yellow" />
-        <StatBox value={stats.alerts_sent} label="Alerts Sent" />
-        <StatBox value={stats.rules_classified} label="Rules Classified" color="text-cyber-purple" />
-        <StatBox value={stats.mutes_active} label="Active Mutes" />
-      </div>
+      <TrafficSummary stats={stats} timelineData={combinedTimelineData} />
+
+      <AgentStatus stats={stats} />
 
       {/* Timeline Chart - uPlot time series with SSE live updates */}
       <TimelineChart
