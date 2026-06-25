@@ -65,6 +65,10 @@ interface AppState {
   Connected: boolean;
   setConnected: (connected: boolean) => void;
 
+  // Severity filter (cross-tab: Overview cards → Alerts)
+  filterSeverity: '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  setFilterSeverity: (sev: '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW') => void;
+
   // Time range (Grafana-like time selection)
   timeRange: TimeRange;
   setTimeRange: (range: TimeRange) => void;
@@ -99,6 +103,8 @@ export const useStore = create<AppState>((set) => ({
   setQuickFilterType: (type) => set({ quickFilterType: type }),
   Connected: false,
   setConnected: (connected: boolean) => set({ Connected: connected }),
+  filterSeverity: '',
+  setFilterSeverity: (sev: '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW') => set({ filterSeverity: sev }),
   timeRange: '24h',
   setTimeRange: (range: TimeRange) => set({ timeRange: range }),
   customTimeRange: undefined,

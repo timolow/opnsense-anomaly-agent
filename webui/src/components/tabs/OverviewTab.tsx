@@ -41,19 +41,28 @@ function StatBox({ value, label, color, change }: {
 }
 
 function ThreatSummary({ data }: { data: StatsData }) {
+  const setActiveTab = useStore((s) => s.setActiveTab);
+  const setFilterSeverity = useStore((s) => s.setFilterSeverity);
+
   const threats = [
-    { label: 'CRITICAL', value: data.threat_critical, color: 'text-cyber-red', border: 'border-cyber-red', bg: 'rgba(255,23,68,0.1)' },
-    { label: 'HIGH', value: data.threat_high, color: 'text-cyber-orange', border: 'border-cyber-orange', bg: 'rgba(255,120,0,0.1)' },
-    { label: 'MEDIUM', value: data.threat_medium, color: 'text-cyber-yellow', border: 'border-cyber-yellow', bg: 'rgba(255,190,11,0.1)' },
-    { label: 'LOW', value: data.threat_low, color: 'text-cyber-green', border: 'border-cyber-green', bg: 'rgba(0,255,136,0.1)' },
+    { label: 'CRITICAL', value: data.threat_critical, color: 'text-cyber-red', border: 'border-cyber-red', bg: 'rgba(255,23,68,0.1)', sev: 'CRITICAL' as const },
+    { label: 'HIGH', value: data.threat_high, color: 'text-cyber-orange', border: 'border-cyber-orange', bg: 'rgba(255,120,0,0.1)', sev: 'HIGH' as const },
+    { label: 'MEDIUM', value: data.threat_medium, color: 'text-cyber-yellow', border: 'border-cyber-yellow', bg: 'rgba(255,190,11,0.1)', sev: 'MEDIUM' as const },
+    { label: 'LOW', value: data.threat_low, color: 'text-cyber-green', border: 'border-cyber-green', bg: 'rgba(0,255,136,0.1)', sev: 'LOW' as const },
   ];
+
+  const handleClick = (sev: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW') => {
+    setFilterSeverity(sev);
+    setActiveTab('alerts');
+  };
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
       {threats.map((t) => (
         <div
           key={t.label}
-          className="cyber-card p-4 cyber-card-hover cursor-pointer"
+          className="cyber-card p-4 cyber-card-hover cursor-pointer group"
+          onClick={() => handleClick(t.sev)}
           style={{ borderLeft: `3px solid ${t.border.replace('text-', 'var(--color-')}` }}
         >
           <div className={`text-2xl font-bold font-mono ${t.color}`} style={{ textShadow: `0 0 15px ${t.color.includes('red') ? 'rgba(255,23,68,0.5)' : t.color.includes('orange') ? 'rgba(255,120,0,0.5)' : t.color.includes('yellow') ? 'rgba(255,190,11,0.5)' : 'rgba(0,255,136,0.5)'}` }}>

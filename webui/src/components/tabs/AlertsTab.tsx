@@ -5,8 +5,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { AlertsData } from '@/types';
-import { ShieldAlert, Search, Filter } from 'lucide-react';
-import { useState } from 'react';
+import { ShieldAlert, Search, Filter, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useStore } from '../../store';
 import { AlertsSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
 
@@ -17,8 +18,23 @@ export default function AlertsTab() {
     refetchInterval: 30000,
   });
 
+  const filterSeverity = useStore((s) => s.filterSeverity);
+  const setFilterSeverity = useStore((s) => s.setFilterSeverity);
+
   const [filter, setFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
+
+  // Sync store-driven filter into local state when navigating from Overview
+  useEffect(() => {
+    if (filterSeverity) {
+      setSeverityFilter(filterSeverity);
+    }
+  }, [filterSeverity]);
+
+  // Keep store in sync when user changes filter locally
+  useEffect(() => {
+    setFilterSeverity(severityFilter as '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW');
+  }, [severityFilter, setFilterSeverity]);
 
   if (isLoading) return <AlertsSkeleton />;
   if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Threat Alerts" />;
@@ -47,6 +63,14 @@ export default function AlertsTab() {
         </div>
         <h2 className="text-lg font-bold">Threat Alerts</h2>
         <span className="text-xs text-cyber-textMuted font-mono">{data.anomalies.length} total</span>
+        {severityFilter && (
+          <button
+            onClick={() => setSeverityFilter('')}
+            className="flex items-center gap-1 text-xs font-mono text-cyber-cyan hover:text-cyber-cyan/80 transition-colors bg-cyber-cyan/10 border border-cyber-cyan/30 px-2 py-1 rounded"
+          >
+            <X size={12} /> Clear filter
+          </button>
+        )}
       </div>
 
       {/* Filters */}
