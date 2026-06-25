@@ -5,10 +5,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
-import type { StatsData, AlertsData } from '@/types';
+import type { StatsData, AlertsData, BaselineDeviationsData } from '@/types';
 import {
   AlertTriangle, Shield, Ban, Eye, TrendingUp,
   Activity, Clock, ArrowUpRight, ArrowDownRight,
+  BarChart3, Zap,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useStore } from '../../store';
@@ -107,6 +108,79 @@ function SeverityChart({ data }: { data: StatsData }) {
   );
 }
 
+function BaselineDeviationsPanel({ data }: { data: BaselineDeviationsData }) {
+  const setActiveTab = useStore((s) => s.setActiveTab);
+
+  const severityStyle = (sev: string) => {
+    switch (sev) {
+      case 'critical': return { color: '#ff1744', bg: 'rgba(255,23,68,0.12)', border: 'var(--color-cyber-red)', glow: 'rgba(255,23,68,0.4)' };
+      case 'warning': return { color: '#ff7800', bg: 'rgba(255,120,0,0.12)', border: 'var(--color-cyber-orange)', glow: 'rgba(255,120,0,0.4)' };
+      default: return { color: '#ffbe0b', bg: 'rgba(255,190,11,0.12)', border: 'var(--color-cyber-yellow)', glow: 'rgba(255,190,11,0.4)' };
+    }
+  };
+
+  const handleClick = (rule: string) => {
+    setActiveTab('rules-classified');
+  };
+
+  if (!data.deviations || data.deviations.length === 0) {
+    return (
+      <div className="cyber-card p-4">
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
+          <BarChart3 size={14} /> Baseline Deviations
+        </h3>
+        <div className="text-sm text-cyber-textMuted text-center py-8 font-mono">
+          No rules currently exceeding their baseline thresholds
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cyber-card p-4">
+      <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
+        <Zap size={14} /> Baseline Deviations
+        <span className="text-xs font-mono text-cyber-textMuted ml-auto">
+          {data.deviations.length} of {data.total_rules_with_baseline} rules
+        </span>
+      </h3>
+      <div className="cyber-scrollable max-h-[360px] overflow-y-auto space-y-2">
+        {data.deviations.map((d, i) => {
+          const style = severityStyle(d.severity);
+          return (
+            <div
+              key={i}
+              className="cyber-card p-3 cyber-card-hover cursor-pointer group"
+              onClick={() => handleClick(d.rule)}
+              style={{ borderLeft: `3px solid ${style.border}`, background: style.bg }}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-medium truncate max-w-[60%] group-hover:text-neon-cyan transition-colors">
+                  {d.rule_name || d.rule}
+                </span>
+                <span
+                  className="text-lg font-bold font-mono"
+                  style={{ color: style.color, textShadow: `0 0 12px ${style.glow}` }}
+                >
+                  {d.deviation}x
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-xs font-mono text-cyber-textMuted">
+                <span>Current: <span style={{ color: '#e2e8f0' }}>{d.current_rate}/h</span></span>
+                <span>Baseline: <span style={{ color: '#e2e8f0' }}>{d.baseline_rate}/h</span></span>
+                <span>Peak: <span style={{ color: '#e2e8f0' }}>{d.max_per_hour}/h</span></span>
+                <span className="ml-auto">
+                  Samples: <span style={{ color: '#e2e8f0' }}>{d.sample_count}</span>
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ActivityFeed({ alerts }: { alerts: AlertsData }) {
   const recent = alerts.anomalies.slice(0, 8);
   
@@ -160,6 +234,11 @@ export default function OverviewTab() {
   const { data: alerts, isError: alertsError, error: alertsErrorObj } = useQuery<AlertsData>({
     queryKey: ['alerts'],
     queryFn: api.alerts,
+  });
+  const { data: baselines } = useQuery<BaselineDeviationsData>({
+    queryKey: ['baseline-deviations'],
+    queryFn: api.baselineDeviations,
+    refetchInterval: 60_000, // refresh every 60s
   });
 
   // Fetch timeline data based on time range
@@ -342,6 +421,9 @@ export default function OverviewTab() {
         </div>
         <ActivityFeed alerts={alerts || { anomalies: [] }} />
       </div>
+
+      {/* Baseline Deviations panel */}
+      <BaselineDeviationsPanel data={baselines || { deviations: [], total_rules_with_baseline: 0, timestamp: '' }} />
     </div>
   );
 }
