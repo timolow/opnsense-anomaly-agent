@@ -34,8 +34,8 @@ function MiniSparkline({ data }: { data: { time: number; value: number }[] }) {
             <stop offset="95%" stopColor="#00ffd5" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <XAxis dataKey="x" hide />
-        <YAxis hide />
+        <XAxis dataKey="x" domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
+        <YAxis domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
         <Area
           type="monotone"
           dataKey="value"
@@ -228,9 +228,9 @@ function SeverityChart({ data }: { data: StatsData }) {
         <TrendingUp size={14} /> Severity Distribution
       </h3>
       <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 30 }}>
-          <XAxis type="number" hide />
-          <YAxis dataKey="name" type="category" width={70} tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} />
+        <BarChart data={chartData} margin={{ left: 0, right: 30, top: 10, bottom: 0 }}>
+          <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+          <YAxis domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
           <Tooltip
             contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
             itemStyle={{ fontFamily: 'monospace' }}
