@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useStore } from '../../store';
+import { CYBER, SEVERITY, RECHARTS_TOOLTIP } from '@/utils/colors';
 import TimelineChart from '../../components/charts/TimelineChart';
 import { OverviewSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
@@ -78,10 +79,10 @@ function ThreatSummary({ data }: { data: StatsData }) {
 
 function SeverityChart({ data }: { data: StatsData }) {
   const chartData = [
-    { name: 'Critical', value: data.threat_critical, color: '#ff1744' },
-    { name: 'High', value: data.threat_high, color: '#ff7800' },
-    { name: 'Medium', value: data.threat_medium, color: '#ffbe0b' },
-    { name: 'Low', value: data.threat_low, color: '#00ff88' },
+    { name: 'Critical', value: data.threat_critical, color: CYBER.red },
+    { name: 'High', value: data.threat_high, color: CYBER.orange },
+    { name: 'Medium', value: data.threat_medium, color: CYBER.yellow },
+    { name: 'Low', value: data.threat_low, color: CYBER.green },
   ];
 
   return (
@@ -92,9 +93,9 @@ function SeverityChart({ data }: { data: StatsData }) {
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={chartData} layout="vertical" margin={{ left: 0, right: 30 }}>
           <XAxis type="number" hide />
-          <YAxis dataKey="name" type="category" width={70} tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'monospace' }} />
+          <YAxis dataKey="name" type="category" width={70} tick={{ fill: CYBER.textMuted, fontSize: 11, fontFamily: 'monospace' }} />
           <Tooltip
-            contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
+            contentStyle={RECHARTS_TOOLTIP}
             itemStyle={{ fontFamily: 'monospace' }}
           />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24}>
@@ -113,9 +114,9 @@ function BaselineDeviationsPanel({ data }: { data: BaselineDeviationsData }) {
 
   const severityStyle = (sev: string) => {
     switch (sev) {
-      case 'critical': return { color: '#ff1744', bg: 'rgba(255,23,68,0.12)', border: 'var(--color-cyber-red)', glow: 'rgba(255,23,68,0.4)' };
-      case 'warning': return { color: '#ff7800', bg: 'rgba(255,120,0,0.12)', border: 'var(--color-cyber-orange)', glow: 'rgba(255,120,0,0.4)' };
-      default: return { color: '#ffbe0b', bg: 'rgba(255,190,11,0.12)', border: 'var(--color-cyber-yellow)', glow: 'rgba(255,190,11,0.4)' };
+      case 'critical': return { color: CYBER.red, bg: 'rgba(255,23,68,0.12)', border: 'var(--color-cyber-red)', glow: 'rgba(255,23,68,0.4)' };
+      case 'warning': return { color: CYBER.orange, bg: 'rgba(255,120,0,0.12)', border: 'var(--color-cyber-orange)', glow: 'rgba(255,120,0,0.4)' };
+      default: return { color: CYBER.yellow, bg: 'rgba(255,190,11,0.12)', border: 'var(--color-cyber-yellow)', glow: 'rgba(255,190,11,0.4)' };
     }
   };
 
@@ -166,11 +167,11 @@ function BaselineDeviationsPanel({ data }: { data: BaselineDeviationsData }) {
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs font-mono text-cyber-textMuted">
-                <span>Current: <span style={{ color: '#e2e8f0' }}>{d.current_rate}/h</span></span>
-                <span>Baseline: <span style={{ color: '#e2e8f0' }}>{d.baseline_rate}/h</span></span>
-                <span>Peak: <span style={{ color: '#e2e8f0' }}>{d.max_per_hour}/h</span></span>
+                <span>Current: <span style={{ color: CYBER.text }}>{d.current_rate}/h</span></span>
+                <span>Baseline: <span style={{ color: CYBER.text }}>{d.baseline_rate}/h</span></span>
+                <span>Peak: <span style={{ color: CYBER.text }}>{d.max_per_hour}/h</span></span>
                 <span className="ml-auto">
-                  Samples: <span style={{ color: '#e2e8f0' }}>{d.sample_count}</span>
+                  Samples: <span style={{ color: CYBER.text }}>{d.sample_count}</span>
                 </span>
               </div>
             </div>

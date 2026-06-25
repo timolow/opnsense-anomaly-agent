@@ -26,6 +26,15 @@ export default {
           text: '#e2e8f0',
           textMuted: '#64748b',
           textDim: '#3b4a5c',
+        },
+        neon: {
+          cyan: '#00e5ff',
+          green: '#00ff88',
+          red: '#ff1744',
+          pink: '#ff006e',
+          yellow: '#ffbe0b',
+          purple: '#8338ec',
+          orange: '#ff7800',
         }
       },
       fontFamily: {

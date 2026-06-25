@@ -5,14 +5,13 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
 import type { NginxSummary, NginxAnomaly } from '../../types';
+import { CYBER, CHART, severityStyle, METHOD_COLORS } from '../../utils/colors';
 
-// Severity badge colors (cyberpunk theme)
-const severityColors: Record<string, { bg: string; text: string; glow: string }> = {
-  CRITICAL: { bg: 'rgba(255, 0, 64, 0.15)', text: '#ff0040', glow: 'rgba(255, 0, 64, 0.6)' },
-  HIGH: { bg: 'rgba(255, 165, 0, 0.15)', text: '#ffa500', glow: 'rgba(255, 165, 0, 0.6)' },
-  MEDIUM: { bg: 'rgba(255, 255, 0, 0.15)', text: '#ffff00', glow: 'rgba(255, 255, 0, 0.5)' },
-  LOW: { bg: 'rgba(0, 255, 170, 0.15)', text: '#00ffaa', glow: 'rgba(0, 255, 170, 0.5)' },
-};
+// Severity style helper for nginx anomalies
+function nginxSeverityStyle(sev: string) {
+  const s = severityStyle(sev);
+  return { bg: s.bg, text: s.color, glow: s.glow };
+}
 
 // Attack type icon mapping
 const attackIcons: Record<string, string> = {
@@ -37,14 +36,14 @@ function SummaryCard({ title, value, color, description }: { title: string; valu
       flexDirection: 'column',
       gap: '4px',
     }}>
-      <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: '#8899aa' }}>
+      <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: CYBER.textMuted }}>
         {title}
       </div>
       <div style={{ fontSize: '28px', fontWeight: '700', color, fontFamily: 'monospace' }}>
         {value}
       </div>
       {description && (
-        <div style={{ fontSize: '11px', color: '#667788', marginTop: '2px' }}>
+        <div style={{ fontSize: '11px', color: CYBER.textMuted, marginTop: '2px' }}>
           {description}
         </div>
       )}
@@ -69,7 +68,7 @@ function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
       padding: '16px',
       backdropFilter: 'blur(10px)',
     }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: CYBER.textMuted, textTransform: 'uppercase', letterSpacing: '1px' }}>
         Response Codes
       </h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -78,7 +77,7 @@ function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
           const isOk = Number(code) < 400;
           const isErr = Number(code) >= 400 && Number(code) < 500;
           const isServer = Number(code) >= 500;
-          const color = isOk ? '#00ffaa' : isErr ? '#ffa500' : '#ff0040';
+          const color = isOk ? CYBER.green : isErr ? CYBER.orange : CYBER.red;
           
           return (
             <div key={code} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -100,7 +99,7 @@ function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
                   transition: 'width 0.3s ease',
                 }} />
               </div>
-              <div style={{ fontSize: '12px', color: '#8899aa', minWidth: '60px', textAlign: 'right', fontFamily: 'monospace' }}>
+              <div style={{ fontSize: '12px', color: CYBER.textMuted, minWidth: '60px', textAlign: 'right', fontFamily: 'monospace' }}>
                 {(count || 0).toLocaleString()} ({pct.toFixed(1)}%)
               </div>
             </div>
@@ -117,7 +116,7 @@ function MethodChart({ by_method }: { by_method: Record<string, number> }) {
   if (total === 0) return null;
 
   const sorted = Object.entries(by_method).sort((a, b) => b[1] - a[1]);
-  const colors = ['#00ffaa', '#00ccff', '#ff00ff', '#ffff00', '#ff8800', '#88ff00'];
+  const colors = METHOD_COLORS;
 
   return (
     <div style={{
@@ -127,7 +126,7 @@ function MethodChart({ by_method }: { by_method: Record<string, number> }) {
       padding: '16px',
       backdropFilter: 'blur(10px)',
     }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: CYBER.textMuted, textTransform: 'uppercase', letterSpacing: '1px' }}>
         HTTP Methods
       </h3>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -153,7 +152,7 @@ function MethodChart({ by_method }: { by_method: Record<string, number> }) {
               <div style={{ fontSize: '16px', fontWeight: '700', color, fontFamily: 'monospace' }}>
                 {count || 0}
               </div>
-              <div style={{ fontSize: '10px', color: '#8899aa' }}>{pct.toFixed(1)}%</div>
+              <div style={{ fontSize: '10px', color: CYBER.textMuted }}>{pct.toFixed(1)}%</div>
             </div>
           );
         })}
@@ -165,7 +164,7 @@ function MethodChart({ by_method }: { by_method: Record<string, number> }) {
 // ── Top IPs Table ──
 function TopIPsTable({ ips }: { ips: Array<{ ip: string; requests: number }> }) {
   if (ips.length === 0) return (
-    <div style={{ color: '#667788', textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+    <div style={{ color: CYBER.textMuted, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
       No data yet — nginx events will populate here as traffic flows.
     </div>
   );
@@ -179,23 +178,23 @@ function TopIPsTable({ ips }: { ips: Array<{ ip: string; requests: number }> }) 
       backdropFilter: 'blur(10px)',
       overflowX: 'auto',
     }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: CYBER.textMuted, textTransform: 'uppercase', letterSpacing: '1px' }}>
         Top Source IPs
       </h3>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(0,255,170,0.1)' }}>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>IP Address</th>
-            <th style={{ padding: '8px', textAlign: 'right', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Requests</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>IP Address</th>
+            <th style={{ padding: '8px', textAlign: 'right', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Requests</th>
           </tr>
         </thead>
         <tbody>
           {ips.slice(0, 10).map((item, i) => (
             <tr key={item.ip} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-              <td style={{ padding: '8px', fontFamily: 'monospace', color: '#aabbcc' }}>
+              <td style={{ padding: '8px', fontFamily: 'monospace', color: CYBER.text }}>
                 {item.ip}
               </td>
-              <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#00ffaa' }}>
+              <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: CYBER.green }}>
                 {(item.requests || 0).toLocaleString()}
               </td>
             </tr>
@@ -219,23 +218,23 @@ function TopPathsTable({ paths }: { paths: Array<{ path: string; requests: numbe
       backdropFilter: 'blur(10px)',
       overflowX: 'auto',
     }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: CYBER.textMuted, textTransform: 'uppercase', letterSpacing: '1px' }}>
         Top Requested Paths
       </h3>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(0,255,170,0.1)' }}>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Path</th>
-            <th style={{ padding: '8px', textAlign: 'right', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Requests</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Path</th>
+            <th style={{ padding: '8px', textAlign: 'right', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Requests</th>
           </tr>
         </thead>
         <tbody>
           {paths.slice(0, 10).map((item) => (
             <tr key={item.path} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-              <td style={{ padding: '8px', fontFamily: 'monospace', color: '#aabbcc' }}>
+              <td style={{ padding: '8px', fontFamily: 'monospace', color: CYBER.text }}>
                 {item.path}
               </td>
-              <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: '#00ffaa' }}>
+              <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'monospace', color: CYBER.green }}>
                 {(item.requests || 0).toLocaleString()}
               </td>
             </tr>
@@ -249,7 +248,7 @@ function TopPathsTable({ paths }: { paths: Array<{ path: string; requests: numbe
 // ── Anomalies Table ──
 function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
   if (anomalies.length === 0) return (
-    <div style={{ color: '#667788', textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+    <div style={{ color: CYBER.textMuted, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
       No nginx anomalies detected — traffic looks clean.
     </div>
   );
@@ -263,29 +262,29 @@ function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
       backdropFilter: 'blur(10px)',
       overflowX: 'auto',
     }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#8899aa', textTransform: 'uppercase', letterSpacing: '1px' }}>
+      <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: CYBER.textMuted, textTransform: 'uppercase', letterSpacing: '1px' }}>
         Recent Anomalies
       </h3>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(0,255,170,0.1)' }}>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Time</th>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Type</th>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Severity</th>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Source IP</th>
-            <th style={{ padding: '8px', textAlign: 'left', color: '#8899aa', fontWeight: '600', fontSize: '11px' }}>Description</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Time</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Type</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Severity</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Source IP</th>
+            <th style={{ padding: '8px', textAlign: 'left', color: CYBER.textMuted, fontWeight: '600', fontSize: '11px' }}>Description</th>
           </tr>
         </thead>
         <tbody>
           {anomalies.slice(0, 20).map((a, i) => {
-            const sev = severityColors[a.severity] || { bg: '#333', text: '#888', glow: 'transparent' };
+            const sev = nginxSeverityStyle(a.severity) || { bg: CYBER.panel, text: CYBER.textMuted, glow: 'transparent' };
             const icon = attackIcons[a.attack_type] || '🔔';
             return (
               <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                <td style={{ padding: '8px', fontFamily: 'monospace', color: '#8899aa' }}>
+                <td style={{ padding: '8px', fontFamily: 'monospace', color: CYBER.textMuted }}>
                   {new Date(a.timestamp).toLocaleTimeString()}
                 </td>
-                <td style={{ padding: '8px', color: '#aabbcc' }}>
+                <td style={{ padding: '8px', color: CYBER.text }}>
                   {icon} {a.attack_type}
                 </td>
                 <td style={{ padding: '8px' }}>
@@ -303,10 +302,10 @@ function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
                     {a.severity}
                   </span>
                 </td>
-                <td style={{ padding: '8px', fontFamily: 'monospace', color: '#aabbcc', fontSize: '12px' }}>
+                <td style={{ padding: '8px', fontFamily: 'monospace', color: CYBER.text, fontSize: '12px' }}>
                   {a.src_ip}
                 </td>
-                <td style={{ padding: '8px', color: '#778899', fontSize: '11px', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '8px', color: CYBER.textMuted, fontSize: '11px', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {a.description}
                 </td>
               </tr>
@@ -372,10 +371,10 @@ export const NginxTab: React.FC = () => {
         padding: '40px',
         textAlign: 'center',
       }}>
-        <div style={{ fontSize: '16px', color: '#8899aa', marginBottom: '12px' }}>
+        <div style={{ fontSize: '16px', color: CYBER.textMuted, marginBottom: '12px' }}>
           🟢 Nginx monitoring initialized
         </div>
-        <div style={{ fontSize: '12px', color: '#667788', maxWidth: '400px', margin: '0 auto' }}>
+        <div style={{ fontSize: '12px', color: CYBER.textMuted, maxWidth: '400px', margin: '0 auto' }}>
           No nginx events recorded yet. Once OPNsense nginx logs start flowing through the syslog pipeline, 
           traffic data and anomaly detection will appear here in real-time.
         </div>
@@ -398,10 +397,10 @@ export const NginxTab: React.FC = () => {
       }}>
         <div style={{ fontSize: '32px' }}>🌐</div>
         <div>
-          <h1 style={{ margin: 0, fontSize: '20px', color: '#00ffaa', textShadow: '0 0 12px rgba(0,255,170,0.4)' }}>
+          <h1 style={{ margin: 0, fontSize: '20px', color: CYBER.green, textShadow: '0 0 12px rgba(0,255,170,0.4)' }}>
             Nginx Web Server Monitor
           </h1>
-          <div style={{ fontSize: '12px', color: '#8899aa', marginTop: '4px' }}>
+          <div style={{ fontSize: '12px', color: CYBER.textMuted, marginTop: '4px' }}>
             Traffic analysis, threat detection, and attack monitoring
           </div>
         </div>
@@ -412,15 +411,15 @@ export const NginxTab: React.FC = () => {
             borderRadius: '16px',
             padding: '4px 12px',
             fontSize: '11px',
-            color: '#00ffaa',
+            color: CYBER.green,
             display: 'inline-flex',
             alignItems: 'center',
             gap: '6px',
           }}>
             <span style={{
               width: '6px', height: '6px', borderRadius: '50%',
-              background: '#00ffaa',
-              boxShadow: '0 0 8px #00ffaa',
+              background: CYBER.green,
+              boxShadow: `0 0 8px ${CYBER.green}`,
               animation: 'pulse 2s ease-in-out infinite',
             }} />
             LIVE
@@ -433,36 +432,36 @@ export const NginxTab: React.FC = () => {
         <SummaryCard
           title="Total Requests"
           value={(s.total_requests || 0).toLocaleString()}
-          color="#00ffaa"
+          color={CYBER.green}
           description="Last 24 hours"
         />
         <SummaryCard
           title="Unique IPs"
           value={(s.unique_ips || 0).toLocaleString()}
-          color="#00ccff"
+          color={CYBER.accent}
         />
         <SummaryCard
           title="Status OK"
           value={(s.status_ok || 0).toLocaleString()}
-          color="#00ffaa"
+          color={CYBER.green}
           description={`${(s.total_requests || 0) > 0 ? (((s.status_ok || 0) / (s.total_requests || 1)) * 100).toFixed(1) : 0}% of total`}
         />
         <SummaryCard
           title="Client Errors"
           value={(s.status_client_err || 0).toLocaleString()}
-          color="#ffa500"
+          color={CYBER.orange}
           description="4xx responses"
         />
         <SummaryCard
           title="Server Errors"
           value={(s.status_server_err || 0).toLocaleString()}
-          color="#ff0040"
+          color={CYBER.red}
           description="5xx responses"
         />
         <SummaryCard
           title="404 Not Found"
           value={(s.not_found_404 || 0).toLocaleString()}
-          color="#ffff00"
+          color={CYBER.yellow}
           description="Potential scanning"
         />
       </div>
@@ -488,7 +487,7 @@ export const NginxTab: React.FC = () => {
           padding: '16px',
           backdropFilter: 'blur(10px)',
         }}>
-          <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#ff0040', textTransform: 'uppercase', letterSpacing: '1px' }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: CYBER.red, textTransform: 'uppercase', letterSpacing: '1px' }}>
             Detected Anomalies by Type
           </h3>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -502,12 +501,12 @@ export const NginxTab: React.FC = () => {
                 flexDirection: 'column',
                 gap: '4px',
               }}>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#ff0040', fontFamily: 'monospace' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: CYBER.red, fontFamily: 'monospace' }}>
                   {attackIcons[type] || '🔔'} {type}
                 </div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {Object.entries(severities).map(([sev, count]) => {
-                    const c = severityColors[sev] || { text: '#888', glow: 'transparent' };
+                    const c = nginxSeverityStyle(sev) || { text: CYBER.textMuted, glow: 'transparent' };
                     return (
                       <span key={sev} style={{
                         fontSize: '10px',
@@ -533,7 +532,7 @@ export const NginxTab: React.FC = () => {
         textAlign: 'center',
         padding: '12px',
         fontSize: '11px',
-        color: '#667788',
+        color: CYBER.textMuted,
       }}>
         Nginx monitoring tracks web requests, detects path traversal, brute force, DDoS, and scanner activity.
         Refreshes every 30s.

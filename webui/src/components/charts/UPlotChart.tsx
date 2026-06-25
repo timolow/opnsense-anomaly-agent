@@ -1,6 +1,7 @@
 // UPlot wrapper for React — time series charts with zoom/pan/brush
 import React, { useRef, useEffect, useCallback } from 'react';
 import uPlot from 'uplot';
+import { CHART_THEME } from '@/utils/colors';
 
 // Types
 export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom';
@@ -32,14 +33,7 @@ export interface UPlotWrapperProps {
   isLoading?: boolean;
 }
 
-// Dark theme styles
-const DARK_THEME = {
-  bg: '#0f172a',
-  grid: 'rgba(148, 163, 184, 0.1)',
-  tick: 'rgba(148, 163, 184, 0.2)',
-  label: '#94a3b8',
-  font: 'Inter, system-ui, sans-serif',
-};
+const DARK_THEME = CHART_THEME;
 
 const UPlotWrapper: React.FC<UPlotWrapperProps> = ({
   title,
@@ -168,7 +162,7 @@ const UPlotWrapper: React.FC<UPlotWrapperProps> = ({
   if (isLoading) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
-        <div className="w-full h-[300px] bg-slate-900/50 rounded-lg border border-slate-700/50 animate-pulse" />
+        <div className="w-full h-[300px] bg-cyber-dark/50 rounded-lg border border-cyber-border/50 animate-pulse" />
       </div>
     );
   }
@@ -176,8 +170,8 @@ const UPlotWrapper: React.FC<UPlotWrapperProps> = ({
   if (!data.length) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
-        <div className="w-full h-[300px] bg-slate-900/50 rounded-lg border border-slate-700/50 flex items-center justify-center">
-          <span className="text-slate-500 text-sm">No data available</span>
+        <div className="w-full h-[300px] bg-cyber-dark/50 rounded-lg border border-cyber-border/50 flex items-center justify-center">
+          <span className="text-cyber-textMuted text-sm">No data available</span>
         </div>
       </div>
     );

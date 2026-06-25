@@ -1,6 +1,7 @@
 // UPlot wrapper for React — time series charts with zoom/pan/brush
 import React, { useRef, useEffect, useCallback } from 'react';
 import uPlot from 'uplot';
+import { CHART_THEME, CYBER } from '@/utils/colors';
 
 // Time range types
 export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom';
@@ -34,14 +35,7 @@ export interface UPlotWrapperProps {
   isLoading?: boolean;
 }
 
-// Dark theme styles
-const DARK_THEME = {
-  bg: '#0f172a',
-  grid: 'rgba(148, 163, 184, 0.1)',
-  tick: 'rgba(148, 163, 184, 0.2)',
-  label: '#94a3b8',
-  font: 'Inter, system-ui, sans-serif',
-};
+const DARK_THEME = CHART_THEME;
 
 const UPlotWrapper: React.FC<UPlotWrapperProps> = ({
   title,
@@ -150,7 +144,7 @@ const UPlotWrapper: React.FC<UPlotWrapperProps> = ({
         mkCell(values, seriesIdx, itemIdx) {
           const el = document.createElement('span');
           el.className = 'u-legend-item';
-          el.style.color = series[seriesIdx]?.color || '#fff';
+          el.style.color = series[seriesIdx]?.color || CYBER.text;
           el.textContent = series[seriesIdx]?.label || '';
           return el;
         },
@@ -200,18 +194,18 @@ const UPlotWrapper: React.FC<UPlotWrapperProps> = ({
 
   if (isLoading) {
     return (
-      <div className={`bg-slate-900 rounded-lg p-4 ${className}`}>
+      <div className={`bg-cyber-dark rounded-lg p-4 ${className}`}>
         <div className="flex items-center justify-center h-[300px]">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyber-accent"></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`bg-slate-900 rounded-lg p-4 ${className}`}>
+    <div className={`bg-cyber-dark rounded-lg p-4 ${className}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold text-slate-300">{title}</h3>
+        <h3 className="text-sm font-semibold text-cyber-textMuted">{title}</h3>
       </div>
       <div ref={containerRef} className="w-full" />
     </div>

@@ -11,27 +11,16 @@ import { GitMerge, Globe2, Layers, ChevronDown, ChevronUp, SlidersHorizontal } f
 
 import { FlowsSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
+import { NETWORK, CYBER } from '../../utils/colors';
 
-const CLUSTER_COLORS: Record<string, string> = {
-  WAN: '#ff006e',
-  LAN: '#00ff88',
-  VPN: '#8338ec',
-  INTERNAL: '#ffbe0b',
-  OWN: '#00e5ff',
-};
+const CLUSTER_COLORS = NETWORK;
 
 // ── By-IP view (original, for comparison) ──
 function IpFlowView({ data }: { data: IpFlowData }) {
   const nodes = data.nodes.slice(0, 20);
   const edges = data.edges.slice(0, 50);
 
-  const categoryColors: Record<string, string> = {
-    LAN: '#00ff88',
-    WAN: '#ff006e',
-    VPN: '#8338ec',
-    DMZ: '#ffbe0b',
-    UNKNOWN: '#64748b',
-  };
+  const categoryColors = NETWORK;
 
   return (
     <div className="cyber-card p-4 scanlines relative">
@@ -66,7 +55,7 @@ function IpFlowView({ data }: { data: IpFlowData }) {
                 y1={y1}
                 x2={x2}
                 y2={y2}
-                stroke={categoryColors[srcNode.category] || '#64748b'}
+                stroke={categoryColors[srcNode.category] || CYBER.textMuted}
                 strokeWidth={Math.max(Math.min(edge.value / 5, 4), 1)}
                 opacity={0.3 + Math.min(edge.value / 50, 0.5)}
                 filter="url(#glow-ip)"
@@ -81,14 +70,14 @@ function IpFlowView({ data }: { data: IpFlowData }) {
                 cx={150}
                 cy={50 + i * 22}
                 r={Math.max(Math.min(node.count / 10, 16), 6)}
-                fill={categoryColors[node.category] || '#64748b'}
+                fill={categoryColors[node.category] || CYBER.textMuted}
                 opacity={0.8}
                 filter="url(#glow-ip)"
               />
               <text
                 x={130}
                 y={50 + i * 22}
-                fill="#64748b"
+                fill={CYBER.textMuted}
                 fontSize="9"
                 textAnchor="end"
                 dominantBaseline="middle"
@@ -106,14 +95,14 @@ function IpFlowView({ data }: { data: IpFlowData }) {
                 cx={1050}
                 cy={50 + i * 22}
                 r={Math.max(Math.min(node.count / 10, 16), 6)}
-                fill={categoryColors[node.category] || '#64748b'}
+                fill={categoryColors[node.category] || CYBER.textMuted}
                 opacity={0.8}
                 filter="url(#glow-ip)"
               />
               <text
                 x={1070}
                 y={50 + i * 22}
-                fill="#64748b"
+                fill={CYBER.textMuted}
                 fontSize="9"
                 textAnchor="start"
                 dominantBaseline="middle"
@@ -236,7 +225,7 @@ function ClusterFlowView({ data, expandCluster, setExpandCluster, threshold, set
 
             // Find source node for color
             const srcNode = nodes.find(n => n.id === edge.source);
-            const color = srcNode?.color || '#64748b';
+            const color = srcNode?.color || CYBER.textMuted;
 
             // Curved bezier for cleaner look
             const mx = (srcPos.x + tgtPos.x) / 2;
@@ -307,7 +296,7 @@ function ClusterFlowView({ data, expandCluster, setExpandCluster, threshold, set
                     <text
                       x={pos.x}
                       y={pos.y + 12}
-                      fill="#64748b"
+                      fill={CYBER.textMuted}
                       fontSize="10"
                       textAnchor="middle"
                       dominantBaseline="middle"
@@ -319,7 +308,7 @@ function ClusterFlowView({ data, expandCluster, setExpandCluster, threshold, set
                     <text
                       x={pos.x}
                       y={pos.y + r * 0.6 + 14}
-                      fill="#64748b"
+                      fill={CYBER.textMuted}
                       fontSize="8"
                       textAnchor="middle"
                       dominantBaseline="middle"
@@ -341,7 +330,7 @@ function ClusterFlowView({ data, expandCluster, setExpandCluster, threshold, set
                     <text
                       x={pos.x - r - 6}
                       y={pos.y}
-                      fill="#64748b"
+                      fill={CYBER.textMuted}
                       fontSize="9"
                       textAnchor="end"
                       dominantBaseline="middle"
@@ -508,7 +497,7 @@ export default function FlowsTab() {
                     <td className="font-mono text-sm">
                       <span className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{
-                          backgroundColor: CLUSTER_COLORS[edge.source.replace('cluster:', '')] || '#64748b'
+                          backgroundColor: CLUSTER_COLORS[edge.source.replace('cluster:', '')] || CYBER.textMuted
                         }} />
                         {edge.source.replace('cluster:', '').replace(/\./g, '').length > 12
                           ? edge.source.length > 15 ? edge.source.slice(0, 13) + '\u2026' : edge.source
@@ -518,7 +507,7 @@ export default function FlowsTab() {
                     <td className="font-mono text-sm">
                       <span className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{
-                          backgroundColor: CLUSTER_COLORS[edge.target.replace('cluster:', '')] || '#64748b'
+                          backgroundColor: CLUSTER_COLORS[edge.target.replace('cluster:', '')] || CYBER.textMuted
                         }} />
                         {edge.target.replace('cluster:', '').replace(/\./g, '').length > 12
                           ? edge.target.length > 15 ? edge.target.slice(0, 13) + '\u2026' : edge.target

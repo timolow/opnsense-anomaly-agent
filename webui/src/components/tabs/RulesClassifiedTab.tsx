@@ -8,6 +8,7 @@ import type { RulesClassifiedData } from '@/types';
 import { TrendingUp, Brain, Target, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { CLASSIFICATION, RECHARTS_TOOLTIP, CYBER } from '@/utils/colors';
 
 import { RulesClassifiedSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
@@ -25,10 +26,10 @@ export default function RulesClassifiedTab() {
   if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Rules ML" />;
 
   const pieData = [
-    { name: 'GOOD', value: data.summary.good, color: '#00ff88' },
-    { name: 'ABUSIVE', value: data.summary.abusive, color: '#ff1744' },
-    { name: 'HIGH', value: data.summary.high_traffic, color: '#00e5ff' },
-    { name: 'LOW', value: data.summary.low_traffic, color: '#ffbe0b' },
+    { name: 'GOOD', value: data.summary.good, color: CLASSIFICATION.GOOD },
+    { name: 'ABUSIVE', value: data.summary.abusive, color: CLASSIFICATION.ABUSIVE },
+    { name: 'HIGH', value: data.summary.high_traffic, color: CLASSIFICATION.HIGH_TRAFFIC },
+    { name: 'LOW', value: data.summary.low_traffic, color: CLASSIFICATION.LOW_TRAFFIC },
   ];
 
   const classificationColor = (c: string) => {
@@ -121,7 +122,7 @@ export default function RulesClassifiedTab() {
                 ))}
               </Pie>
               <Tooltip
-                contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
+                contentStyle={RECHARTS_TOOLTIP}
               />
             </PieChart>
           </ResponsiveContainer>
