@@ -2,7 +2,9 @@
 // Sidebar Component - Cyberpunk navigation
 // ═══════════════════════════════════════════════════
 
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
+import { api } from '../api';
 import {
   LayoutDashboard, Map, GitMerge, Network, ShieldAlert,
   Ban, Shield, Eye, Globe, Settings, Server, FileText,
