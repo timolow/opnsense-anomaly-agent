@@ -528,6 +528,66 @@ def query_stats():
             rules_classified = len(nc["classifications"])
     geo_data = query_geo()
     top_countries = [g["country"] for g in geo_data]
+    
+    # Hourly sparkline data (last 24h) — single efficient query
+    sparklines = {
+        "events": [],
+        "blocked": [],
+        "passed": [],
+        "unique_ips": [],
+        "anomalies": [],
+    }
+    if conn:
+        try:
+            cur3 = conn.cursor()
+            # Events + blocked + passed per hour (single query with conditional aggregation)
+            cur3.execute("""
+                SELECT
+                    DATE_TRUNC('hour', timestamp) AS hour,
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE action = 'BLOCK') AS blocked,
+                    COUNT(*) FILTER (WHERE action = 'PASS') AS passed
+                FROM events
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY hour
+                ORDER BY hour
+            """)
+            hourly_rows = cur3.fetchall()
+            for row in hourly_rows:
+                sparklines["events"].append({"time": row[0].isoformat(), "count": row[1]})
+                sparklines["blocked"].append({"time": row[0].isoformat(), "count": row[2]})
+                sparklines["passed"].append({"time": row[0].isoformat(), "count": row[3]})
+            
+            # Unique IPs per hour
+            cur3.execute("""
+                SELECT
+                    DATE_TRUNC('hour', timestamp) AS hour,
+                    COUNT(DISTINCT src_ip) AS unique_count
+                FROM events
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                    AND src_ip IS NOT NULL AND src_ip != ''
+                GROUP BY hour
+                ORDER BY hour
+            """)
+            for row in cur3.fetchall():
+                sparklines["unique_ips"].append({"time": row[0].isoformat(), "count": row[1]})
+            
+            # Anomalies per hour
+            cur3.execute("""
+                SELECT
+                    DATE_TRUNC('hour', timestamp) AS hour,
+                    COUNT(*) AS anomaly_count
+                FROM anomalies
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY hour
+                ORDER BY hour
+            """)
+            for row in cur3.fetchall():
+                sparklines["anomalies"].append({"time": row[0].isoformat(), "count": row[1]})
+            cur3.close()
+        except Exception:
+            pass
+    
     return {
         "counters": counters, "by_type": dict(by_type),
         "by_severity": by_severity, "top_sources": top_sources[:20],
@@ -541,6 +601,7 @@ def query_stats():
         "blocked_24h": blocked_24h,
         "passed_24h": passed_24h,
         "rules_classified": rules_classified,
+        "sparklines": sparklines,
     }
 
 def _fallback_stats():

@@ -5,7 +5,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
-import type { StatsData, AlertsData, BaselineDeviationsData } from '@/types';
+import type { StatsData, AlertsData, BaselineDeviationsData, SparklinePoint } from '@/types';
 import {
   AlertTriangle, Shield, Ban, Eye, TrendingUp,
   Activity, Clock, ArrowUpRight, ArrowDownRight,
@@ -15,6 +15,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { useStore } from '../../store';
 import TimelineChart from '../../components/charts/TimelineChart';
+import Sparkline from '../../components/charts/Sparkline';
 import { OverviewSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
 
@@ -79,6 +80,11 @@ function PassBlockBar({ passed, blocked }: { passed: number; blocked: number }) 
 }
 
 function TrafficSummary({ stats, timelineData }: { stats: StatsData; timelineData: { time: number; value: number }[] }) {
+  const sparkEvents = stats.sparklines?.events;
+  const sparkBlocked = stats.sparklines?.blocked;
+  const sparkPassed = stats.sparklines?.passed;
+  const sparkIps = stats.sparklines?.unique_ips;
+
   return (
     <div className="cyber-card p-5">
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
@@ -92,28 +98,40 @@ function TrafficSummary({ stats, timelineData }: { stats: StatsData; timelineDat
             {(stats.events_24h || 0).toLocaleString()}
           </div>
           <div className="text-sm text-cyber-textMuted mt-1">Total Events (24h)</div>
+          {sparkEvents && sparkEvents.length > 1 && (
+            <Sparkline data={sparkEvents} color="#00ffd5" height={36} width={140} />
+          )}
         </div>
         <div className="lg:col-span-2">
           <MiniSparkline data={timelineData} />
         </div>
       </div>
 
-      {/* Middle: inline mini stats row */}
+      {/* Middle: inline mini stats row with sparklines */}
       <div className="grid grid-cols-3 gap-3 mb-5">
         <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(255,23,68,0.08)', border: '1px solid rgba(255,23,68,0.2)' }}>
           <Ban size={16} className="mx-auto mb-1" style={{ color: '#ff1744' }} />
           <div className="text-xl font-bold font-mono" style={{ color: '#ff1744' }}>{(stats.blocked_24h || 0).toLocaleString()}</div>
           <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Blocked</div>
+          {sparkBlocked && sparkBlocked.length > 1 && (
+            <Sparkline data={sparkBlocked} color="#ff1744" height={28} width="100%" />
+          )}
         </div>
         <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.2)' }}>
           <ShieldCheck size={16} className="mx-auto mb-1" style={{ color: '#00ff88' }} />
           <div className="text-xl font-bold font-mono" style={{ color: '#00ff88' }}>{(stats.passed_24h || 0).toLocaleString()}</div>
           <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Passed</div>
+          {sparkPassed && sparkPassed.length > 1 && (
+            <Sparkline data={sparkPassed} color="#00ff88" height={28} width="100%" />
+          )}
         </div>
         <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)' }}>
           <Network size={16} className="mx-auto mb-1" style={{ color: '#94a3b8' }} />
           <div className="text-xl font-bold font-mono text-neon-cyan">{stats.unique_ips?.toLocaleString() || '0'}</div>
           <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Unique IPs</div>
+          {sparkIps && sparkIps.length > 1 && (
+            <Sparkline data={sparkIps} color="#06b6d4" height={28} width="100%" />
+          )}
         </div>
       </div>
 
@@ -141,6 +159,7 @@ const AGENT_STATUS_COLORS: Record<string, string> = {
 
 function AgentStatus({ stats }: { stats: StatsData }) {
   const [collapsed, setCollapsed] = useState(false);
+  const sparkAnomalies = stats.sparklines?.anomalies;
 
   const items = [
     { label: 'Anomalies', value: stats.anomalies_detected },
@@ -165,11 +184,15 @@ function AgentStatus({ stats }: { stats: StatsData }) {
           {items.map((item) => {
             const Icon = AGENT_STATUS_ICONS[item.label] || Activity;
             const color = AGENT_STATUS_COLORS[item.label] || '#e2e8f0';
+            const showSpark = item.label === 'Anomalies' && sparkAnomalies && sparkAnomalies.length > 1;
             return (
               <div key={item.label} className="rounded-lg p-3 text-center" style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
                 <Icon size={16} className="mx-auto mb-1" style={{ color }} />
                 <div className="text-xl font-bold font-mono" style={{ color }}>{item.value.toLocaleString()}</div>
                 <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">{item.label}</div>
+                {showSpark && (
+                  <Sparkline data={sparkAnomalies} color={color} height={24} width="100%" />
+                )}
               </div>
             );
           })}

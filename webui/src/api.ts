@@ -137,6 +137,8 @@ export async function fetchStats(): Promise<Stats | null> {
   }
 }
 
+import type { SparklineData } from '@/types';
+
 // ── Dashboard API ──
 function mapStats(raw: unknown): StatsData {
   const r = raw as Record<string, unknown>;
@@ -158,6 +160,7 @@ function mapStats(raw: unknown): StatsData {
     threat_low: (bySeverity.LOW as number) || 0,
     health: { postgres: 'unknown', redis: 'unknown', opnsense: 'unknown' },
     counters: counters as Record<string, unknown>,
+    sparklines: r.sparklines as SparklineData | undefined,
   };
 }
 
