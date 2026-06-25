@@ -142,6 +142,7 @@ def get_redis():
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "agent_data", "state.json")
 MUTES_PATH = os.path.join(BASE_DIR, "agent_data", "mutes.json")
+WATCHLIST_PATH = os.path.join(BASE_DIR, "agent_data", "watchlist.json")
 DATA_DIR = os.path.join(BASE_DIR, "agent_data")
 
 DB_HOST = os.environ.get("DB_HOST", "localhost")
@@ -239,6 +240,129 @@ def save_mutes(mutes):
         json.dump(mutes, f, indent=2, default=str)
 
 
+def load_watchlist():
+    """Load watched IPs from JSON file."""
+    if os.path.exists(WATCHLIST_PATH):
+        try:
+            with open(WATCHLIST_PATH) as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_watchlist(watchlist):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(WATCHLIST_PATH, "w") as f:
+        json.dump(watchlist, f, indent=2, default=str)
+
+
+def add_to_watchlist(ip: str, reason: str = ""):
+    """Add an IP to the watchlist."""
+    watchlist = load_watchlist()
+    # Avoid duplicates
+    if any(w.get("ip") == ip for w in watchlist if isinstance(w, dict)):
+        return {"success": False, "message": "IP already in watchlist", "ip": ip}
+    entry = {
+        "ip": ip,
+        "reason": reason,
+        "created": datetime.now(timezone.utc).isoformat(),
+    }
+    watchlist.append(entry)
+    save_watchlist(watchlist)
+    return {"success": True, "ip": ip}
+
+
+def remove_from_watchlist(ip: str):
+    """Remove an IP from the watchlist."""
+    watchlist = load_watchlist()
+    watchlist = [w for w in watchlist if w.get("ip") != ip]
+    save_watchlist(watchlist)
+
+
+def block_ip_in_firewall(ip: str, reason: str = "Manual block from dashboard"):
+    """Attempt to block an IP via OPNsense API. Creates a temporary alias or rule."""
+    opn_url, opn_key, opn_secret, verify_ssl = _read_opn_config()
+    if not opn_url:
+        return {"success": False, "message": "OPNsense API not configured", "ip": ip}
+
+    try:
+        import requests as _req
+        # Try to create/update an alias for blocked IPs
+        # First search for our managed alias
+        resp = _req.get(
+            f"{opn_url}/api/firewall/alias/search",
+            headers={
+                "X-Api-Key": opn_key,
+                "X-Api-Secret": opn_secret,
+            },
+            params={"name": "AGENT_BLOCKLIST"},
+            verify=verify_ssl,
+            timeout=10,
+        )
+        alias_id = None
+        alias_data = None
+        if resp.status_code == 200:
+            aliases = resp.json().get("data", [])
+            if aliases:
+                alias_id = aliases[0].get("uid")
+                alias_data = aliases[0]
+
+        if alias_id and alias_data:
+            existing_entries = alias_data.get("address", "").split("\n")
+            if ip in existing_entries:
+                return {"success": False, "message": "IP already in blocklist alias", "ip": ip}
+            new_entries = "\n".join(existing_entries + [ip])
+            update_resp = _req.post(
+                f"{opn_url}/api/firewall/alias/{alias_id}",
+                json={"address": new_entries, "description": reason},
+                headers={
+                    "X-Api-Key": opn_key,
+                    "X-Api-Secret": opn_secret,
+                },
+                verify=verify_ssl,
+                timeout=10,
+            )
+            if update_resp.status_code == 200:
+                # Trigger rule reload
+                _req.post(
+                    f"{opn_url}/api/firewall/rules/reload",
+                    headers={
+                        "X-Api-Key": opn_key,
+                        "X-Api-Secret": opn_secret,
+                    },
+                    verify=verify_ssl,
+                    timeout=15,
+                )
+                return {"success": True, "message": "IP added to blocklist alias and rules reloaded", "ip": ip}
+            else:
+                return {"success": False, "message": f"Alias update failed: {update_resp.status_code}", "ip": ip}
+        else:
+            # Create new alias
+            create_resp = _req.post(
+                f"{opn_url}/api/firewall/alias/",
+                json={
+                    "name": "AGENT_BLOCKLIST",
+                    "type": "host",
+                    "address": ip,
+                    "description": reason,
+                },
+                headers={
+                    "X-Api-Key": opn_key,
+                    "X-Api-Secret": opn_secret,
+                },
+                verify=verify_ssl,
+                timeout=10,
+            )
+            if create_resp.status_code == 200:
+                return {"success": True, "message": "Blocklist alias created with IP", "ip": ip}
+            else:
+                return {"success": False, "message": f"Alias creation failed: {create_resp.status_code}", "ip": ip}
+
+    except Exception as e:
+        return {"success": False, "message": f"Firewall block failed: {str(e)}", "ip": ip}
+
+
 def load_ml_model_info():
     """Load ML model info from persisted model file for Prometheus metrics."""
     try:
@@ -263,8 +387,8 @@ def add_mute(ip, attack_type, port=None, duration=3600, source="manual"):
         "id": f"mute_{int(time.time()*1000)}",
         "ip": ip, "attack_type": attack_type, "port": port,
         "duration_seconds": duration,
-        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "expires": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "created": datetime.now(timezone.utc).isoformat(),
+        "expires": datetime.now(timezone.utc).isoformat(),
         "source": source,
     }
     mutes.append(mute)
@@ -1305,7 +1429,7 @@ def query_anomalies():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT id, type, severity, description, src_ip, timestamp
+            SELECT id, attack_type, severity, description, src_ip, dst_ip, timestamp
             FROM anomalies
             ORDER BY id DESC
             LIMIT 50
@@ -1315,10 +1439,11 @@ def query_anomalies():
         for row in rows:
             anomalies.append({
                 "id": row["id"],
-                "type": row["type"],
+                "type": row.get("attack_type", "UNKNOWN"),
                 "severity": row["severity"],
                 "description": row["description"],
                 "src_ip": row.get("src_ip", ""),
+                "dst_ip": row.get("dst_ip", ""),
                 "timestamp": str(row["timestamp"]) if row["timestamp"] else ""
             })
         return anomalies
@@ -1326,6 +1451,197 @@ def query_anomalies():
         print(f"Anomalies query failed: {e}")
         return []
     finally: close_db(conn)
+
+def query_ip_detail(ip: str):
+    """Comprehensive drill-down for a single IP address."""
+    if not ip or ip == "0.0.0.0":
+        return {"error": "Invalid IP", "ip": ip}
+
+    # Network classification
+    category = classify_ip_to_cluster(ip, {})
+
+    # Default result structure
+    result = {
+        "ip": ip,
+        "category": category,
+        "is_private": ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172.16.") or ip.startswith("172.17.") or ip.startswith("172.18.") or ip.startswith("172.19.") or ip.startswith("172.2") or ip.startswith("172.3"),
+        "total_events": 0,
+        "total_blocked": 0,
+        "total_passed": 0,
+        "unique_sources": 0,
+        "unique_destinations": 0,
+        "unique_ports": 0,
+        "protocols": [],
+        "top_ports": [],
+        "top_counterparts": [],
+        "interfaces": [],
+        "recent_events": [],
+        "timeline": [],
+        "threat_indicators": [],
+        "dns_reverse": None,
+        "geo_hint": None,
+    }
+
+    # Try persistent DB first
+    conn = get_db()
+    if conn:
+        try:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            # Total event counts
+            cur.execute("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN action = 'block' THEN 1 ELSE 0 END) as blocked,
+                       SUM(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) as passed
+                FROM events
+                WHERE src_ip = %s OR dst_ip = %s
+                AND timestamp > NOW() - INTERVAL '24 hours'
+            """, (ip, ip))
+            row = cur.fetchone()
+            result["total_events"] = row["total"] or 0
+            result["total_blocked"] = row["blocked"] or 0
+            result["total_passed"] = row["passed"] or 0
+
+            # Unique sources/destinations
+            cur.execute("""
+                SELECT COUNT(DISTINCT src_ip) as src_count, COUNT(DISTINCT dst_ip) as dst_count, COUNT(DISTINCT dst_port) as port_count
+                FROM events
+                WHERE src_ip = %s OR dst_ip = %s
+                AND timestamp > NOW() - INTERVAL '24 hours'
+            """, (ip, ip))
+            row = cur.fetchone()
+            result["unique_sources"] = row["src_count"] or 0
+            result["unique_destinations"] = row["dst_count"] or 0
+            result["unique_ports"] = row["port_count"] or 0
+
+            # Protocol distribution
+            cur.execute("""
+                SELECT proto, COUNT(*) as cnt
+                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                AND proto IS NOT NULL AND proto != ''
+                GROUP BY proto ORDER BY cnt DESC
+            """, (ip, ip))
+            result["protocols"] = [{"proto": r["proto"], "count": r["cnt"]} for r in cur.fetchall()]
+
+            # Top destination ports
+            cur.execute("""
+                SELECT dst_port, COUNT(*) as cnt
+                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                AND dst_port IS NOT NULL
+                GROUP BY dst_port ORDER BY cnt DESC LIMIT 10
+            """, (ip, ip))
+            result["top_ports"] = [{"port": r["dst_port"], "count": r["cnt"]} for r in cur.fetchall()]
+
+            # Top counterpart IPs (if this is source, show dests; if dest, show sources)
+            cur.execute("""
+                SELECT dst_ip as ip, COUNT(*) as cnt
+                FROM events WHERE src_ip = %s
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY dst_ip ORDER BY cnt DESC LIMIT 10
+            """, (ip,))
+            result["top_counterparts"] = [{"ip": r["ip"], "count": r["cnt"], "role": "destination"} for r in cur.fetchall()]
+
+            # Also top sources targeting this IP
+            cur.execute("""
+                SELECT src_ip as ip, COUNT(*) as cnt
+                FROM events WHERE dst_ip = %s
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY src_ip ORDER BY cnt DESC LIMIT 10
+            """, (ip,))
+            for r in cur.fetchall():
+                result["top_counterparts"].append({"ip": r["ip"], "count": r["cnt"], "role": "source"})
+
+            # Interfaces
+            cur.execute("""
+                SELECT interface, COUNT(*) as cnt
+                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                AND interface IS NOT NULL
+                GROUP BY interface ORDER BY cnt DESC
+            """, (ip, ip))
+            result["interfaces"] = [{"name": r["interface"], "count": r["cnt"]} for r in cur.fetchall()]
+
+            # Recent events (last 20)
+            cur.execute("""
+                SELECT timestamp, action, proto, src_ip, dst_ip, dst_port, rule_name, interface
+                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                ORDER BY timestamp DESC LIMIT 20
+            """, (ip, ip))
+            result["recent_events"] = [{
+                "timestamp": str(r["timestamp"]),
+                "action": r["action"] or "",
+                "protocol": r["proto"] or "",
+                "src_ip": r["src_ip"] or "",
+                "dst_ip": r["dst_ip"] or "",
+                "dst_port": r["dst_port"],
+                "rule": r["rule_name"] or "",
+                "interface": r["interface"] or "",
+            } for r in cur.fetchall()]
+
+            # Timeline (hourly for 24h)
+            cur.execute("""
+                SELECT DATE_TRUNC('hour', timestamp) as hour, COUNT(*) as cnt
+                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                AND timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY DATE_TRUNC('hour', timestamp)
+                ORDER BY hour
+            """, (ip, ip))
+            result["timeline"] = [{"hour": str(r["hour"]), "count": r["cnt"]} for r in cur.fetchall()]
+
+            # Check anomalies for this IP
+            cur.execute("""
+                SELECT type, severity, description, src_ip, timestamp
+                FROM anomalies WHERE src_ip = %s
+                ORDER BY timestamp DESC LIMIT 10
+            """, (ip,))
+            result["threat_indicators"] = [{
+                "type": r["type"],
+                "severity": r["severity"],
+                "description": r["description"],
+                "timestamp": str(r["timestamp"]),
+            } for r in cur.fetchall()]
+
+            cur.close()
+        except Exception as e:
+            print(f"IP detail query failed: {e}")
+        finally:
+            close_db(conn)
+
+    # Geo hint from first octet
+    first = _parse_ip_first_octet(ip)
+    if first is not None:
+        if 114 <= first <= 125:
+            result["geo_hint"] = "Asia (China range)"
+        elif first in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]:
+            result["geo_hint"] = "North America (US range)"
+        elif 5 <= first < 94:
+            result["geo_hint"] = "Europe/Russia"
+        elif 14 <= first < 62:
+            result["geo_hint"] = "Japan/Korea"
+
+    # Try reverse DNS from cached state
+    state = load_state()
+    if state:
+        rdns_cache = state.get("reverse_dns", {})
+        if ip in rdns_cache:
+            entry = rdns_cache[ip]
+            if isinstance(entry, dict):
+                result["dns_reverse"] = entry.get("hostname")
+            elif isinstance(entry, str):
+                result["dns_reverse"] = entry
+
+    # Mute/watchlist status
+    mutes = load_mutes()
+    is_muted = any(m.get("ip") == ip for m in mutes if isinstance(m, dict))
+    result["is_muted"] = is_muted
+    watchlist = load_watchlist()
+    is_watched = any(w.get("ip") == ip for w in watchlist if isinstance(w, dict))
+    result["is_watched"] = is_watched
+
+    return result
 
 def query_service_status():
     """Read service monitor state from JSON file."""
@@ -1929,113 +2245,6 @@ def query_ids_anomalies():
         return []
 
 
-def query_baseline_deviations():
-    """Return rules whose current event rate exceeds their learned baseline.
-
-    Compares current hourly event counts against avg_events_per_hour from
-    rule_baselines, returning rules with deviation > 1.5x sorted by
-    deviation multiplier (highest first).
-    """
-    conn = get_db()
-    if not conn:
-        return {"deviations": [], "total_rules_with_baseline": 0}
-
-    # Fetch OPNsense rule metadata for human-readable names
-    opnsense_rules = query_opnsense_firewall_rules()
-
-    try:
-        cur = conn.cursor()
-
-        # 1) Get current hourly event counts per rule
-        cur.execute("""
-            SELECT rule_name, COUNT(*) as current_count
-            FROM events
-            WHERE timestamp > NOW() - INTERVAL '1 hour'
-              AND rule_name IS NOT NULL
-              AND rule_name != ''
-              AND rule_name != 'N/A'
-            GROUP BY rule_name
-        """)
-        current_rates: Dict[str, int] = {row[0]: row[1] for row in cur.fetchall()}
-
-        # 2) Get all baselines with rule-level data (ip IS NULL, hour IS NULL)
-        cur.execute("""
-            SELECT rule, rule_name, avg_events_per_hour, avg_volume,
-                   max_events_per_hour, sample_count, last_updated
-            FROM rule_baselines
-            WHERE ip IS NULL AND hour IS NULL
-              AND (avg_events_per_hour > 0 OR avg_volume > 0)
-            ORDER BY sample_count DESC
-            LIMIT 100
-        """)
-        baselines = cur.fetchall()
-        total_with_baseline = len(baselines)
-
-        # 3) Calculate deviations
-        deviations = []
-        for bl in baselines:
-            rule_key = bl[0]  # rule
-            rule_name = bl[1] or rule_key
-            avg_per_hour = bl[2] or 0  # avg_events_per_hour
-            avg_volume = bl[3] or 0    # avg_volume (legacy column)
-            max_per_hour = bl[4] or 0
-            sample_count = bl[5] or 0
-            last_updated = bl[6]
-
-            # Use whichever baseline column has data
-            baseline_rate = avg_per_hour if avg_per_hour > 0 else avg_volume
-            if baseline_rate <= 0:
-                continue
-
-            current_rate = current_rates.get(rule_key, 0)
-            if current_rate == 0:
-                continue
-
-            deviation = current_rate / baseline_rate if baseline_rate > 0 else 0
-            if deviation < 1.5:
-                continue
-
-            # Determine severity color
-            if deviation > 5:
-                severity = "critical"
-            elif deviation > 2:
-                severity = "warning"
-            else:
-                severity = "info"
-
-            # Get human-readable name from OPNsense metadata
-            short_id = rule_key[:8] if rule_key else ""
-            meta = opnsense_rules.get(rule_key, {})
-            if not meta and short_id:
-                meta = opnsense_rules.get(short_id, {})
-            display_name = (meta.get("description", "") or rule_key[:20]) if meta else rule_key[:20]
-
-            deviations.append({
-                "rule": rule_key,
-                "rule_name": display_name,
-                "current_rate": current_rate,
-                "baseline_rate": round(baseline_rate, 1),
-                "deviation": round(deviation, 1),
-                "max_per_hour": max_per_hour,
-                "sample_count": sample_count,
-                "severity": severity,
-                "last_updated": str(last_updated) if last_updated else None,
-            })
-
-        # Sort by deviation descending
-        deviations.sort(key=lambda d: d["deviation"], reverse=True)
-
-        cur.close()
-        return {
-            "deviations": deviations[:50],
-            "total_rules_with_baseline": total_with_baseline,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"Baseline deviations query failed: {e}")
-        return {"deviations": [], "total_rules_with_baseline": 0}
-
-
 # ──────────────────────────────────────────────────────────────────────
 # Nginx query helpers
 # ──────────────────────────────────────────────────────────────────────
@@ -2627,6 +2836,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_alerts())
             elif path == "/api/anomalies":
                 self._send_json(query_anomalies())
+            elif path.startswith("/api/ip-detail/"):
+                ip = urllib.parse.unquote(path.split("/api/ip-detail/")[-1])
+                if ip:
+                    self._send_json(query_ip_detail(ip))
+                else:
+                    self._send_json({"error": "No IP specified"}, 400)
             elif path == "/api/flows":
                 self._send_json(query_flows())
             elif path == "/api/logs":
@@ -2761,9 +2976,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_ids_events(limit=limit, offset=offset))
             elif path == "/api/ids-anomalies":
                 self._send_json(query_ids_anomalies())
-            # Baseline deviations — rules exceeding their learned baseline
-            elif path == "/api/baseline-deviations":
-                self._send_json(query_baseline_deviations())
             # ═══════════════════════════════════════════════
             # Nginx web server monitoring
             # ═══════════════════════════════════════════════
@@ -2873,6 +3085,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
             data = json.loads(body)
             mute = add_mute(ip=data.get("ip", ""), attack_type=data.get("attack_type", "ALL"), port=data.get("port"), duration=data.get("duration_seconds", 3600))
             self._send_json(mute, 201)
+        elif path == "/api/ip-actions":
+            # Unified IP actions: mute, unmute, watch, unwatch, block
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
+            data = json.loads(body)
+            action = data.get("action", "")
+            ip = data.get("ip", "")
+            if action == "mute":
+                duration = int(data.get("duration_seconds", 3600))
+                mute = add_mute(ip=ip, attack_type="ALL", duration=duration, source="dashboard")
+                self._send_json({"success": True, "message": f"Muted {ip} for {duration}s", "ip": ip}, 201)
+            elif action == "unmute":
+                mutes = load_mutes()
+                mutes = [m for m in mutes if m.get("ip") != ip]
+                save_mutes(mutes)
+                self._send_json({"success": True, "message": f"Unmuted {ip}", "ip": ip})
+            elif action == "watch":
+                result = add_to_watchlist(ip, data.get("reason", "Added from dashboard"))
+                status_code = 201 if result.get("success") else 409
+                self._send_json(result, status_code)
+            elif action == "unwatch":
+                remove_from_watchlist(ip)
+                self._send_json({"success": True, "message": f"Removed {ip} from watchlist", "ip": ip})
+            elif action == "block":
+                result = block_ip_in_firewall(ip, data.get("reason", "Blocked from dashboard"))
+                status_code = 201 if result.get("success") else 422
+                self._send_json(result, status_code)
+            else:
+                self._send_json({"error": f"Unknown action: {action}"}, 400)
         elif path == "/api/rule-feedback":
             # Submit feedback for a rule classification (P2-2 feedback loop)
             cl = int(self.headers.get("Content-Length", 0))

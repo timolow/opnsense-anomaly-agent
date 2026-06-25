@@ -10,6 +10,7 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../../store';
 import { AlertsSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
+import { AlertDetailPanel } from '../../components/AlertDetailPanel';
 
 export default function AlertsTab() {
   const { data, isLoading, isError, error, refetch } = useQuery<AlertsData>({
@@ -23,6 +24,7 @@ export default function AlertsTab() {
 
   const [filter, setFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
+  const [selectedAlert, setSelectedAlert] = useState<typeof data.anomalies[0] | null>(null);
 
   // Sync store-driven filter into local state when navigating from Overview
   useEffect(() => {
@@ -108,7 +110,9 @@ export default function AlertsTab() {
             No alerts found
           </div>
         ) : (
-          <div className="cyber-table-responsive"><table className="cyber-table">
+          <div className="cyber-table-responsive">
+            <div className="text-xs text-cyber-textMuted font-mono mb-2 px-1">Click any row for details &amp; suggested actions</div>
+            <table className="cyber-table">
             <thead>
               <tr>
                 <th>Time</th>
@@ -121,7 +125,11 @@ export default function AlertsTab() {
             </thead>
             <tbody>
               {filtered.slice(0, 100).map((alert, i) => (
-                <tr key={i} className="hover:bg-cyber-panel/30">
+                <tr
+                  key={i}
+                  onClick={() => setSelectedAlert(alert)}
+                  className={`cursor-pointer hover:bg-cyber-panel/30 ${alert.severity === 'CRITICAL' ? 'alert-pulse-critical' : ''}`}
+                >
                   <td className="text-cyber-textMuted">{alert.timestamp}</td>
                   <td>
                     <span className={`cyber-badge ${severityColor(alert.severity)}`}>
@@ -142,6 +150,9 @@ export default function AlertsTab() {
           </table></div>
         )}
       </div>
+
+      {/* Alert Detail Panel (slide-in) */}
+      <AlertDetailPanel alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
     </div>
   );
 }

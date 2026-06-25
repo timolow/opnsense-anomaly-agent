@@ -239,18 +239,44 @@ export const api = {
     };
   },
   alerts: async (): Promise<AlertsData> => {
-    const raw = await json<Array<unknown>>('/alerts');
-    const anomalies = raw.map((a: any) => ({
-      timestamp: a.timestamp || '',
-      type: a.attack_type || 'UNKNOWN',
-      severity: a.severity || 'MEDIUM',
-      source_ip: a.ip || '0.0.0.0',
-      destination_ip: '',
-      details: `Count: ${a.count || 0}`,
-      category: a.attack_type || 'unknown',
-    }));
-    return { anomalies };
-  },
+      // Merge volume-based alerts from events with ML-detected anomalies
+      const [rawAlerts, rawAnomalies] = await Promise.all([
+        json<Array<unknown>>('/api/alerts'),
+        json<Array<unknown>>('/api/anomalies'),
+      ]);
+
+      const anomalies: AlertsData['anomalies'] = [];
+
+      // Volume-based alerts from /api/alerts
+      rawAlerts.forEach((a: any) => {
+        anomalies.push({
+          timestamp: a.timestamp || '',
+          type: a.attack_type || 'UNKNOWN',
+          severity: a.severity || 'MEDIUM',
+          source_ip: a.ip || '0.0.0.0',
+          destination_ip: '',
+          details: `Count: ${a.count || 0}`,
+          category: a.attack_type || 'unknown',
+        });
+      });
+
+      // ML-detected anomalies from /api/anomalies (PORT_SCAN, BRUTE_FORCE, etc.)
+      rawAnomalies.forEach((a: any) => {
+        anomalies.push({
+          timestamp: a.timestamp || '',
+          type: a.attack_type || a.type || 'UNKNOWN',
+          severity: a.severity || 'MEDIUM',
+          source_ip: a.src_ip || a.source_ip || '0.0.0.0',
+          destination_ip: a.dst_ip || a.destination_ip || '',
+          details: a.description || '',
+          category: a.attack_type || a.type || 'unknown',
+        });
+      });
+
+      // Sort by timestamp descending
+      anomalies.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+      return { anomalies };
+    },
 
   // OPNsense
   opnsense: async (): Promise<OpnsenseStatusData> => {
