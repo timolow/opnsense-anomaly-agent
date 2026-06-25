@@ -12,6 +12,7 @@ import type {
   DirectionDistribution, RuleActionBreakdown,
   NginxSummary, NginxAnomaly,
   IpFlowClusterData,
+  BaselineDeviationsData,
 } from './types';
 
 const BASE = '/api';
@@ -527,4 +528,7 @@ export const api = {
   getNginxAnomalies: () => json<NginxAnomaly[]>('/nginx-anomalies'),
   getNginxTopPaths: () => json<any[]>('/nginx-top-paths'),
   getNginxTimeline: () => json<any[]>('/nginx-timeline'),
+
+  // Baseline deviations
+  baselineDeviations: () => json<BaselineDeviationsData>('/baseline-deviations'),
 };

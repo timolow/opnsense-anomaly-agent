@@ -487,3 +487,25 @@ export interface NginxTimelinePoint {
   hour: string;
   requests: number;
 }
+
+// ═══════════════════════════════════════════════════
+// Baseline deviation types
+// ═══════════════════════════════════════════════════
+
+export interface BaselineDeviation {
+  rule: string;
+  rule_name: string;
+  current_rate: number;
+  baseline_rate: number;
+  deviation: number;
+  max_per_hour: number;
+  sample_count: number;
+  severity: 'critical' | 'warning' | 'info';
+  last_updated: string | null;
+}
+
+export interface BaselineDeviationsData {
+  deviations: BaselineDeviation[];
+  total_rules_with_baseline: number;
+  timestamp: string;
+}

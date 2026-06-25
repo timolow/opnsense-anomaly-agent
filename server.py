@@ -1929,6 +1929,113 @@ def query_ids_anomalies():
         return []
 
 
+def query_baseline_deviations():
+    """Return rules whose current event rate exceeds their learned baseline.
+
+    Compares current hourly event counts against avg_events_per_hour from
+    rule_baselines, returning rules with deviation > 1.5x sorted by
+    deviation multiplier (highest first).
+    """
+    conn = get_db()
+    if not conn:
+        return {"deviations": [], "total_rules_with_baseline": 0}
+
+    # Fetch OPNsense rule metadata for human-readable names
+    opnsense_rules = query_opnsense_firewall_rules()
+
+    try:
+        cur = conn.cursor()
+
+        # 1) Get current hourly event counts per rule
+        cur.execute("""
+            SELECT rule_name, COUNT(*) as current_count
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+              AND rule_name IS NOT NULL
+              AND rule_name != ''
+              AND rule_name != 'N/A'
+            GROUP BY rule_name
+        """)
+        current_rates: Dict[str, int] = {row[0]: row[1] for row in cur.fetchall()}
+
+        # 2) Get all baselines with rule-level data (ip IS NULL, hour IS NULL)
+        cur.execute("""
+            SELECT rule, rule_name, avg_events_per_hour, avg_volume,
+                   max_events_per_hour, sample_count, last_updated
+            FROM rule_baselines
+            WHERE ip IS NULL AND hour IS NULL
+              AND (avg_events_per_hour > 0 OR avg_volume > 0)
+            ORDER BY sample_count DESC
+            LIMIT 100
+        """)
+        baselines = cur.fetchall()
+        total_with_baseline = len(baselines)
+
+        # 3) Calculate deviations
+        deviations = []
+        for bl in baselines:
+            rule_key = bl[0]  # rule
+            rule_name = bl[1] or rule_key
+            avg_per_hour = bl[2] or 0  # avg_events_per_hour
+            avg_volume = bl[3] or 0    # avg_volume (legacy column)
+            max_per_hour = bl[4] or 0
+            sample_count = bl[5] or 0
+            last_updated = bl[6]
+
+            # Use whichever baseline column has data
+            baseline_rate = avg_per_hour if avg_per_hour > 0 else avg_volume
+            if baseline_rate <= 0:
+                continue
+
+            current_rate = current_rates.get(rule_key, 0)
+            if current_rate == 0:
+                continue
+
+            deviation = current_rate / baseline_rate if baseline_rate > 0 else 0
+            if deviation < 1.5:
+                continue
+
+            # Determine severity color
+            if deviation > 5:
+                severity = "critical"
+            elif deviation > 2:
+                severity = "warning"
+            else:
+                severity = "info"
+
+            # Get human-readable name from OPNsense metadata
+            short_id = rule_key[:8] if rule_key else ""
+            meta = opnsense_rules.get(rule_key, {})
+            if not meta and short_id:
+                meta = opnsense_rules.get(short_id, {})
+            display_name = (meta.get("description", "") or rule_key[:20]) if meta else rule_key[:20]
+
+            deviations.append({
+                "rule": rule_key,
+                "rule_name": display_name,
+                "current_rate": current_rate,
+                "baseline_rate": round(baseline_rate, 1),
+                "deviation": round(deviation, 1),
+                "max_per_hour": max_per_hour,
+                "sample_count": sample_count,
+                "severity": severity,
+                "last_updated": str(last_updated) if last_updated else None,
+            })
+
+        # Sort by deviation descending
+        deviations.sort(key=lambda d: d["deviation"], reverse=True)
+
+        cur.close()
+        return {
+            "deviations": deviations[:50],
+            "total_rules_with_baseline": total_with_baseline,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Baseline deviations query failed: {e}")
+        return {"deviations": [], "total_rules_with_baseline": 0}
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Nginx query helpers
 # ──────────────────────────────────────────────────────────────────────
@@ -2654,6 +2761,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_ids_events(limit=limit, offset=offset))
             elif path == "/api/ids-anomalies":
                 self._send_json(query_ids_anomalies())
+            # Baseline deviations — rules exceeding their learned baseline
+            elif path == "/api/baseline-deviations":
+                self._send_json(query_baseline_deviations())
             # ═══════════════════════════════════════════════
             # Nginx web server monitoring
             # ═══════════════════════════════════════════════
