@@ -31,13 +31,40 @@ export const getTimeRangeTimestamps = (range: TimeRange): { start: number; end: 
   return { start: end - seconds, end };
 };
 
+// Sidebar localStorage keys (namespaced)
+const STORAGE_SIDEBAR_COLLAPSED = 'soc:sidebar:collapsed';
+const STORAGE_SIDEBAR_GROUPS = 'soc:sidebar:groups';
+
+// Nav group names (matches Sidebar.tsx NAV_GROUPS)
+const NAV_GROUP_NAMES = ['Overview', 'Analytics', 'Threats', 'Systems', 'Rules', 'Logs', 'Config'];
+
+// Load persisted sidebar state from localStorage
+function loadSidebarState() {
+  const collapsed = localStorage.getItem(STORAGE_SIDEBAR_COLLAPSED);
+  const groupsJson = localStorage.getItem(STORAGE_SIDEBAR_GROUPS);
+  return {
+    sidebarCollapsed: collapsed === 'true',
+    expandedGroups: groupsJson
+      ? JSON.parse(groupsJson) as Record<string, boolean>
+      : Object.fromEntries(NAV_GROUP_NAMES.map((g) => [g, true])),
+  };
+}
+
+// Persist sidebar state to localStorage
+function saveSidebarState(collapsed: boolean, groups: Record<string, boolean>) {
+  localStorage.setItem(STORAGE_SIDEBAR_COLLAPSED, String(collapsed));
+  localStorage.setItem(STORAGE_SIDEBAR_GROUPS, JSON.stringify(groups));
+}
+
 interface AppState {
   // Navigation
   activeTab: string;
   setActiveTab: (tab: string) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
-  
+  expandedGroups: Record<string, boolean>;
+  toggleGroup: (name: string) => void;
+
   // Mobile menu
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean) => void;
@@ -82,11 +109,23 @@ const DEFAULT_TABS = [
   'services', 'settings', 'logs', 'network', 'wan-flap', 'rules-classified',
 ];
 
+const persistedSidebar = loadSidebarState();
+
 export const useStore = create<AppState>((set) => ({
   activeTab: 'overview',
   setActiveTab: (tab) => set({ activeTab: tab }),
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  sidebarCollapsed: persistedSidebar.sidebarCollapsed,
+  toggleSidebar: () => set((s) => {
+    const next = !s.sidebarCollapsed;
+    saveSidebarState(next, s.expandedGroups);
+    return { sidebarCollapsed: next };
+  }),
+  expandedGroups: persistedSidebar.expandedGroups,
+  toggleGroup: (name) => set((s) => {
+    const next = { ...s.expandedGroups, [name]: !s.expandedGroups[name] };
+    saveSidebarState(s.sidebarCollapsed, next);
+    return { expandedGroups: next };
+  }),
   mobileMenuOpen: false,
   setMobileMenuOpen: (open: boolean) => set({ mobileMenuOpen: open }),
   toggleMobileMenu: () => set((s) => ({ mobileMenuOpen: !s.mobileMenuOpen })),

@@ -2,7 +2,6 @@
 // Sidebar Component - Cyberpunk navigation
 // ═══════════════════════════════════════════════════
 
-import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import {
   LayoutDashboard, Map, GitMerge, Network, ShieldAlert,
@@ -83,14 +82,37 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 export default function Sidebar() {
-  const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, mobileMenuOpen, setMobileMenuOpen } = useStore();
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
-    ...Object.fromEntries(NAV_GROUPS.map((g) => [g.name, true])),
-  });
+  const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, expandedGroups, toggleGroup, mobileMenuOpen, setMobileMenuOpen } = useStore();
 
-  const toggleGroup = (name: string) => {
-    setExpandedGroups((prev) => ({ ...prev, [name]: !prev[name] }));
+  // Map tab IDs to their group names — the active tab's group is always expanded
+  const tabToGroup: Record<string, string> = {
+    overview: 'Overview',
+    heatmap: 'Analytics',
+    flows: 'Analytics',
+    ipflow: 'Analytics',
+    geo: 'Analytics',
+    alerts: 'Threats',
+    mutes: 'Threats',
+    zenarmor: 'Threats',
+    ids: 'Threats',
+    opnsense: 'Systems',
+    services: 'Systems',
+    nginx: 'Systems',
+    network: 'Systems',
+    'wan-flap': 'Systems',
+    rules: 'Rules',
+    'rules-classified': 'Rules',
+    syslogs: 'Logs',
+    logs: 'Logs',
+    settings: 'Config',
   };
+
+  // Display-expanded groups: persisted state + always expand active tab's group
+  const activeGroup = tabToGroup[activeTab] || '';
+  const displayGroups: Record<string, boolean> = {};
+  for (const group of NAV_GROUPS) {
+    displayGroups[group.name] = group.name === activeGroup || expandedGroups[group.name];
+  }
 
   const handleTabClick = (tabId: string) => {
     setActiveTab(tabId);
@@ -148,14 +170,14 @@ export default function Sidebar() {
               >
                 {group.icon}
                 <span className="flex-1 text-left">{group.name}</span>
-                {expandedGroups[group.name] ? (
+                {displayGroups[group.name] ? (
                   <ChevronDown size={12} />
                 ) : (
                   <ChevronRight size={12} />
                 )}
               </button>
             )}
-            {(sidebarCollapsed || expandedGroups[group.name]) && (
+            {(sidebarCollapsed || displayGroups[group.name]) && (
               <div className={`${sidebarCollapsed ? '' : 'ml-4 space-y-0.5'}`}>
                 {group.items.map((item) => (
                   <button
