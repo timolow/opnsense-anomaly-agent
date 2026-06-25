@@ -49,6 +49,30 @@ export interface IpFlowData {
   }>;
 }
 
+// ── Clustered flow types ──
+export interface IpFlowClusterNode {
+  id: string;
+  label: string;
+  category: string;
+  color: string;
+  size: number;
+  count: number;
+  is_cluster: boolean;
+  ip_count?: number;
+}
+
+export interface IpFlowClusterEdge {
+  source: string;
+  target: string;
+  value: number;
+}
+
+export interface IpFlowClusterData {
+  nodes: IpFlowClusterNode[];
+  edges: IpFlowClusterEdge[];
+  clusters: Record<string, { id: string; label: string; category: string; color: string; ip_count: number; event_count: number }>;
+}
+
 export interface EventsData {
   events: Array<{
     timestamp: string;

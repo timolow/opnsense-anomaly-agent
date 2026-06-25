@@ -573,6 +573,209 @@ def _fallback_flow():
                     connections.append({"source": src_ip, "target": dst_ip, "value": link_val, "type": "traffic"})
     return {"nodes": nodes, "links": connections}
 
+# ── Clustered flow endpoint ──
+NETWORK_CLUSTER_COLORS = {
+    "WAN": "#ff006e",
+    "LAN": "#00ff88",
+    "VPN": "#8338ec",
+    "INTERNAL": "#ffbe0b",
+    "OWN": "#00e5ff",
+}
+
+def classify_ip_to_cluster(ip: str, iface_by_ip: dict) -> str:
+    """Classify an IP into one of 5 network clusters."""
+    if not ip or ip == "0.0.0.0":
+        return "OWN"
+    # Interface-based classification (from DB)
+    ifaces = iface_by_ip.get(ip, set())
+    for iface in ifaces:
+        cat = classify_interface(iface)
+        if cat == "WAN":
+            return "WAN"
+        if cat == "LAN":
+            return "LAN"
+        if cat == "VPN":
+            return "VPN"
+    # Fallback: classify by IP range
+    if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172.16.") or ip.startswith("172.17.") or ip.startswith("172.18.") or ip.startswith("172.19.") or ip.startswith("172.2") or ip.startswith("172.3"):
+        return "LAN"
+    if ip.startswith("169.254."):
+        return "INTERNAL"
+    if ip.startswith("127."):
+        return "INTERNAL"
+    return "WAN"
+
+def query_ip_flow_clusters(expand_cluster: str = None, edge_threshold: int = 0):
+    """
+    Return IP flow data aggregated into 5 network clusters (WAN, LAN, VPN, INTERNAL, OWN).
+    Supports expanding a single cluster to individual IPs via ?expand=LAN.
+    Edge threshold: edges below this value are hidden.
+    """
+    conn = get_db()
+    if not conn:
+        return {"nodes": [], "edges": [], "clusters": {}, "expand_cluster": expand_cluster, "edge_threshold": edge_threshold}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Get all connections
+        cur.execute("""
+            SELECT src_ip, dst_ip, COUNT(*) as connection_count,
+                   ARRAY_AGG(DISTINCT dst_port) as ports
+            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
+            GROUP BY src_ip, dst_ip
+            HAVING COUNT(*) > 1
+            ORDER BY connection_count DESC
+            LIMIT 1000
+        """)
+        links = cur.fetchall()
+
+        # Get interface mapping for classification
+        cur.execute("""
+            SELECT src_ip, interface
+            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            AND src_ip IS NOT NULL
+            GROUP BY src_ip, interface
+        """)
+        iface_rows = cur.fetchall()
+        iface_by_ip = defaultdict(set)
+        for row in iface_rows:
+            iface_by_ip[row["src_ip"]].add(row["interface"])
+
+        # Build IP → cluster mapping + event counts
+        ip_cluster = {}
+        ip_events = defaultdict(int)
+        for row in links:
+            src = row["src_ip"] or "0.0.0.0"
+            dst = row["dst_ip"] or "0.0.0.0"
+            cnt = row["connection_count"]
+            ip_events[src] += cnt
+            ip_events[dst] += cnt
+            if src not in ip_cluster:
+                ip_cluster[src] = classify_ip_to_cluster(src, iface_by_ip)
+            if dst not in ip_cluster:
+                ip_cluster[dst] = classify_ip_to_cluster(dst, iface_by_ip)
+
+        # Build cluster metadata
+        clusters = {}
+        for cat in ["WAN", "LAN", "VPN", "INTERNAL", "OWN"]:
+            cat_ips = [ip for ip, c in ip_cluster.items() if c == cat]
+            cat_events = sum(ip_events.get(ip, 0) for ip in cat_ips)
+            if cat_ips:
+                clusters[cat] = {
+                    "id": f"cluster:{cat}",
+                    "label": cat,
+                    "category": cat,
+                    "color": NETWORK_CLUSTER_COLORS[cat],
+                    "ip_count": len(cat_ips),
+                    "event_count": cat_events,
+                }
+
+        # Aggregate edges between clusters
+        cluster_edges: dict = defaultdict(int)
+        for row in links:
+            src = row["src_ip"] or "0.0.0.0"
+            dst = row["dst_ip"] or "0.0.0.0"
+            cnt = row["connection_count"]
+            src_cat = ip_cluster.get(src, "OWN")
+            dst_cat = ip_cluster.get(dst, "OWN")
+            if src_cat == dst_cat:
+                continue  # skip intra-cluster edges
+            edge_key = (src_cat, dst_cat)
+            cluster_edges[edge_key] += cnt
+
+        # Apply threshold
+        cluster_edges = {k: v for k, v in cluster_edges.items() if v >= edge_threshold}
+
+        # Build nodes
+        nodes = []
+        for cat in ["WAN", "LAN", "VPN", "INTERNAL", "OWN"]:
+            if cat in clusters:
+                clusters[cat]["size"] = min(8 + clusters[cat]["event_count"] // 100, 24)
+                node = {
+                    "id": clusters[cat]["id"],
+                    "label": clusters[cat]["label"],
+                    "category": cat,
+                    "color": clusters[cat]["color"],
+                    "size": clusters[cat]["size"],
+                    "count": clusters[cat]["event_count"],
+                    "is_cluster": True,
+                    "ip_count": clusters[cat]["ip_count"],
+                }
+                nodes.append(node)
+
+        edges = []
+        for (src_cat, dst_cat), val in sorted(cluster_edges.items(), key=lambda x: x[1], reverse=True):
+            edges.append({
+                "source": f"cluster:{src_cat}",
+                "target": f"cluster:{dst_cat}",
+                "value": val,
+            })
+
+        # Handle cluster expansion: replace expanded cluster node with individual IPs
+        if expand_cluster and expand_cluster in clusters:
+            # Remove the cluster node
+            nodes = [n for n in nodes if n["id"] != f"cluster:{expand_cluster}"]
+
+            # Get all IPs in this cluster
+            exp_ips = [(ip, ip_events.get(ip, 0)) for ip, c in ip_cluster.items() if c == expand_cluster]
+            exp_ips.sort(key=lambda x: x[1], reverse=True)
+            for ip, evt_count in exp_ips[:15]:
+                nodes.append({
+                    "id": ip,
+                    "label": ip,
+                    "category": expand_cluster,
+                    "color": NETWORK_CLUSTER_COLORS[expand_cluster],
+                    "size": min(6 + evt_count // 10, 16),
+                    "count": evt_count,
+                    "is_cluster": False,
+                })
+
+            # Rebuild edges: for each original edge touching this cluster,
+            # fan out into per-IP edges by scanning the links.
+            cluster_node_id = f"cluster:{expand_cluster}"
+            new_edges = []
+            for edge in edges:
+                is_src_expanded = edge["source"] == cluster_node_id
+                is_tgt_expanded = edge["target"] == cluster_node_id
+
+                if is_src_expanded or is_tgt_expanded:
+                    # Determine the other cluster
+                    other_cluster_id = edge["target"] if is_src_expanded else edge["source"]
+                    other_cat = other_cluster_id.replace("cluster:", "")
+
+                    for exp_ip, _ in exp_ips:
+                        ip_val = 0
+                        for row in links:
+                            src = row["src_ip"] or "0.0.0.0"
+                            dst = row["dst_ip"] or "0.0.0.0"
+                            cnt = row["connection_count"]
+                            if is_src_expanded and src == exp_ip and ip_cluster.get(dst, "OWN") == other_cat:
+                                ip_val += cnt
+                            if is_tgt_expanded and dst == exp_ip and ip_cluster.get(src, "OWN") == other_cat:
+                                ip_val += cnt
+
+                        if ip_val >= edge_threshold:
+                            if is_src_expanded:
+                                new_edges.append({"source": exp_ip, "target": other_cluster_id, "value": ip_val})
+                            else:
+                                new_edges.append({"source": other_cluster_id, "target": exp_ip, "value": ip_val})
+                else:
+                    new_edges.append(edge)
+            edges = new_edges
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "clusters": clusters,
+            "expand_cluster": expand_cluster,
+            "edge_threshold": edge_threshold,
+        }
+    except Exception as e:
+        print(f"IP flow clusters query failed: {e}")
+        return {"nodes": [], "edges": [], "clusters": {}, "expand_cluster": expand_cluster, "edge_threshold": edge_threshold}
+    finally:
+        close_db(conn)
+
 def query_geo():
     conn = get_db()
     if not conn: return _fallback_geo()
@@ -2293,6 +2496,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_heatmap())
             elif path == "/api/ip-flow":
                 self._send_json(query_ip_flow())
+            elif path == "/api/ip-flow-clusters":
+                cluster_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                expand = cluster_query.get("expand", [None])[0]
+                threshold = int(cluster_query.get("threshold", ["0"])[0] or "0")
+                self._send_json(query_ip_flow_clusters(expand_cluster=expand, edge_threshold=threshold))
             elif path == "/api/events":
                 self._send_json(query_events())
             elif path == "/api/mutes":

@@ -11,6 +11,7 @@ import type {
   Timeline, BlockedIps, TopPorts, RuleHeatmap,
   DirectionDistribution, RuleActionBreakdown,
   NginxSummary, NginxAnomaly,
+  IpFlowClusterData,
 } from './types';
 
 const BASE = '/api';
@@ -191,6 +192,18 @@ export const api = {
     return {
       nodes: nodes as any[],
       edges: links as any[],
+    };
+  },
+  ipFlowClusters: async (params?: { expand?: string; threshold?: number }): Promise<IpFlowClusterData> => {
+    const qs = new URLSearchParams();
+    if (params?.expand) qs.set('expand', params.expand);
+    if (params?.threshold) qs.set('threshold', String(params.threshold));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const raw = await json<Record<string, unknown>>(`/ip-flow-clusters${suffix}`);
+    return {
+      nodes: (raw.nodes || []) as any[],
+      edges: (raw.edges || []) as any[],
+      clusters: (raw.clusters || {}) as any,
     };
   },
   events: async (limit = 100, offset = 0): Promise<EventsData> => {
