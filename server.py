@@ -1452,6 +1452,176 @@ def query_anomalies():
         return []
     finally: close_db(conn)
 
+def query_new_since(since_ts: str):
+    """Query what's changed since a given timestamp (epoch seconds or ISO).
+    Returns new events count, new anomalies, new unique IPs, new rule matches,
+    and baseline breaches since the given time.
+    """
+    conn = get_db()
+    state = load_state()
+    agent_counters = {}
+    if state:
+        agent_counters = state.get("agent_counters", {})
+
+    # Current counters (total ever)
+    current_event_count = agent_counters.get("event_count", 0)
+    current_anomaly_count = agent_counters.get("anomaly_count", 0)
+
+    # Parse since_ts to a PostgreSQL timestamp
+    try:
+        since_epoch = float(since_ts)
+        since_dt = datetime.fromtimestamp(since_epoch, tz=timezone.utc)
+    except (ValueError, TypeError, OSError):
+        return {
+            "since_ts": None,
+            "hours_since": None,
+            "new_events": 0,
+            "new_anomalies": 0,
+            "new_blocked": 0,
+            "new_unique_ips": [],
+            "new_rule_matches": [],
+            "new_baseline_breaches": [],
+            "first_time": False,
+        }
+
+    is_first_time = False
+
+    if not conn:
+        return {
+            "since_ts": since_ts,
+            "hours_since": round((time.time() - since_epoch) / 3600, 1),
+            "new_events": 0,
+            "new_anomalies": 0,
+            "new_blocked": 0,
+            "new_unique_ips": [],
+            "new_rule_matches": [],
+            "new_baseline_breaches": [],
+            "first_time": True,
+        }
+
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # New events since timestamp
+        cur.execute(
+            "SELECT COUNT(*) as cnt FROM events WHERE timestamp > %s",
+            (since_dt,),
+        )
+        new_events = cur.fetchone()["cnt"]
+
+        # New blocked since timestamp
+        cur.execute(
+            "SELECT COUNT(*) as cnt FROM events WHERE timestamp > %s AND action = 'BLOCK'",
+            (since_dt,),
+        )
+        new_blocked = cur.fetchone()["cnt"]
+
+        # New anomalies since timestamp
+        cur.execute(
+            "SELECT COUNT(*) as cnt FROM anomalies WHERE created_at > %s",
+            (since_dt,),
+        )
+        new_anomalies = cur.fetchone()["cnt"]
+
+        # New unique source IPs (not seen before this timestamp)
+        cur.execute(
+            """
+            SELECT e.src_ip, COUNT(*) as cnt
+            FROM events e
+            WHERE e.timestamp > %s AND e.src_ip IS NOT NULL AND e.src_ip != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM events e2
+                WHERE e2.src_ip = e.src_ip AND e2.timestamp <= %s
+              )
+            GROUP BY e.src_ip
+            ORDER BY cnt DESC
+            LIMIT 20
+            """,
+            (since_dt, since_dt),
+        )
+        new_unique_ips = [
+            {"ip": row["src_ip"], "count": row["cnt"]}
+            for row in cur.fetchall()
+        ]
+
+        # New rule matches (rules that started triggering since timestamp)
+        cur.execute(
+            """
+            SELECT e.rule_name, COUNT(*) as cnt, MAX(e.timestamp) as last_seen
+            FROM events e
+            WHERE e.timestamp > %s AND e.rule_name IS NOT NULL AND e.rule_name != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM events e2
+                WHERE e2.rule_name = e.rule_name AND e2.timestamp <= %s
+              )
+            GROUP BY e.rule_name
+            ORDER BY cnt DESC
+            LIMIT 15
+            """,
+            (since_dt, since_dt),
+        )
+        new_rule_matches = [
+            {"rule": row["rule_name"], "count": row["cnt"], "last_seen": str(row["last_seen"])}
+            for row in cur.fetchall()
+        ]
+
+        # Baseline breaches (rules with high deviation since timestamp)
+        cur.execute(
+            """
+            SELECT rb.rule_name, rb.current_rate, rb.baseline_rate,
+                   (rb.current_rate / NULLIF(rb.baseline_rate, 0)) as deviation
+            FROM rule_baselines rb
+            WHERE rb.last_updated > %s
+              AND rb.current_rate > 0
+              AND rb.baseline_rate > 0
+              AND (rb.current_rate / NULLIF(rb.baseline_rate, 0)) > 2.0
+            ORDER BY deviation DESC
+            LIMIT 10
+            """,
+            (since_dt,),
+        )
+        new_baseline_breaches = [
+            {
+                "rule_name": row["rule_name"],
+                "current_rate": row["current_rate"],
+                "baseline_rate": row["baseline_rate"],
+                "deviation": round(float(row["deviation"]) if row["deviation"] else 0, 1),
+            }
+            for row in cur.fetchall()
+        ]
+
+        cur.close()
+
+        hours_since = round((time.time() - since_epoch) / 3600, 1)
+
+        return {
+            "since_ts": since_ts,
+            "hours_since": hours_since,
+            "new_events": new_events,
+            "new_anomalies": new_anomalies,
+            "new_blocked": new_blocked,
+            "new_unique_ips": new_unique_ips,
+            "new_rule_matches": new_rule_matches,
+            "new_baseline_breaches": new_baseline_breaches,
+            "first_time": False,
+        }
+
+    except Exception as e:
+        logger.error(f"New-since query failed: {e}")
+        return {
+            "since_ts": since_ts,
+            "hours_since": None,
+            "new_events": 0,
+            "new_anomalies": 0,
+            "new_blocked": 0,
+            "new_unique_ips": [],
+            "new_rule_matches": [],
+            "new_baseline_breaches": [],
+            "first_time": False,
+        }
+    finally:
+        close_db(conn)
+
 def query_ip_detail(ip: str):
     """Comprehensive drill-down for a single IP address."""
     if not ip or ip == "0.0.0.0":
@@ -3022,6 +3192,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "events_processed": counters.get("event_count", 0),
                     "anomalies_detected": counters.get("anomaly_count", 0),
                 })
+            elif path == "/api/new-since":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                since_ts = query.get("timestamp", [None])[0]
+                if since_ts:
+                    self._send_json(query_new_since(since_ts))
+                else:
+                    self._send_json({"error": "Missing timestamp parameter"}, 400)
             elif path.startswith("/api/rule-detail/"):
                 rule_name = urllib.parse.unquote(path.split("/api/rule-detail/")[-1])
                 if rule_name:

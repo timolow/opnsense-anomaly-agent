@@ -151,12 +151,6 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
             size: 2,
             stroke: COLORS.events,
             fill: '#0d1117',
-            filter: (self: any, idx: number) => {
-              // Show ~8 points max
-              const total = self.data[1].length;
-              const step = Math.max(1, Math.floor(total / 8));
-              return idx % step === 0;
-            },
           },
         },
       ],
