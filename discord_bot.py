@@ -811,8 +811,8 @@ class DiscordBot:
     """
     
     # Reconnection config
-    RECONNECT_BASE_DELAY = 5    # seconds before first reconnect attempt
-    RECONNECT_MAX_DELAY = 30    # cap on backoff delay
+    RECONNECT_BASE_DELAY = 1    # seconds before first reconnect attempt
+    RECONNECT_MAX_DELAY = 60    # cap on backoff delay
     RECONNECT_MAX_COUNT = 10    # max reconnect attempts before giving up (0 = infinite)
     
     def __init__(self, config):
@@ -893,6 +893,139 @@ class DiscordBot:
                     "Discord bot connected as %s (ID: %s)",
                     user.name, user.id,
                 )
+                
+                # Register slash commands via REST API
+                await self._register_slash_commands()
+            
+            async def _register_slash_commands(self):
+                """Register slash commands with Discord via the API."""
+                import requests as _requests
+                cmd_url = f"{DISCORD_API}/applications/{self.user.id}/commands"
+                headers = {
+                    'Authorization': f'Bot {self._bot_instance.config.discord_token}',
+                    'Content-Type': 'application/json',
+                    'X-Audit-Log-Reason': 'Register OPNsense anomaly commands',
+                }
+                commands = [
+                    {
+                        'name': 'search',
+                        'description': 'Search anomalies by IP, attack type, or description',
+                        'options': [
+                            {
+                                'type': 3,  # STRING
+                                'name': 'query',
+                                'description': 'Search query (IP, attack type, or description)',
+                                'required': True,
+                            }
+                        ],
+                    },
+                    {
+                        'name': 'top-threats',
+                        'description': 'Show top threat IPs ranked by threat score',
+                        'options': [
+                            {
+                                'type': 4,  # INTEGER
+                                'name': 'limit',
+                                'description': 'Number of IPs to show (1-50, default: 10)',
+                                'required': False,
+                            },
+                            {
+                                'type': 4,  # INTEGER
+                                'name': 'hours',
+                                'description': 'Time window in hours (default: 24)',
+                                'required': False,
+                            }
+                        ],
+                    },
+                    {
+                        'name': 'recent-alerts',
+                        'description': 'Show recent anomaly alerts',
+                        'options': [
+                            {
+                                'type': 4,  # INTEGER
+                                'name': 'limit',
+                                'description': 'Number of alerts to show (1-50, default: 10)',
+                                'required': False,
+                            }
+                        ],
+                    },
+                ]
+                try:
+                    resp = _requests.put(cmd_url, json=commands, headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        logger.info("Registered %d slash commands with Discord", len(commands))
+                    else:
+                        logger.warning(
+                            "Failed to register slash commands: %s %s",
+                            resp.status_code, resp.text[:200],
+                        )
+                except Exception as e:
+                    logger.warning("Slash command registration failed: %s", e)
+            
+            async def on_interaction(self, interaction):
+                """Handle slash command invocations."""
+                # Acknowledge immediately (Discord requires response within 3s)
+                if interaction.type == 2:  # APPLICATION_COMMAND
+                    await interaction.respond(defer=True)
+                    
+                    # Rate limiting
+                    user_id = str(interaction.user.id)
+                    rate_limiter = self._bot_instance._command_rate_limiter
+                    if not rate_limiter.is_allowed(user_id):
+                        await interaction.followup.send(
+                            f"⚠️ Rate limited — you've hit the command limit "
+                            f"({rate_limiter.max_commands} commands per "
+                            f"{rate_limiter.window_seconds}s). "
+                            f"Try again shortly.",
+                            ephemeral=True,
+                        )
+                        return
+                    
+                    # Extract command and args
+                    cmd = interaction.data['name']
+                    opts = {opt['name']: opt.get('value') for opt in interaction.data.get('options', [])}
+                    
+                    # Build args string for the command handler
+                    args_parts = []
+                    if cmd == 'search':
+                        args_parts.append(str(opts.get('query', '')))
+                    elif cmd == 'top-threats':
+                        limit = opts.get('limit')
+                        hours = opts.get('hours')
+                        if limit is not None:
+                            args_parts.append(str(limit))
+                        if hours is not None:
+                            args_parts.append(str(hours))
+                    elif cmd == 'recent-alerts':
+                        limit = opts.get('limit')
+                        if limit is not None:
+                            args_parts.append(str(limit))
+                    args_str = ' '.join(args_parts)
+                    
+                    # Handle the command
+                    result = self._bot_instance._command_handler.handle_command(cmd, args_str)
+                    
+                    # Send response with embed if present
+                    send_kwargs: Dict[str, Any] = {}
+                    if result.content:
+                        send_kwargs['content'] = result.content
+                    if result.embed:
+                        import discord as _discord
+                        embed_dict = result.embed.to_dict()
+                        embed = _discord.Embed(
+                            title=embed_dict.get('title', ''),
+                            description=embed_dict.get('description', ''),
+                            color=embed_dict.get('color', 0x5865F2),
+                            timestamp=datetime.fromisoformat(embed_dict['timestamp']) if embed_dict.get('timestamp') else None,
+                        )
+                        for f in embed_dict.get('fields', []):
+                            embed.add_field(
+                                name=f['name'],
+                                value=f['value'],
+                                inline=f.get('inline', False),
+                            )
+                        send_kwargs['embed'] = embed
+                    await interaction.followup.send(**send_kwargs)
             
             async def on_disconnect(self):
                 """Called when the WebSocket disconnects — signal reconnector."""
@@ -959,8 +1092,27 @@ class DiscordBot:
                 # Handle the command
                 result = self._bot_instance._command_handler.handle_command(cmd, args)
                 
-                # Send response
-                await message.channel.send(result.content)
+                # Send response — include embed if the command returned one
+                send_kwargs: Dict[str, Any] = {}
+                if result.content:
+                    send_kwargs['content'] = result.content
+                if result.embed:
+                    import discord as _discord
+                    embed_dict = result.embed.to_dict()
+                    embed = _discord.Embed(
+                        title=embed_dict.get('title', ''),
+                        description=embed_dict.get('description', ''),
+                        color=embed_dict.get('color', 0x5865F2),
+                        timestamp=datetime.fromisoformat(embed_dict['timestamp']) if embed_dict.get('timestamp') else None,
+                    )
+                    for f in embed_dict.get('fields', []):
+                        embed.add_field(
+                            name=f['name'],
+                            value=f['value'],
+                            inline=f.get('inline', False),
+                        )
+                    send_kwargs['embed'] = embed
+                await message.channel.send(**send_kwargs)
         
         try:
             self._bot_client = OPNsenseBot(self)
@@ -992,6 +1144,15 @@ class DiscordBot:
                     "Discord bot exceeded %d reconnect attempts; stopping",
                     self.RECONNECT_MAX_COUNT,
                 )
+                # Alert via REST API (works even when WebSocket is dead)
+                client = self._get_client()
+                if client:
+                    client.send_message(
+                        "⚠️ **Discord bot permanently disconnected** — exceeded "
+                        f"{self.RECONNECT_MAX_COUNT} reconnect attempts. "
+                        "Chat commands are unavailable until the agent restarts. "
+                        "Alert delivery via REST API still works."
+                    )
                 break
             
             self._reconnect_count += 1
