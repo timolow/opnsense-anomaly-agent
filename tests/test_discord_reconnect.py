@@ -57,24 +57,24 @@ class TestReconnectionConfig:
     """Test reconnection configuration values."""
 
     def test_default_delays(self):
-        assert DiscordBot.RECONNECT_BASE_DELAY == 5
-        assert DiscordBot.RECONNECT_MAX_DELAY == 30
+        assert DiscordBot.RECONNECT_BASE_DELAY == 1
+        assert DiscordBot.RECONNECT_MAX_DELAY == 60
         assert DiscordBot.RECONNECT_MAX_COUNT == 10
 
     def test_backoff_schedule(self):
-        """Verify exponential backoff: 5, 10, 20, 30, 30, 30..."""
+        """Verify exponential backoff: 1, 2, 4, 8, 16, 32, 60, 60..."""
         base = DiscordBot.RECONNECT_BASE_DELAY
         max_delay = DiscordBot.RECONNECT_MAX_DELAY
         expected = []
         for i in range(1, 11):
             delay = min(base * (2 ** (i - 1)), max_delay)
             expected.append(delay)
-        assert expected == [5, 10, 20, 30, 30, 30, 30, 30, 30, 30]
+        assert expected == [1, 2, 4, 8, 16, 32, 60, 60, 60, 60]
 
-    def test_reconnect_within_30s(self):
-        """First reconnect should happen within 30s (acceptance criterion)."""
+    def test_reconnect_within_60s(self):
+        """First reconnect should happen within 60s (acceptance criterion)."""
         first_delay = DiscordBot.RECONNECT_BASE_DELAY
-        assert first_delay <= 30
+        assert first_delay <= 60
         assert first_delay > 0
 
 
@@ -181,20 +181,20 @@ class TestReconnectLogging:
             bot.RECONNECT_BASE_DELAY * (2 ** (bot._reconnect_count - 1)),
             bot.RECONNECT_MAX_DELAY,
         )
-        assert delay == 5
+        assert delay == 1
         msg = (
             "Discord bot disconnected -- reconnecting in %.0fs (attempt %d)" % (delay, bot._reconnect_count)
         )
-        assert "5s" in msg
+        assert "1s" in msg
         assert "attempt 1" in msg
 
-        # Simulate 4th reconnect (should hit max cap)
-        bot._reconnect_count = 4
+        # Simulate 7th reconnect (should hit max cap)
+        bot._reconnect_count = 7
         delay = min(
             bot.RECONNECT_BASE_DELAY * (2 ** (bot._reconnect_count - 1)),
             bot.RECONNECT_MAX_DELAY,
         )
-        assert delay == 30  # Capped at max
+        assert delay == 60  # Capped at max
 
     def test_reconnect_sequence_logs(self):
         """Full sequence of reconnect log delays."""
@@ -212,7 +212,7 @@ class TestReconnectLogging:
             )
             delays.append(delay)
 
-        assert delays == [5, 10, 20, 30, 30]
+        assert delays == [1, 2, 4, 8, 16]
 
 
 class TestCommandRateLimiter:
