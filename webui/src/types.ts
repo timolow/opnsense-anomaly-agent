@@ -523,3 +523,19 @@ export interface BaselineDeviationsData {
   total_rules_with_baseline: number;
   timestamp: string;
 }
+
+// ═══════════════════════════════════════════════════
+// What Changed / new-since types
+// ═══════════════════════════════════════════════════
+
+export interface WhatChangedData {
+  since_ts: string | null;
+  hours_since: number | null;
+  new_events: number;
+  new_anomalies: number;
+  new_blocked: number;
+  new_unique_ips: Array<{ ip: string; count: number }>;
+  new_rule_matches: Array<{ rule: string; count: number; last_seen: string }>;
+  new_baseline_breaches: Array<{ rule_name: string; current_rate: number; baseline_rate: number; deviation: number }>;
+  first_time: boolean;
+}

@@ -14,6 +14,7 @@ import type {
   NginxSummary, NginxAnomaly,
   IpFlowClusterData,
   BaselineDeviationsData,
+  WhatChangedData,
 } from './types';
 
 const BASE = '/api';
@@ -561,4 +562,7 @@ export const api = {
 
   // Baseline deviations
   baselineDeviations: () => json<BaselineDeviationsData>('/baseline-deviations'),
+
+  // What Changed / new-since
+  newSince: (timestamp: number) => json<WhatChangedData>(`/new-since?timestamp=${timestamp}`),
 };

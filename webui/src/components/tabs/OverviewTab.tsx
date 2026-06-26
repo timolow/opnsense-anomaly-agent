@@ -5,12 +5,13 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
-import type { StatsData, AlertsData, BaselineDeviationsData, SparklinePoint } from '@/types';
+import type { StatsData, AlertsData, BaselineDeviationsData, SparklinePoint, WhatChangedData } from '@/types';
 import {
   AlertTriangle, Shield, Ban, Eye, TrendingUp,
   Activity, Clock, ArrowUpRight, ArrowDownRight,
   BarChart3, Zap, ChevronDown, ChevronUp,
   RadioTower, Network, ShieldCheck, Bell, FileText, Volume2,
+  RefreshCw, X, Globe, Lock,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { useStore } from '../../store';
@@ -383,11 +384,215 @@ function ActivityFeed({ alerts }: { alerts: AlertsData }) {
   );
 }
 
+const LOCAL_STORAGE_KEY = 'soc_dashboard_last_viewed';
+
+function WhatChangedPanel({ data, onDismiss }: { data: WhatChangedData; onDismiss: () => void }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const totalItems = data.new_anomalies + data.new_unique_ips.length + data.new_rule_matches.length + data.new_baseline_breaches.length;
+
+  if (!data.first_time && totalItems === 0 && data.new_events === 0 && data.new_blocked === 0) {
+    return (
+      <div className="cyber-card p-4 relative">
+        <button onClick={onDismiss} className="absolute top-3 right-3 text-cyber-textMuted hover:text-neon-cyan transition-colors">
+          <X size={14} />
+        </button>
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-2 flex items-center gap-2">
+          <RefreshCw size={14} /> What Changed
+        </h3>
+        <div className="text-sm text-cyber-green font-mono text-center py-4">
+          Nothing new since you last checked.
+        </div>
+      </div>
+    );
+  }
+
+  const formatTimeAgo = (hours: number | null) => {
+    if (hours === null) return '';
+    if (hours < 1) return `${Math.round(hours * 60)} min ago`;
+    if (hours < 24) return `${hours.toFixed(1)} hours ago`;
+    return `${(hours / 24).toFixed(1)} days ago`;
+  };
+
+  return (
+    <div className="cyber-card p-4 relative" style={{ borderTop: '2px solid var(--color-neon-cyan)' }}>
+      <button onClick={onDismiss} className="absolute top-3 right-3 text-cyber-textMuted hover:text-neon-cyan transition-colors">
+        <X size={14} />
+      </button>
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center justify-between mb-0"
+      >
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider flex items-center gap-2">
+          <RefreshCw size={14} className="animate-spin" style={{ animationDuration: '3s' }} /> What Changed
+          {data.first_time && (
+            <span className="text-xs bg-cyber-purple/20 text-cyber-purple px-2 py-0.5 rounded font-mono">FIRST VISIT</span>
+          )}
+        </h3>
+        <span className="text-xs font-mono text-cyber-textMuted">
+          {collapsed ? '▼' : '▲'} {data.first_time ? 'all time' : formatTimeAgo(data.hours_since)}
+        </span>
+      </button>
+
+      {/* Long gap warning */}
+      {data.hours_since !== null && data.hours_since >= 24 && !collapsed && (
+        <div className="mt-3 px-3 py-2 rounded bg-cyber-orange/10 border border-cyber-orange/30 text-sm font-mono text-cyber-orange text-center">
+          ⚠ You have not checked in for {data.hours_since.toFixed(1)} hours
+        </div>
+      )}
+
+      {!collapsed && (
+        <div className="space-y-4 mt-4">
+          {/* Summary stats row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="bg-cyber-bg/50 rounded-lg p-3 text-center">
+              <div className="text-xl font-bold font-mono text-neon-cyan">{data.new_events.toLocaleString()}</div>
+              <div className="text-xs text-cyber-textMuted">New Events</div>
+            </div>
+            <div className="bg-cyber-bg/50 rounded-lg p-3 text-center">
+              <div className="text-xl font-mono font-bold text-cyber-red">{data.new_blocked.toLocaleString()}</div>
+              <div className="text-xs text-cyber-textMuted">New Blocked</div>
+            </div>
+            <div className="bg-cyber-bg/50 rounded-lg p-3 text-center">
+              <div className="text-xl font-bold font-mono text-cyber-yellow">{data.new_anomalies}</div>
+              <div className="text-xs text-cyber-textMuted">New Anomalies</div>
+            </div>
+            <div className="bg-cyber-bg/50 rounded-lg p-3 text-center">
+              <div className="text-xl font-bold font-mono text-cyber-orange">{data.new_unique_ips.length}</div>
+              <div className="text-xs text-cyber-textMuted">New Source IPs</div>
+            </div>
+          </div>
+
+          {/* New Source IPs */}
+          {data.new_unique_ips.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-cyber-orange uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Globe size={12} /> New Source IPs — {data.new_unique_ips.length}
+              </h4>
+              <div className="flex flex-wrap gap-1.5">
+                {data.new_unique_ips.slice(0, 10).map((ip, i) => (
+                  <span key={i} className="cyber-tag text-xs font-mono" style={{ borderColor: 'var(--color-cyber-orange)' }}>
+                    {ip.ip} <span className="text-cyber-textMuted">({ip.count})</span>
+                  </span>
+                ))}
+                {data.new_unique_ips.length > 10 && (
+                  <span className="text-xs text-cyber-textMuted font-mono">+{data.new_unique_ips.length - 10} more</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* New Rule Matches */}
+          {data.new_rule_matches.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-cyber-purple uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Lock size={12} /> New Rule Matches — {data.new_rule_matches.length}
+              </h4>
+              <div className="space-y-1">
+                {data.new_rule_matches.slice(0, 5).map((r, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs font-mono py-1 px-2 rounded bg-cyber-bg/30">
+                    <span className="truncate mr-2 text-cyber-text">{r.rule}</span>
+                    <span className="text-cyber-purple whitespace-nowrap">{r.count} hits</span>
+                  </div>
+                ))}
+                {data.new_rule_matches.length > 5 && (
+                  <div className="text-xs text-cyber-textMuted font-mono">+{data.new_rule_matches.length - 5} more rules</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Baseline Breaches */}
+          {data.new_baseline_breaches.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-cyber-red uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Zap size={12} /> Baseline Breaches — {data.new_baseline_breaches.length}
+              </h4>
+              <div className="space-y-1">
+                {data.new_baseline_breaches.map((b, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs font-mono py-1 px-2 rounded bg-cyber-bg/30">
+                    <span className="truncate mr-2 text-cyber-text">{b.rule_name || 'unknown'}</span>
+                    <span className="text-cyber-red whitespace-nowrap">{b.deviation}x deviation</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OverviewTab() {
   const { timeRange, customTimeRange } = useStore();
   const [timelineData, setTimelineData] = useState<{ time: number; value: number }[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [sseTimelineData, setSSETimelineData] = useState<{ time: number; value: number }[]>([]);
+  const [whatChangedVisible, setWhatChangedVisible] = useState(true);
+  const [whatChangedData, setWhatChangedData] = useState<WhatChangedData | null>(null);
+  const [whatChangedLoading, setWhatChangedLoading] = useState(false);
+
+  // Load last_viewed from localStorage and fetch what changed
+  useEffect(() => {
+    let cancelled = false;
+    const lastViewed = localStorage.getItem(LOCAL_STORAGE_KEY);
+
+    if (!lastViewed) {
+      // First visit — mark all data as "new"
+      if (!cancelled) {
+        setWhatChangedData({
+          since_ts: null,
+          hours_since: null,
+          new_events: 0,
+          new_anomalies: 0,
+          new_blocked: 0,
+          new_unique_ips: [],
+          new_rule_matches: [],
+          new_baseline_breaches: [],
+          first_time: true,
+        });
+        setWhatChangedVisible(true);
+      }
+      return;
+    }
+
+    const ts = parseInt(lastViewed, 10);
+    if (isNaN(ts) || ts <= 0) return;
+
+    // If less than 30 seconds since last visit, don't show panel
+    const elapsed = (Date.now() - ts) / 1000;
+    if (elapsed < 30) {
+      if (!cancelled) setWhatChangedVisible(false);
+      return;
+    }
+
+    // If more than 24 hours, still show but with a "long gap" message
+    setWhatChangedLoading(true);
+    api.newSince(ts).then((data) => {
+      if (!cancelled) {
+        setWhatChangedData(data);
+        setWhatChangedVisible(true);
+        setWhatChangedLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setWhatChangedLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  // Save current timestamp to localStorage when dismissing or navigating away
+  const handleDismissWhatChanged = () => {
+    setWhatChangedVisible(false);
+    localStorage.setItem(LOCAL_STORAGE_KEY, String(Date.now()));
+  };
+
+  // Save timestamp when navigating to another tab (on unmount)
+  useEffect(() => {
+    return () => {
+      localStorage.setItem(LOCAL_STORAGE_KEY, String(Date.now()));
+    };
+  }, []);
 
   const { data: stats, isLoading: statsLoading, isError: statsError, error: statsErrorObj } = useQuery<StatsData>({
     queryKey: ['stats'],
@@ -555,6 +760,17 @@ export default function OverviewTab() {
 
   return (
     <div className="space-y-6">
+      {/* What Changed Panel */}
+      {whatChangedVisible && whatChangedData && (
+        <WhatChangedPanel data={whatChangedData} onDismiss={handleDismissWhatChanged} />
+      )}
+      {whatChangedVisible && whatChangedLoading && (
+        <div className="cyber-card p-4 flex items-center gap-3">
+          <RefreshCw size={16} className="animate-spin text-neon-cyan" />
+          <span className="text-sm font-mono text-cyber-textMuted">Checking what changed...</span>
+        </div>
+      )}
+
       <ThreatSummary data={stats} />
 
       <TrafficSummary stats={stats} timelineData={combinedTimelineData} />
