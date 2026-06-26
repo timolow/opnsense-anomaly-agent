@@ -8,6 +8,8 @@ Provides:
 - Degraded state tracking and Discord alerting on health failures
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -50,6 +52,59 @@ def get_db_size_bytes() -> int:
         return 0
 
 
+def get_redis_memory() -> Dict[str, Any]:
+    """Query Redis INFO memory for memory usage stats.
+
+    Returns a dict with:
+      - used_mb: RSS memory used by Redis
+      - peak_mb: Peak RSS memory
+      - max_mb: maxmemory configured (0 = unlimited)
+      - connected_clients: active client connections
+      - status: 'ok' | 'warning' | 'unavailable'
+
+    Returns {"status": "unavailable"} if Redis is not reachable.
+    """
+    try:
+        import os
+        redis_url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+        try:
+            import redis as redis_lib
+        except ImportError:
+            return {"status": "unavailable", "reason": "redis module not installed"}
+
+        r = redis_lib.from_url(redis_url, socket_timeout=2, decode_responses=True)
+        info = r.info("memory")
+        used_bytes = info.get("used_memory_rss", info.get("used_memory", 0))
+        peak_bytes = info.get("used_memory_peak", 0)
+        max_bytes = info.get("maxmemory", 0)
+
+        # Get connected clients
+        server_info = r.info("clients")
+        connected = server_info.get("connected_clients", 0)
+
+        result = {
+            "used_mb": round(used_bytes / (1024**2), 1),
+            "peak_mb": round(peak_bytes / (1024**2), 1),
+            "max_mb": round(max_bytes / (1024**2), 1) if max_bytes > 0 else 0.0,
+            "connected_clients": connected,
+            "status": "ok",
+        }
+
+        # Check if Redis is hitting maxmemory
+        if max_bytes > 0:
+            pct = (used_bytes / max_bytes * 100) if max_bytes > 0 else 0
+            result["pct_of_max"] = round(pct, 1)
+            if pct >= 95:
+                result["status"] = "critical"
+            elif pct >= 90:
+                result["status"] = "warning"
+
+        return result
+    except Exception as e:
+        logger.debug("Redis memory query failed: %s", e)
+        return {"status": "unavailable", "reason": str(e)}
+
+
 def get_disk_usage(path: str = "/app") -> Dict[str, Any]:
     """Get disk usage for the given path."""
     try:
@@ -65,7 +120,7 @@ def get_disk_usage(path: str = "/app") -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def get_system_metrics(db_size: bool = True, disk: bool = True) -> Dict[str, Any]:
+def get_system_metrics(db_size: bool = True, disk: bool = True, redis_memory: bool = False) -> Dict[str, Any]:
     """Collect system-level metrics from /proc (no psutil dependency).
 
     Returns a dict with:
@@ -74,6 +129,7 @@ def get_system_metrics(db_size: bool = True, disk: bool = True) -> Dict[str, Any
       - load_avg: {1m, 5m, 15m}
       - db_size: {bytes, mb}  (optional, if db_size=True)
       - disk: {total_mb, used_mb, free_mb, pct_used}  (optional, if disk=True)
+      - redis: {used_mb, peak_mb, max_mb, connected_clients, status}  (optional, if redis_memory=True)
     """
     result: Dict[str, Any] = {}
 
@@ -151,6 +207,10 @@ def get_system_metrics(db_size: bool = True, disk: bool = True) -> Dict[str, Any
     if disk:
         result["disk"] = get_disk_usage()
 
+    # --- Redis memory ---
+    if redis_memory:
+        result["redis"] = get_redis_memory()
+
     return result
 
 
@@ -165,7 +225,7 @@ class HealthMonitor:
     """
 
     # Thresholds for "degraded" classification
-    MEMORY_WARN_PCT = 85.0
+    MEMORY_WARN_PCT = 80.0
     MEMORY_CRIT_PCT = 95.0
     CPU_WARN_PCT = 90.0
     CPU_CRIT_PCT = 98.0
@@ -174,8 +234,10 @@ class HealthMonitor:
     LOAD_WARN_MULTIPLIER = 2.0  # load > N * cpu_count
     DB_SIZE_WARN_MB = 2048     # 2 GB
     DB_SIZE_CRIT_MB = 5120     # 5 GB
-    DISK_WARN_PCT = 85.0
+    DISK_WARN_PCT = 90.0
     DISK_CRIT_PCT = 95.0
+    REDIS_MAXMEM_WARN_PCT = 80.0
+    REDIS_MAXMEM_CRIT_PCT = 95.0
 
     def __init__(
         self,
@@ -304,6 +366,16 @@ class HealthMonitor:
             elif disk_pct >= self.DISK_WARN_PCT:
                 issues.append(f"WARNING: disk at {disk_pct}%")
 
+        # 2d. Redis memory
+        redis_info = get_redis_memory()
+        details["redis"] = redis_info
+        if redis_info.get("status") != "unavailable":
+            pct_of_max = redis_info.get("pct_of_max", 0)
+            if pct_of_max >= self.REDIS_MAXMEM_CRIT_PCT:
+                issues.append(f"CRITICAL: Redis memory at {pct_of_max}% of maxmemory")
+            elif pct_of_max >= self.REDIS_MAXMEM_WARN_PCT:
+                issues.append(f"WARNING: Redis memory at {pct_of_max}% of maxmemory")
+
         # 3. Database connectivity
         db_ok = True
         conn = None
@@ -376,7 +448,7 @@ class HealthMonitor:
         # Log
         if issues:
             logger.warning(
-                "Health check: %s (prev=%s) pool=[active=%d/avail=%d/%d] — %s",
+                "Health check: %s (prev=%s) pool=[active=%s/avail=%s/%s] — %s",
                 status, prev_status,
                 pool_info.get("pool_active", "?"),
                 pool_info.get("pool_available", "?"),
@@ -385,7 +457,7 @@ class HealthMonitor:
             )
         else:
             logger.info(
-                "Health check: %s (prev=%s) pool=[active=%d/avail=%d/%d] — all clear",
+                "Health check: %s (prev=%s) pool=[active=%s/avail=%s/%s] — all clear",
                 status, prev_status,
                 pool_info.get("pool_active", "?"),
                 pool_info.get("pool_available", "?"),

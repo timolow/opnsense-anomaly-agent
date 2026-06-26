@@ -49,14 +49,15 @@ import requests
 # Structured JSON logging
 from json_logging import setup_json_logging, get_structured_logger
 
-setup_json_logging(level=logging.INFO)
-logger = logging.getLogger(__name__)
-slogger = get_structured_logger(__name__)
-
 # Paths
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "agent_data"
 DATA_DIR.mkdir(exist_ok=True)
+LOG_FILE_PATH = os.environ.get("LOG_FILE", str(DATA_DIR / "agent.log"))
+
+setup_json_logging(level=logging.INFO, log_file=LOG_FILE_PATH)
+logger = logging.getLogger(__name__)
+slogger = get_structured_logger(__name__)
 
 # Import submodules
 from adaptive_parser import AdaptiveParser

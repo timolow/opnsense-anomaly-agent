@@ -90,11 +90,14 @@ class RotatingJsonFileHandler(logging.handlers.TimedRotatingFileHandler):
     def __init__(
         self,
         filename: str,
-        max_bytes: int = 100_000_000,  # 100MB max per file
-        backup_count: int = 7,
+        max_bytes: int = 50_000_000,  # 50MB max per file
+        backup_count: int = 5,
         encoding: str = "utf-8",
     ) -> None:
         # Daily rotation at midnight UTC
+        # Ensure parent directory exists before opening
+        log_dir = os.path.dirname(os.path.abspath(filename))
+        os.makedirs(log_dir, exist_ok=True)
         super().__init__(
             filename,
             when="midnight",
@@ -127,20 +130,19 @@ class RotatingJsonFileHandler(logging.handlers.TimedRotatingFileHandler):
         # TimedRotatingFileHandler computes this in rolling_timestamp
         from datetime import datetime as dt, timezone as tz
         datetime_now = dt.now(tz.utc)
-        # Use date suffix for rotated files
-        rotated_name = self.baseFilename + "." + datetime_now.strftime("%Y-%m-%d")
+        # Use date + sequence suffix for rotated files (handles same-day rotation)
+        date_suffix = datetime_now.strftime("%Y-%m-%d")
+        rotated_name = self.baseFilename + "." + date_suffix
+        seq = 1
+        while os.path.exists(rotated_name) or os.path.exists(rotated_name + ".gz"):
+            rotated_name = self.baseFilename + "." + date_suffix + "." + str(seq)
+            seq += 1
 
-        # If the rotated file already exists (shouldn't normally), skip
-        if os.path.exists(rotated_name):
-            # Already exists — compress if not already compressed
-            if not rotated_name.endswith(".gz"):
-                self._compress_file(rotated_name)
-        else:
-            # Rename current file to rotated name
-            if os.path.exists(self.baseFilename):
-                os.rename(self.baseFilename, rotated_name)
-                # Compress the rotated file
-                self._compress_file(rotated_name)
+        # Rename current file to rotated name
+        if os.path.exists(self.baseFilename):
+            os.rename(self.baseFilename, rotated_name)
+            # Compress the rotated file
+            self._compress_file(rotated_name)
 
         # Clean up old rotated files beyond backupCount
         self._cleanup_old_files()
@@ -192,22 +194,33 @@ def setup_json_logging(
     log_file: Optional[str] = None,
     stdout: bool = True,
     stderr: bool = False,
-    max_bytes: int = 100_000_000,
-    backup_count: int = 7,
+    max_bytes: Optional[int] = None,
+    backup_count: Optional[int] = None,
 ) -> logging.Logger:
     """Configure the root logger to emit structured JSON.
 
     Args:
-        level:       Minimum log level (default: INFO).
-        log_file:    Optional file path to also write JSON logs to (with rotation).
-        stdout:      If True, attach a StreamHandler to stdout (default True).
-        stderr:      If True, attach a StreamHandler to stderr (default False).
-        max_bytes:   Max size per log file before rotation (default: 100MB).
-        backup_count: Number of rotated log files to keep (default: 7 days).
+        level:         Minimum log level (default: INFO).
+        log_file:      Optional file path to also write JSON logs to (with rotation).
+                       Falls back to LOG_FILE env var, then DATA_DIR/agent.log.
+        stdout:        If True, attach a StreamHandler to stdout (default True).
+        stderr:        If True, attach a StreamHandler to stderr (default False).
+        max_bytes:     Max size per log file before rotation (default: 50MB).
+                       Falls back to LOG_MAX_BYTES env var.
+        backup_count:  Number of rotated log files to keep (default: 5).
+                       Falls back to LOG_BACKUP_COUNT env var.
 
     Returns:
         The root logger (for chaining if needed).
     """
+    # Defaults: 50MB max, 5 rotated files (spec)
+    # Env vars allow runtime override without code changes
+    if max_bytes is None:
+        max_bytes = int(os.environ.get("LOG_MAX_BYTES", 50_000_000))
+    if backup_count is None:
+        backup_count = int(os.environ.get("LOG_BACKUP_COUNT", 5))
+    if log_file is None:
+        log_file = os.environ.get("LOG_FILE")
     root = logging.getLogger()
     root.setLevel(level)
 
@@ -249,3 +262,61 @@ def setup_json_logging(
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     return root
+
+
+# Reserved LogRecord attribute names that would collide with JsonFormatter
+# output. When passed as kwargs to StructuredLogger, these are remapped
+# by prepending "logger_".
+_RESERVED_KEYS = {
+    "module",      # collides with record.name (logger module path)
+}
+
+
+class StructuredLogger:
+    """Adapter around stdlib Logger that accepts keyword-arg structured context.
+
+    All keyword arguments are attached to the LogRecord as extra fields so
+    JsonFormatter merges them into the JSON output.  Reserved keys that
+    would collide with LogRecord attributes are remapped (e.g. ``module``
+    → ``logger_module``).
+
+    Usage:
+        slog = get_structured_logger(__name__)
+        slog.info("Firewall event", event_id="evt-1", ip="10.0.0.1", rule="FW-001")
+    """
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self.logger = logger
+
+    def _log_extra(self, level: int, msg: str, **kwargs: Any) -> None:
+        """Route through the underlying logger, injecting structured kwargs."""
+        remapped: Dict[str, Any] = {}
+        for k, v in kwargs.items():
+            remapped[k if k not in _RESERVED_KEYS else f"logger_{k}"] = v
+        self.logger.log(level, msg, extra=remapped)
+
+    def debug(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.DEBUG, msg, **kwargs)
+
+    def info(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.INFO, msg, **kwargs)
+
+    def warning(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.WARNING, msg, **kwargs)
+
+    def warn(self, msg: str, **kwargs: Any) -> None:
+        self.warning(msg, **kwargs)
+
+    def error(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.ERROR, msg, **kwargs)
+
+    def critical(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.CRITICAL, msg, **kwargs)
+
+    def exception(self, msg: str, **kwargs: Any) -> None:
+        self.logger.exception(msg, extra=kwargs)
+
+
+def get_structured_logger(name: str) -> StructuredLogger:
+    """Factory: wrap a stdlib logger in StructuredLogger."""
+    return StructuredLogger(logging.getLogger(name))

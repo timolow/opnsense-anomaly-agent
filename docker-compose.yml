@@ -43,6 +43,10 @@ services:
       - APPRISE_URLS=${APPRISE_URLS:-}
       # Chat command HTTP server
       - CHAT_PORT=${CHAT_PORT:-8765}
+      # Log rotation (50MB max, 5 rotated files, gzip compressed)
+      - LOG_FILE=${LOG_FILE:-/app/agent_data/agent.log}
+      - LOG_MAX_BYTES=${LOG_MAX_BYTES:-50000000}
+      - LOG_BACKUP_COUNT=${LOG_BACKUP_COUNT:-5}
       # Syslog listener (built-in UDP)
       - SYSLOG_ENABLED=${SYSLOG_ENABLED:-false}
       - SYSLOG_UDP_PORT=${SYSLOG_UDP_PORT:-1514}

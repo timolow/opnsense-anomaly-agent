@@ -7,7 +7,11 @@ import math
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-import numpy as np
+
+# rule_classifier imports sklearn; skip all ML tests when not installed
+numpy = pytest.importorskip("numpy")
+np = numpy
+
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 
