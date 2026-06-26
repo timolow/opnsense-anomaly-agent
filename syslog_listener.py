@@ -300,55 +300,79 @@ def write_event(event, write_to_file=True):
         logger().error(f"Error writing event: {e}")
         return False
 
-def run_syslog_listener():
+def run_syslog_listener(event_callback=None):
     """Run the syslog UDP listener.
 
     Binds to 0.0.0.0 (all interfaces) because OPNsense sends syslog from
     any network interface. This is safe — UDP syslog is firewalled and
     only trusted OPNsense hosts are configured to send to this port.
     The bind address can be overridden with SYSLOG_BIND env var.
+
+    Args:
+        event_callback: callable(event_dict) -> None. If provided, events
+                       go directly to the callback and ALL JSONL file I/O
+                       (writing, rotation, event counter) is skipped entirely.
+                       If None, falls back to legacy JSONL file mode.
     """
     bind_host = os.getenv("SYSLOG_BIND", "0.0.0.0")
-    
+    callback_mode = event_callback is not None
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    
+
     try:
-        _ensure_output_dir()
-        _init_event_counter()
+        if not callback_mode:
+            _ensure_output_dir()
+            _init_event_counter()
         sock.bind((bind_host, UDP_PORT))
-        logger().info(f"Syslog listener started on UDP port {UDP_PORT}")
-        logger().info(f"Events will be written to: {OUTPUT_FILE}")
-        
+        if callback_mode:
+            logger().info("Syslog listener started on UDP port %d (callback mode, no file I/O)", UDP_PORT)
+        else:
+            logger().info("Syslog listener started on UDP port %d", UDP_PORT)
+            logger().info("Events will be written to: %s", OUTPUT_FILE)
+
+        count = 0
         while True:
             try:
                 data, addr = sock.recvfrom(65535)
                 line = data.decode('utf-8', errors='replace').strip()
-                
+
                 if not line:
                     continue
-                
+
                 logger().debug(f"Received from {addr}: {line[:100]}...")
-                
+
                 event = parse_syslog_line(line)
                 if event:
-                    if write_event(event):
-                        count = get_event_count() + 1
-                        set_event_count(count)
-                        logger().info(f"Event #{count}: {event.get('src_ip')}:{event.get('sport')} -> {event.get('dst_ip')}:{event.get('dport')} ({event.get('action')})")
-            
+                    count += 1
+                    if callback_mode:
+                        # Direct callback — skip all file I/O
+                        event_callback(event)
+                        logger().debug("Event #%d: %s -> %s", count,
+                                     event.get('src_ip'), event.get('dst_ip'))
+                    else:
+                        # Legacy JSONL file mode
+                        if write_event(event):
+                            event_count = get_event_count() + 1
+                            set_event_count(event_count)
+                            logger().info("Event #%d: %s:%s -> %s:%s (%s)",
+                                        event_count,
+                                        event.get('src_ip'), event.get('sport'),
+                                        event.get('dst_ip'), event.get('dport'),
+                                        event.get('action'))
+
             except socket.timeout:
                 continue
             except Exception as e:
                 logger().error(f"Error receiving data: {e}")
                 continue
-    
+
     except Exception as e:
         logger().error(f"Failed to start listener: {e}")
     finally:
         sock.close()
-        # Close the JSONL writer to flush any pending writes
-        if _jsonl_writer is not None:
+        # Close the JSONL writer only in file mode
+        if not callback_mode and _jsonl_writer is not None:
             _jsonl_writer.close()
         logger().info("Syslog listener stopped")
 
