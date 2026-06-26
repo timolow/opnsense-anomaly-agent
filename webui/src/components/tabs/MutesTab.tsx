@@ -23,9 +23,7 @@ export default function MutesTab() {
     refetchInterval: 15000,
   });
 
-  if (isLoading) return <MutesSkeleton />;
-  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Mutes" />;
-
+  // All hooks MUST be called before any early returns (Rules of Hooks)
   const createMute = useMutation({
     mutationFn: api.createMute,
     onSuccess: () => {
@@ -41,6 +39,9 @@ export default function MutesTab() {
       queryClient.invalidateQueries({ queryKey: ['mutes'] });
     },
   });
+
+  if (isLoading) return <MutesSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Mutes" />;
 
   const filtered = mutes.filter((m) =>
     m.ip.includes(search) || m.reason.toLowerCase().includes(search.toLowerCase())
