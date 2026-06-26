@@ -2,6 +2,19 @@
 // Type Definitions - OPNsense SOC Dashboard
 // ═══════════════════════════════════════════════════
 
+export interface SparklinePoint {
+  time: string;
+  count: number;
+}
+
+export interface SparklineData {
+  events: SparklinePoint[];
+  blocked: SparklinePoint[];
+  passed: SparklinePoint[];
+  unique_ips: SparklinePoint[];
+  anomalies: SparklinePoint[];
+}
+
 export interface StatsData {
   total_events: number;
   events_24h: number;
@@ -22,6 +35,7 @@ export interface StatsData {
     opnsense: string;
   };
   counters: Record<string, unknown>;
+  sparklines?: SparklineData;
 }
 
 export interface HeatmapData {
