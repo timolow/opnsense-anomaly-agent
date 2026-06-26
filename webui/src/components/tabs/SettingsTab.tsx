@@ -27,9 +27,7 @@ export default function SettingsTab() {
     },
   });
 
-  if (isLoading) return <SettingsSkeleton />;
-  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Settings" />;
-
+  // All hooks MUST be called before any early returns (Rules of Hooks)
   useEffect(() => {
     if (settingsData) setSettings(settingsData);
   }, [settingsData]);
@@ -50,6 +48,9 @@ export default function SettingsTab() {
       setTimeout(() => setSaved(false), 3000);
     },
   });
+
+  if (isLoading) return <SettingsSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Settings" />;
 
   return (
     <div className="space-y-4">
