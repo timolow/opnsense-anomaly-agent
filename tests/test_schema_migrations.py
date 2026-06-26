@@ -342,3 +342,91 @@ class TestGetMigrationStatus:
 
         assert status["is_current"] is True
         assert len(status["pending"]) == 0
+
+
+class TestBaselineEngineMigrationIntegration:
+    """Integration tests: baseline_engine.py + schema_migrations.py compatibility.
+
+    These tests verify that the rule_baselines table schema produced by v3 migration
+    matches what baseline_engine.py expects for _load_baselines() and save_baselines().
+    """
+
+    def test_v3_create_sql_has_all_baseline_columns(self):
+        """The v3 CREATE TABLE must include every column baseline_engine reads."""
+        from baseline_engine import BaselineEngine
+
+        v3 = next(m for m in MIGRATIONS if m["version"] == 3)
+        v3_sql = " ".join(v3["sql"])
+
+        # Columns baseline_engine._load_baselines() reads:
+        # rule, ip, hour, avg_events_per_hour, std_events_per_hour,
+        # max_events_per_hour, min_events_per_hour, protocol_distribution,
+        # avg_dst_ports, avg_src_ports, avg_unique_dst_ips, pass_ratio,
+        # block_ratio, hourly_distribution, sample_count, last_updated
+        required_columns = [
+            "rule", "ip", "hour",
+            "avg_events_per_hour", "std_events_per_hour",
+            "max_events_per_hour", "min_events_per_hour",
+            "protocol_distribution", "avg_dst_ports", "avg_src_ports",
+            "avg_unique_dst_ips", "pass_ratio", "block_ratio",
+            "hourly_distribution", "sample_count", "last_updated",
+        ]
+        for col in required_columns:
+            assert col in v3_sql, f"v3 migration missing column: {col}"
+
+    def test_v3_alter_columns_superset_of_required(self):
+        """The v3 alter_columns must cover any column baseline_engine might need."""
+        v3 = next(m for m in MIGRATIONS if m["version"] == 3)
+        alter_cols = {col for (_, col, _) in v3.get("alter_columns", [])}
+
+        # Columns that might be missing on legacy tables
+        expected = {"rule", "ip", "hour"}
+        assert expected.issubset(alter_cols), (
+            f"v3 alter_columns missing: {expected - alter_cols}"
+        )
+
+    def test_baseline_engine_load_query_matches_v3_schema(self):
+        """Verify baseline_engine SELECT columns match the v3 CREATE TABLE columns."""
+        import inspect
+        from baseline_engine import BaselineEngine
+        source = inspect.getsource(BaselineEngine._load_baselines)
+
+        # The SELECT in _load_baselines references these columns
+        expected_in_select = [
+            "rule", "ip", "hour",
+            "avg_events_per_hour", "std_events_per_hour",
+            "max_events_per_hour", "min_events_per_hour",
+            "protocol_distribution", "avg_dst_ports", "avg_src_ports",
+            "avg_unique_dst_ips", "pass_ratio", "block_ratio",
+            "hourly_distribution", "sample_count", "last_updated",
+        ]
+        for col in expected_in_select:
+            assert col in source, f"_load_baselines missing column in SELECT: {col}"
+
+    def test_baseline_engine_save_query_matches_v3_schema(self):
+        """Verify baseline_engine INSERT columns match the v3 CREATE TABLE columns."""
+        import inspect
+        from baseline_engine import BaselineEngine
+        source = inspect.getsource(BaselineEngine.save_baselines)
+
+        expected_in_insert = [
+            "rule", "ip", "hour",
+            "avg_events_per_hour", "std_events_per_hour",
+            "max_events_per_hour", "min_events_per_hour",
+            "protocol_distribution", "avg_dst_ports", "avg_src_ports",
+            "avg_unique_dst_ips", "pass_ratio", "block_ratio",
+            "hourly_distribution", "sample_count", "last_updated",
+        ]
+        for col in expected_in_insert:
+            assert col in source, f"save_baselines missing column in INSERT: {col}"
+
+    def test_composite_unique_constraint_matches_baseline_key(self):
+        """Verify the composite unique constraint (rule, ip, hour) matches _make_baseline_key logic."""
+        v3 = next(m for m in MIGRATIONS if m["version"] == 3)
+        v3_sql = " ".join(v3["sql"])
+
+        # The constraint is added in the hook, not the SQL — check _v3_finalize source
+        import inspect
+        hook_source = inspect.getsource(_v3_finalize)
+        assert "rule_baselines_rule_key" in hook_source
+        assert "UNIQUE (rule, ip, hour)" in hook_source

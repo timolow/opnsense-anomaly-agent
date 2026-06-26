@@ -2191,6 +2191,32 @@ def query_health():
     }
 
 
+def query_schema_migrations():
+    """Return schema migration status for admin dashboard."""
+    from schema_migrations import get_schema_version, get_migration_status, CURRENT_SCHEMA_VERSION
+    
+    db = get_db()
+    if not db:
+        return {
+            "current_version": "unknown",
+            "target_version": CURRENT_SCHEMA_VERSION,
+            "is_current": False,
+            "error": "Database not connected",
+        }
+    
+    try:
+        return get_migration_status(db)
+    except Exception as e:
+        return {
+            "current_version": "unknown",
+            "target_version": CURRENT_SCHEMA_VERSION,
+            "is_current": False,
+            "error": str(e),
+        }
+    finally:
+        close_db(db)
+
+
 def query_version():
     """Return deployment version info (git commit, build time, deploy state)."""
     import subprocess
@@ -3130,6 +3156,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_geo())
             elif path == "/api/health":
                 self._send_json(query_health())
+            elif path == "/api/schema-migrations":
+                try:
+                    self._send_json(query_schema_migrations())
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
             elif path == "/api/resources":
                 try:
                     self._send_json(query_resources())
