@@ -1955,14 +1955,15 @@ def query_service_status():
         return {"error": str(e), "services_tracked": 0, "services_monitored": 0}
 
 def query_resources():
-    """Resource monitoring endpoint — memory, CPU, DB size, disk usage.
+    """Resource monitoring endpoint — memory, CPU, DB size, disk usage, Redis.
 
     Returns structured resource data with threshold status.
+    Thresholds: memory > 80% warning / > 95% critical, disk > 90% warning / > 95% critical.
     """
     from health_monitor import get_system_metrics
 
     try:
-        metrics = get_system_metrics(db_size=True, disk=True)
+        metrics = get_system_metrics(db_size=True, disk=True, redis_memory=True)
     except Exception as e:
         return {"error": str(e), "resources": {}}
 
@@ -1970,14 +1971,14 @@ def query_resources():
     status = "ok"
     warnings: list[str] = []
 
-    # Memory check
+    # Memory check (> 80% warning, > 95% critical)
     mem = metrics.get("memory", {})
     if "error" not in mem:
         pct = mem.get("pct_used", 0)
         if pct >= 95.0:
             mem["status"] = "critical"
             status = "critical"
-        elif pct >= 85.0:
+        elif pct >= 80.0:
             mem["status"] = "warning"
             warnings.append(f"Memory at {pct}%")
             if status == "ok":
@@ -2015,20 +2016,31 @@ def query_resources():
         else:
             db["status"] = "ok"
 
-    # Disk check
+    # Disk check (> 90% warning, > 95% critical)
     disk = metrics.get("disk", {})
     if "error" not in disk:
         pct = disk.get("pct_used", 0)
         if pct >= 95.0:
             disk["status"] = "critical"
             status = "critical"
-        elif pct >= 85.0:
+        elif pct >= 90.0:
             disk["status"] = "warning"
             warnings.append(f"Disk at {pct}%")
             if status == "ok":
                 status = "warning"
         else:
             disk["status"] = "ok"
+
+    # Redis memory check
+    redis = metrics.get("redis", {})
+    redis_status = redis.get("status", "ok")
+    if redis_status == "warning":
+        warnings.append(f"Redis memory at {redis.get('pct_of_max', 'N/A')}% of max")
+        if status == "ok":
+            status = "warning"
+    elif redis_status == "critical":
+        status = "critical"
+        warnings.append(f"Redis memory critical at {redis.get('pct_of_max', 'N/A')}% of max")
 
     return {
         "status": status,
@@ -2926,7 +2938,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Resource monitoring metrics
             try:
                 from health_monitor import get_system_metrics
-                res = get_system_metrics(db_size=True, disk=True)
+                res = get_system_metrics(db_size=True, disk=True, redis_memory=True)
 
                 # Memory metrics
                 mem = res.get("memory", {})
@@ -2977,6 +2989,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     out.append("# HELP agent_disk_free_bytes Agent disk free space in bytes")
                     out.append("# TYPE agent_disk_free_bytes gauge")
                     out.append(f"agent_disk_free_bytes {int(disk.get('free_mb', 0) * 1024 * 1024)}")
+
+                # Redis memory metrics
+                rinfo = res.get("redis", {})
+                if "error" not in rinfo and rinfo.get("status") != "unavailable":
+                    out.append("# HELP agent_redis_memory_used_bytes Redis RSS memory in bytes")
+                    out.append("# TYPE agent_redis_memory_used_bytes gauge")
+                    out.append(f"agent_redis_memory_used_bytes {int(rinfo.get('used_mb', 0) * 1024 * 1024)}")
+                    out.append("# HELP agent_redis_memory_peak_bytes Redis peak RSS memory in bytes")
+                    out.append("# TYPE agent_redis_memory_peak_bytes gauge")
+                    out.append(f"agent_redis_memory_peak_bytes {int(rinfo.get('peak_mb', 0) * 1024 * 1024)}")
+                    out.append("# HELP agent_redis_connected_clients Redis connected clients")
+                    out.append("# TYPE agent_redis_connected_clients gauge")
+                    out.append(f"agent_redis_connected_clients {rinfo.get('connected_clients', 0)}")
+                    if rinfo.get("max_mb", 0) > 0:
+                        out.append("# HELP agent_redis_memory_usage_pct Redis memory usage percentage of maxmemory")
+                        out.append("# TYPE agent_redis_memory_usage_pct gauge")
+                        out.append(f"agent_redis_memory_usage_pct {rinfo.get('pct_of_max', 0)}")
             except Exception as res_err:
                 logger.debug("Could not add resource metrics: %s", res_err)
 
