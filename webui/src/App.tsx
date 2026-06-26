@@ -109,6 +109,7 @@ export default function App() {
         'rules-ml': 'rules-classified',
         'wanflap': 'wan-flap',
         'wan-flap': 'wan-flap',
+        'wanflap': 'wan-flap',
         'network-topology': 'network',
         'threat-alerts': 'alerts',
         'traffic-heatmap': 'heatmap',
