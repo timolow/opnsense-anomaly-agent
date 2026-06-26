@@ -21,6 +21,14 @@ sys.path.insert(0, '/app')
 
 from eventdb import EventDatabase
 
+# Drain mode (imported from standalone module for testability)
+from drain import (
+    _drain_mode, _active_requests, _active_requests_lock,
+    _drained_event, _drain_initiated_at, _MAX_DRAIN_WAIT,
+    enter_drain_mode, is_draining, get_active_request_count,
+    wait_for_drain, graceful_shutdown, _request_enter, _request_exit,
+)
+
 logger = logging.getLogger(__name__)
 
 # Rate limiter for API requests
@@ -2178,6 +2186,8 @@ def query_health():
         "events_processed": event_count,
         "anomalies_detected": agent_counters.get("anomaly_count", 0),
         "uptime_seconds": uptime,
+        "draining": is_draining(),
+        "active_requests": get_active_request_count(),
     }
 
 
@@ -2647,6 +2657,60 @@ def query_nginx_timeline(hours=24):
 
 # Request Handler
 class DashboardHandler(BaseHTTPRequestHandler):
+    # Override handle_one_request to track active requests and check drain mode
+    def handle_one_request(self):
+        """Parse one request, track it, and reject if draining (except /api/drain)."""
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+            if len(self.raw_requestline) > 65536:
+                self.requestline = ''
+                self.request_version = ''
+                self.command = ''
+                self.send_error(414)
+                return
+            if not self.raw_requestline:
+                self.close_connection = True
+                return
+            if not self.parse_request():
+                return
+            # Check drain mode for API endpoints (but not /api/drain itself)
+            path = self.path.split('?')[0] if hasattr(self, 'path') else ''
+            if path.startswith('/api/') and path != '/api/drain' and is_draining():
+                self._send_json({
+                    "error": "service draining",
+                    "draining": True,
+                    "active_requests": get_active_request_count(),
+                    "message": "Server is draining — please retry shortly"
+                }, 503)
+                return
+            _request_enter()
+            try:
+                mname = 'do_' + self.command
+                if not hasattr(self, mname):
+                    self.send_error(501, "Unsupported method (%r)" % self.command)
+                    return
+                method = getattr(self, mname)
+                method()
+                self.wfile.flush()
+            finally:
+                _request_exit()
+        except TimeoutError as e:
+            self.log_error("Request timed out: %r", e)
+            self.close_connection = True
+            return
+
+    def _check_drain(self) -> bool:
+        """Return True if request should be rejected due to drain mode."""
+        if is_draining():
+            self._send_json({
+                "error": "service draining",
+                "draining": True,
+                "active_requests": get_active_request_count(),
+                "message": "Server is draining"
+            }, 503)
+            return True
+        return False
+
     def _send_json(self, data, code=200):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -3011,6 +3075,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if not _require_auth(self):
                 return
+            # Drain status endpoint (always available, no tracking)
+            if path == "/api/drain":
+                self._send_json({
+                    "draining": is_draining(),
+                    "active_requests": get_active_request_count(),
+                    "drain_initiated_at": _drain_initiated_at if _drain_mode else None,
+                    "seconds_draining": round(time.time() - _drain_initiated_at, 1) if _drain_mode else 0,
+                })
+                return
+
             if path == "/api/stats":
                 self._send_json(query_stats())
             # ═══════════════════════════════════════════════
@@ -3317,6 +3391,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             if not _require_auth(self):
                 return
+        # Drain trigger endpoint
+        if path == "/api/drain":
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {}
+            timeout = data.get("timeout", _MAX_DRAIN_WAIT)
+            enter_drain_mode()
+            drained = wait_for_drain(timeout=float(timeout))
+            self._send_json({
+                "draining": True,
+                "drained": drained,
+                "active_requests": get_active_request_count(),
+                "message": "Drain triggered" if drained else "Drain timed out"
+            })
+            return
         if path == "/api/mutes":
             cl = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(cl)
@@ -4270,7 +4362,7 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-
+# ═══════════════════════════════════════════════
 # ═══════════════════════════════════════════════
 # -style visualization queries
 # Read from PostgreSQL and return data formatted
@@ -4669,21 +4761,43 @@ def run_server(host=None, port=8766):
         logger.error("Failed to create marker: %s", e)
         tb.print_exc()
     
-    try:
-        server = ThreadedHTTPServer((bind_host, port), DashboardHandler)
-        with open(marker, "a") as f:
-            f.write("ThreadedHTTPServer created\n")
-            f.flush()
-        server.serve_forever()
-        with open(marker, "a") as f:
-            f.write("serve_forever entered\n")
-            f.flush()
-    except Exception as e:
-        with open(marker, "a") as f:
-            f.write(f"EXCEPTION: {e}\n")
-            tb.print_exc(file=f)
-            f.flush()
-        raise
+_server_instance = None  # Global reference for shutdown
+
+
+def shutdown_server(timeout: float = _MAX_DRAIN_WAIT) -> None:
+    """Trigger graceful shutdown of the dashboard server."""
+    global _server_instance
+    if _server_instance:
+        # Start drain in background thread so the server thread can stop
+        threading_lib.Thread(target=_do_shutdown, args=(timeout,), daemon=True).start()
+
+
+def _do_shutdown(timeout: float):
+    """Internal: drain then stop server."""
+    graceful_shutdown(timeout=timeout)
+    global _server_instance
+    if _server_instance:
+        _server_instance.shutdown()
+        _server_instance = None
+
+
+try:
+    server = ThreadedHTTPServer((bind_host, port), DashboardHandler)
+    _server_instance = server
+    with open(marker, "a") as f:
+        f.write("ThreadedHTTPServer created\n")
+        f.flush()
+    server.serve_forever()
+    _server_instance = None
+    with open(marker, "a") as f:
+        f.write("serve_forever exited\n")
+        f.flush()
+except Exception as e:
+    with open(marker, "a") as f:
+        f.write(f"EXCEPTION: {e}\n")
+        tb.print_exc(file=f)
+        f.flush()
+    raise
 
 if __name__ == "__main__":
     run_server()

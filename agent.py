@@ -47,10 +47,11 @@ except Exception:
 import requests
 
 # Structured JSON logging
-from json_logging import setup_json_logging
+from json_logging import setup_json_logging, get_structured_logger
 
 setup_json_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
+slogger = get_structured_logger(__name__)
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -903,7 +904,10 @@ class OPNsenseAgent:
                 src_ip = attack.get("src_ip", "")
                 attack_type = attack.get("attack_type", "")
                 if self._is_muted(src_ip, attack_type):
-                    logger.info("Alert suppressed (muted): %s from %s", attack_type, src_ip)
+                    slogger.info(
+                        "Alert suppressed (muted)",
+                        ip=src_ip, attack_type=attack_type,
+                    )
                     continue
                 self.anomaly_count += 1
                 llm_analysis = None
@@ -912,6 +916,12 @@ class OPNsenseAgent:
                     llm_analysis = self.vllm_client.analyze_anomaly(
                         events[0], attack.get("attack_type", ""), attack.get("description", "")
                     )
+                slogger.warning(
+                    "Attack detected",
+                    ip=src_ip, attack_type=attack_type,
+                    severity=attack.get("severity", "medium"),
+                    description=attack.get("description", ""),
+                )
                 self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
                 self.apprise_notifier.send_alert(attack)
 
@@ -921,7 +931,10 @@ class OPNsenseAgent:
             for geo_result in geo_results:
                 src_ip = geo_result.get("src_ip", "")
                 if self._is_muted(src_ip, "GEO_ANOMALY"):
-                    logger.info("Geo alert suppressed (muted): %s", src_ip)
+                    slogger.info(
+                        "Geo alert suppressed (muted)",
+                        ip=src_ip, attack_type="GEO_ANOMALY",
+                    )
                     continue
                 self.anomaly_count += 1
                 self.discord_bot.send_alert(geo_result)
@@ -930,9 +943,10 @@ class OPNsenseAgent:
                 # Track geo anomalies
                 if geo_result.get("type") == "geo_country_anomaly":
                     cc = geo_result.get("country_code", "XX")
-                    logger.info(
-                        "New country detected: %s — %s events",
-                        cc, self.geo_lookup.country_events.get(cc, 0),
+                    slogger.info(
+                        "New country detected",
+                        ip=src_ip, country_code=cc, attack_type="GEO_ANOMALY",
+                        event_count=self.geo_lookup.country_events.get(cc, 0),
                     )
 
         self.event_count += len(events)
@@ -943,9 +957,11 @@ class OPNsenseAgent:
         timing["events_per_sec"] = len(events) / (elapsed_ms / 1000) if elapsed_ms > 0 else 0
 
         if elapsed_ms > 200:
-            logger.info(
-                "Batch processed %d events in %.1fms (%.0f ev/s)",
-                len(events), elapsed_ms, timing["events_per_sec"],
+            slogger.info(
+                "Batch processed",
+                event_count=len(events),
+                elapsed_ms=elapsed_ms,
+                events_per_sec=timing["events_per_sec"],
             )
 
         return timing
@@ -963,7 +979,12 @@ class OPNsenseAgent:
         
         for anomaly in anomalies:
             self.anomaly_count += 1
-            logger.info("System log anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            slogger.warning(
+                "System log anomaly detected",
+                attack_type=anomaly.get('type'),
+                severity=anomaly.get('severity', 'medium'),
+                description=anomaly.get('description', ''),
+            )
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
 
@@ -975,9 +996,12 @@ class OPNsenseAgent:
         
         for anomaly in anomalies:
             self.anomaly_count += 1
-            logger.info("Service anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
-            self.discord_bot.send_alert(anomaly)
-            self.apprise_notifier.send_alert(anomaly)
+            slogger.warning(
+                "Service anomaly detected",
+                attack_type=anomaly.get('type'),
+                severity=anomaly.get('severity', 'medium'),
+                description=anomaly.get('description', ''),
+            )
 
     # ── mute list helpers (cached) ───────────────────────────────────
     def _load_mutes(self) -> list[dict]:
@@ -1358,6 +1382,14 @@ class OPNsenseAgent:
             logger.info("State saved successfully")
         except Exception as e:
             logger.warning("Failed to save state during shutdown: %s", e)
+
+        # Gracefully shutdown dashboard server (drain in-flight requests)
+        try:
+            from server import shutdown_server
+            shutdown_server(timeout=15)
+            logger.info("Dashboard server shutdown initiated")
+        except Exception as e:
+            logger.warning("Failed to shutdown dashboard server gracefully: %s", e)
 
         # Stop services
         self.syslog_listener.stop()

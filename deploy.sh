@@ -6,16 +6,18 @@
 #   ./deploy.sh            # Deploy latest changes (build + rolling update)
 #   ./deploy.sh --tag TAG  # Build with explicit image tag
 #
-# How it works (blue-green):
+# How it works (blue-green with connection draining):
 #   1. Build new image tagged with git commit SHA
 #   2. Record current running image as rollback target
 #   3. Start new agent container on a staging port (8767)
 #   4. Wait for health check to pass on the new container
-#   5. Stop old agent container
-#   6. Set AGENT_IMAGE in .env to the new image
-#   7. Start new agent on production ports via docker compose
-#   8. Verify production health check passes
-#   9. Clean up old container and image
+#   5. Signal old container to drain in-flight requests (POST /api/drain)
+#   6. Wait for drain to complete or timeout
+#   7. Stop old agent container
+#   8. Set AGENT_IMAGE in .env to the new image
+#   9. Start new agent on production ports via docker compose
+#  10. Verify production health check passes
+#  11. Clean up old container and image
 #
 # If ANY step fails, the script ABORTS and leaves the old version running.
 # Use ./rollback.sh to revert to the previous version.
@@ -198,8 +200,33 @@ main() {
         exit 1
     fi
 
-    # Step 5: Stop old agent container (graceful)
-    log_info "Step 5: Stopping old agent container..."
+    # Step 5: Signal old container to drain in-flight requests
+    log_info "Step 5: Draining old container requests..."
+    local drain_timeout=15
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        local drain_result
+        if drain_result=$(curl -sf --max-time "$drain_timeout" \
+            -X POST "http://localhost:8766/api/drain" \
+            -H "Content-Type: application/json" \
+            -d "{\"timeout\": $drain_timeout}" 2>&1); then
+            local drained
+            drained=$(echo "$drain_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('drained', False))" 2>/dev/null || echo "False")
+            if [[ "$drained" == "True" ]]; then
+                log_ok "Old container drained successfully"
+            else
+                log_warn "Drain did not complete in time — proceeding anyway"
+            fi
+        else
+            log_warn "Could not reach drain endpoint — old container may already be stopping"
+        fi
+        # Brief pause for final cleanup after drain
+        sleep 2
+    else
+        log_info "No running agent container to drain"
+    fi
+
+    # Step 6: Stop old agent container (graceful)
+    log_info "Step 6: Stopping old agent container..."
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         docker stop -t "$GRACEFUL_STOP_TIMEOUT" "$CONTAINER_NAME" 2>/dev/null || true
         docker rm "$CONTAINER_NAME" 2>/dev/null || true
@@ -208,8 +235,8 @@ main() {
         log_info "No running agent container to stop"
     fi
 
-    # Step 6: Remove staging container and update .env for production
-    log_info "Step 6: Preparing production deployment..."
+    # Step 7: Remove staging container and update .env for production
+    log_info "Step 7: Preparing production deployment..."
     docker rm -f "$STAGING_CONTAINER" >/dev/null 2>&1 || true
 
     # Set AGENT_IMAGE in .env to the new image
@@ -219,8 +246,8 @@ main() {
     docker compose up -d "$AGENT_SERVICE" 2>&1 | tail -3
     log_ok "New agent container started"
 
-    # Step 7: Health check production container
-    log_info "Step 7: Verifying production health..."
+    # Step 8: Health check production container
+    log_info "Step 8: Verifying production health..."
     if check_health_url "$HEALTH_URL"; then
         log_ok "Production container healthy!"
     else
@@ -246,8 +273,8 @@ main() {
         exit 1
     fi
 
-    # Step 8: Save deploy state and clean up
-    log_info "Step 8: Saving deploy state and cleaning up..."
+    # Step 9: Save deploy state and clean up
+    log_info "Step 9: Saving deploy state and cleaning up..."
     save_deploy_state "$new_image" "$current_image"
 
     # Clean up old dangling images (keep last 5)

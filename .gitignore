@@ -2,6 +2,9 @@
 agent_data/
 agent_output.log
 
+# Deploy state (regenerated on each deploy)
+deploy_state.json
+
 # Python
 __pycache__/
 *.pyc
