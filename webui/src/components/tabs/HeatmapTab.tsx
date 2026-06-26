@@ -246,20 +246,28 @@ export default function HeatmapTab() {
         )}
       </div>
 
-      {/* Color legend */}
-      <div className="flex flex-col items-center gap-1">
-        <div className="flex items-center gap-2 w-full px-2">
-          <span className="text-[10px] text-cyber-textMuted font-mono w-8 text-right">Low</span>
+      {/* Color legend — prominent bar with labels */}
+      <div className="cyber-card p-3">
+        <div className="text-xs text-cyber-textMuted font-mono mb-2">Events per hour</div>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-cyber-textMuted font-mono w-10 text-right">0</span>
           <div className="flex-1">
             <canvas
               ref={legendCanvasRef}
-              width={400}
-              height={14}
+              width={600}
+              height={24}
               className="w-full rounded"
               style={{ imageRendering: 'pixelated' }}
             />
           </div>
-          <span className="text-[10px] text-cyber-textMuted font-mono w-8">High</span>
+          <span className="text-[11px] text-cyber-textMuted font-mono w-14">
+            {filteredData ? (() => {
+              let m = 0;
+              for (const row of filteredData.matrix)
+                for (const v of row) if (v > m) m = v;
+              return m.toLocaleString();
+            })() : ''}
+          </span>
         </div>
       </div>
     </div>
