@@ -1,17 +1,30 @@
 // Heatmap Tab - IP x Hour activity heatmap
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
-import { Flame } from 'lucide-react';
+import { Flame, ChevronDown } from 'lucide-react';
 import { CYBER } from '@/utils/colors';
 
 import { HeatmapSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
 
+// Produce the same RGBA the canvas uses for a given [0,1] intensity
+function heatmapColor(intensity: number) {
+  const r = Math.round(intensity * 255);
+  const g = Math.round(255 * (1 - intensity));
+  const b = 255;
+  const a = 0.2 + intensity * 0.8;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+const TOP_N_OPTIONS = [10, 25, 50];
+
 export default function HeatmapTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const legendCanvasRef = useRef<HTMLCanvasElement>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string } | null>(null);
+  const [topN, setTopN] = useState<number>(50);
   
   const { data, isLoading, isError, error, refetch } = useQuery<HeatmapData>({
     queryKey: ['heatmap'],
@@ -19,21 +32,34 @@ export default function HeatmapTab() {
     refetchInterval: 60000,
   });
 
+  // Client-side top-N filtering
+  const filteredData = useMemo(() => {
+    if (!data) return null;
+    const n = Math.min(topN, data.rowLabels.length);
+    return {
+      matrix: data.matrix.slice(0, n),
+      labels: data.labels,
+      rowLabels: data.rowLabels.slice(0, n),
+    };
+  }, [data, topN]);
+
+  // Draw heatmap canvas
   useEffect(() => {
-    if (!data || !canvasRef.current) return;
+    const fd = filteredData;
+    if (!fd || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const { matrix, labels, rowLabels } = data;
+    const { matrix, labels, rowLabels } = fd;
     const numCols = labels.length;
     const numRows = rowLabels.length;
     
     if (numCols === 0 || numRows === 0) return;
 
     // Responsive canvas sizing based on container width
-    const containerWidth = canvas.parentElement ? canvas.parentElement.clientWidth - 32 : 800; // minus padding
-    const cellW_target = 60; // target cell width
+    const containerWidth = canvas.parentElement ? canvas.parentElement.clientWidth - 32 : 800;
+    const cellW_target = 60;
     const canvasWidth = Math.max(containerWidth, numCols * cellW_target);
     const cellH = Math.max(20, Math.min(30, 600 / numRows));
     const canvasHeight = Math.max(200, numRows * cellH);
@@ -57,14 +83,10 @@ export default function HeatmapTab() {
       for (let j = 0; j < matrix[i].length; j++) {
         const val = matrix[i][j];
         const intensity = maxVal > 0 ? val / maxVal : 0;
-        const r = Math.round(intensity * 255);
-        const g = Math.round(255 * (1 - intensity));
-        const b = 255;
-        const alpha = 0.2 + intensity * 0.8;
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        ctx.fillStyle = heatmapColor(intensity);
         ctx.fillRect(j * cellW, i * cellH, cellW - 1, cellH - 1);
         if (intensity > 0.8) {
-          ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.6)`;
+          ctx.shadowColor = heatmapColor(intensity).replace(/[\d.]+\)$/, '0.6)');
           ctx.shadowBlur = 4;
           ctx.fillRect(j * cellW, i * cellH, cellW - 1, cellH - 1);
           ctx.shadowBlur = 0;
@@ -72,7 +94,7 @@ export default function HeatmapTab() {
       }
     }
 
-    // Draw labels
+    // Draw IP labels (left column)
     ctx.fillStyle = CYBER.textMuted;
     ctx.font = '9px monospace';
     ctx.textAlign = 'right';
@@ -81,16 +103,72 @@ export default function HeatmapTab() {
       ctx.fillText(short, cellW - 4, i * cellH + cellH / 2 + 3);
     }
 
+    // Draw hour labels (bottom row)
     ctx.textAlign = 'center';
     for (let j = 0; j < labels.length; j++) {
       ctx.fillText(labels[j], j * cellW + cellW / 2, canvas.height - 2);
     }
-  }, [data]);
+  }, [filteredData]);
+
+  // Draw color legend gradient bar
+  useEffect(() => {
+    if (!legendCanvasRef.current || !filteredData) return;
+    const canvas = legendCanvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Compute max value for legend labels
+    let maxVal = 0;
+    for (const row of filteredData.matrix) {
+      for (const v of row) {
+        if (v > maxVal) maxVal = v;
+      }
+    }
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Draw gradient
+    const steps = w;
+    for (let x = 0; x < steps; x++) {
+      const intensity = x / (steps - 1);
+      ctx.fillStyle = heatmapColor(intensity);
+      ctx.fillRect(x, 0, 1, h);
+    }
+
+    // Draw rounded border
+    ctx.strokeStyle = CYBER.border;
+    ctx.lineWidth = 1;
+    const radius = 4;
+    ctx.beginPath();
+    ctx.moveTo(radius, 0);
+    ctx.lineTo(w - radius, 0);
+    ctx.quadraticCurveTo(w, 0, w, radius);
+    ctx.lineTo(w, h - radius);
+    ctx.quadraticCurveTo(w, h, w - radius, h);
+    ctx.lineTo(radius, h);
+    ctx.quadraticCurveTo(0, h, 0, h - radius);
+    ctx.lineTo(0, radius);
+    ctx.quadraticCurveTo(0, 0, radius, 0);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Draw value labels
+    ctx.fillStyle = CYBER.textMuted;
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0', 0, h + 14);
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.round(maxVal / 2).toLocaleString(), w / 2, h + 14);
+    ctx.textAlign = 'right';
+    ctx.fillText(maxVal.toLocaleString(), w, h + 14);
+  }, [filteredData]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!data || !canvasRef.current) return;
+    if (!filteredData || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const { matrix, labels, rowLabels } = data;
+    const { matrix, labels, rowLabels } = filteredData;
     const numCols = labels.length;
     const numRows = rowLabels.length;
     const cellW = rect.width / numCols;
@@ -120,12 +198,32 @@ export default function HeatmapTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
-          <Flame size={16} className="text-cyber-accent" />
+      {/* Header row with controls */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
+            <Flame size={16} className="text-cyber-accent" />
+          </div>
+          <h2 className="text-lg font-bold">Traffic Heatmap</h2>
+          <span className="text-xs text-cyber-textMuted font-mono">IP x Hour Activity</span>
         </div>
-        <h2 className="text-lg font-bold">Traffic Heatmap</h2>
-        <span className="text-xs text-cyber-textMuted font-mono">IP x Hour Activity</span>
+
+        {/* Top-N dropdown */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-cyber-textMuted font-mono">Show Top N IPs:</label>
+          <div className="relative">
+            <select
+              value={topN}
+              onChange={(e) => setTopN(Number(e.target.value))}
+              className="appearance-none bg-cyber-panel border border-cyber-border rounded px-3 py-1 pr-7 text-xs font-mono text-cyber-text focus:border-cyber-accent focus:outline-none cursor-pointer"
+            >
+              {TOP_N_OPTIONS.map((n) => (
+                <option key={n} value={n}>Top {n}</option>
+              ))}
+            </select>
+            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-cyber-textMuted pointer-events-none" />
+          </div>
+        </div>
       </div>
 
       <div className="cyber-card p-4 scanlines relative">
@@ -148,12 +246,21 @@ export default function HeatmapTab() {
         )}
       </div>
 
-      <div className="flex items-center gap-4 text-xs text-cyber-textMuted">
-        <span>Low</span>
-        <div className="flex-1 h-2 rounded" style={{
-          background: 'linear-gradient(to right, rgba(0,255,255,0.2), rgba(255,0,255,0.9))'
-        }} />
-        <span>High</span>
+      {/* Color legend */}
+      <div className="flex flex-col items-center gap-1">
+        <div className="flex items-center gap-2 w-full px-2">
+          <span className="text-[10px] text-cyber-textMuted font-mono w-8 text-right">Low</span>
+          <div className="flex-1">
+            <canvas
+              ref={legendCanvasRef}
+              width={400}
+              height={14}
+              className="w-full rounded"
+              style={{ imageRendering: 'pixelated' }}
+            />
+          </div>
+          <span className="text-[10px] text-cyber-textMuted font-mono w-8">High</span>
+        </div>
       </div>
     </div>
   );
