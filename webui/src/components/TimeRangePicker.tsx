@@ -37,70 +37,70 @@ const TimeRangePicker: React.FC<TimeRangePickerProps> = ({ onTimeRangeChange }) 
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-1 bg-slate-900/80 rounded-lg p-1 border border-slate-700/50 overflow-x-auto max-w-[calc(100vw-120px)] sm:max-w-none">
-        {(Object.keys(timeRanges) as TimeRange[]).map((range) => (
-          <button
-            key={range}
-            onClick={() => handleTimeRangeChange(range)}
-            className={`px-2 md:px-3 py-2 min-h-[36px] text-xs font-medium rounded-md transition-all whitespace-nowrap flex-shrink-0 ${
-              timeRange === range && !showCustom
-                ? 'bg-cyan-500/20 text-cyan-400 shadow-sm shadow-cyan-500/20'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            {timeRanges[range].label}
-          </button>
-        ))}
+    <div className="flex items-center gap-1 bg-cyber-dark/80 rounded-lg p-1 border border-cyber-border/50 overflow-x-auto max-w-[calc(100vw-120px)] sm:max-w-none">
+      {(Object.keys(timeRanges) as TimeRange[]).map((range) => (
         <button
-          onClick={() => setShowCustom(!showCustom)}
+          key={range}
+          onClick={() => handleTimeRangeChange(range)}
           className={`px-2 md:px-3 py-2 min-h-[36px] text-xs font-medium rounded-md transition-all whitespace-nowrap flex-shrink-0 ${
-            timeRange === 'custom'
-              ? 'bg-cyan-500/20 text-cyan-400'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            timeRange === range && !showCustom
+              ? 'bg-cyber-accent/20 text-cyber-accent shadow-sm shadow-cyber-accent/20'
+              : 'text-cyber-textMuted hover:text-cyber-text hover:bg-cyber-panel/50'
           }`}
         >
-          Custom
+          {timeRanges[range].label}
         </button>
-      </div>
-      {showCustom && (
-        <div className="absolute top-full right-0 mt-2 p-4 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50">
-          <div className="flex flex-col gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">From</label>
-              <input
-                type="datetime-local"
-                value={startDate || formatDateTime(new Date(Date.now() - 86400000))}
-                onChange={e => setStartDate(e.target.value)}
-                className="w-full bg-slate-800 text-slate-300 text-xs rounded px-2 py-1 border border-slate-700 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">To</label>
-              <input
-                type="datetime-local"
-                value={endDate || formatDateTime(new Date())}
-                onChange={e => setEndDate(e.target.value)}
-                className="w-full bg-slate-800 text-slate-300 text-xs rounded px-2 py-1 border border-slate-700 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button
-                onClick={handleCustomRangeChange}
-                className="px-3 py-1 rounded text-xs font-medium bg-cyan-500 text-white hover:bg-cyan-600"
-              >
-                Apply
-              </button>
-              <button
-                onClick={() => setShowCustom(false)}
-                className="px-3 py-1 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600"
-              >
-                Cancel
-              </button>
-            </div>
+      ))}
+      <button
+        onClick={() => setShowCustom(!showCustom)}
+        className={`px-2 md:px-3 py-2 min-h-[36px] text-xs font-medium rounded-md transition-all whitespace-nowrap flex-shrink-0 ${
+          timeRange === 'custom'
+            ? 'bg-cyber-accent/20 text-cyber-accent'
+            : 'text-cyber-textMuted hover:text-cyber-text hover:bg-cyber-panel/50'
+        }`}
+      >
+        Custom
+      </button>
+    </div>
+    {showCustom && (
+      <div className="absolute top-full right-0 mt-2 p-4 bg-cyber-dark border border-cyber-border rounded-lg shadow-xl z-50">
+        <div className="flex flex-col gap-3">
+          <div>
+            <label className="block text-xs text-cyber-textMuted mb-1">From</label>
+            <input
+              type="datetime-local"
+              value={startDate || formatDateTime(new Date(Date.now() - 86400000))}
+              onChange={e => setStartDate(e.target.value)}
+              className="w-full bg-cyber-panel text-cyber-text text-xs rounded px-2 py-1 border border-cyber-border focus:outline-none focus:border-cyber-accent"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-cyber-textMuted mb-1">To</label>
+            <input
+              type="datetime-local"
+              value={endDate || formatDateTime(new Date())}
+              onChange={e => setEndDate(e.target.value)}
+              className="w-full bg-cyber-panel text-cyber-text text-xs rounded px-2 py-1 border border-cyber-border focus:outline-none focus:border-cyber-accent"
+            />
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={handleCustomRangeChange}
+              className="px-3 py-1 rounded text-xs font-medium bg-cyber-accent text-cyber-darker hover:bg-cyber-accentHover"
+            >
+              Apply
+            </button>
+            <button
+              onClick={() => setShowCustom(false)}
+              className="px-3 py-1 rounded text-xs font-medium bg-cyber-panel text-cyber-text hover:bg-cyber-panelHover"
+            >
+              Cancel
+            </button>
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    )}
+  </div>
   );
 };
 

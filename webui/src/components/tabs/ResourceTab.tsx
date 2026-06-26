@@ -6,18 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api';
 import type { ResourceData } from '../../types';
-
-// ── Threshold Colors ──
-const statusColors: Record<string, { main: string; bg: string; glow: string }> = {
-  ok: { main: '#00ffaa', bg: 'rgba(0, 255, 170, 0.1)', glow: 'rgba(0, 255, 170, 0.3)' },
-  warning: { main: '#ffa500', bg: 'rgba(255, 165, 0, 0.1)', glow: 'rgba(255, 165, 0, 0.3)' },
-  critical: { main: '#ff0040', bg: 'rgba(255, 0, 64, 0.1)', glow: 'rgba(255, 0, 64, 0.3)' },
-  error: { main: '#8899aa', bg: 'rgba(136, 153, 170, 0.1)', glow: 'rgba(136, 153, 170, 0.2)' },
-};
-
-function statusColor(status?: string) {
-  return statusColors[status || 'ok'] || statusColors.ok;
-}
+import { STATUS, statusColor, CYBER } from '../../utils/colors';
 
 // ── Gauge Component ──
 function Gauge({ label, value, max, unit, status, icon }: {
@@ -95,8 +84,8 @@ function Gauge({ label, value, max, unit, status, icon }: {
         fontSize: '11px',
         textTransform: 'uppercase',
         letterSpacing: '1px',
-        color: '#8899aa',
-      }}>
+        color: CYBER.textMuted,
+              }}>
         {label}
       </div>
 
@@ -135,14 +124,14 @@ function InfoCard({ label, value, sublabel }: {
       flexDirection: 'column',
       gap: '4px',
     }}>
-      <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', color: '#667788' }}>
+      <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', color: CYBER.textMuted }}>
         {label}
       </div>
-      <div style={{ fontSize: '18px', fontWeight: '600', color: '#e0f0ff', fontFamily: 'monospace' }}>
+      <div style={{ fontSize: '18px', fontWeight: '600', color: CYBER.text, fontFamily: 'monospace' }}>
         {value}
       </div>
       {sublabel && (
-        <div style={{ fontSize: '10px', color: '#667788' }}>
+        <div style={{ fontSize: '10px', color: CYBER.textMuted }}>
           {sublabel}
         </div>
       )}
@@ -159,14 +148,14 @@ function ThresholdBar({ value, warn, crit, label }: {
 }) {
   const isCrit = value >= crit;
   const isWarn = value >= warn && !isCrit;
-  const barColor = isCrit ? '#ff0040' : isWarn ? '#ffa500' : '#00ffaa';
+  const barColor = isCrit ? CYBER.red : isWarn ? CYBER.orange : CYBER.green;
   const pct = Math.min((value / crit) * 100, 100);
 
   return (
     <div style={{ marginBottom: '12px' }}>
       <div style={{
         display: 'flex', justifyContent: 'space-between', marginBottom: '4px',
-        fontSize: '11px', color: '#8899aa',
+        fontSize: '11px', color: CYBER.textMuted,
       }}>
         <span>{label}</span>
         <span style={{ color: barColor, fontFamily: 'monospace' }}>{value}%</span>
@@ -185,7 +174,7 @@ function ThresholdBar({ value, warn, crit, label }: {
           top: 0,
           bottom: 0,
           width: '2px',
-          background: '#ffa500',
+          background: CYBER.orange,
           opacity: 0.6,
         }} />
         {/* Fill */}
@@ -200,11 +189,11 @@ function ThresholdBar({ value, warn, crit, label }: {
       </div>
       <div style={{
         display: 'flex', justifyContent: 'space-between', fontSize: '9px',
-        color: '#445566', marginTop: '2px',
+        color: CYBER.textDim, marginTop: '2px',
       }}>
         <span>0%</span>
-        <span style={{ color: '#ffa500' }}>Warn: {warn}%</span>
-        <span style={{ color: '#ff0040' }}>Crit: {crit}%</span>
+        <span style={{ color: CYBER.orange }}>Warn: {warn}%</span>
+        <span style={{ color: CYBER.red }}>Crit: {crit}%</span>
       </div>
     </div>
   );
@@ -238,7 +227,7 @@ export default function ResourceTab() {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '300px', color: '#00ffaa', fontFamily: 'monospace',
+        minHeight: '300px', color: CYBER.green, fontFamily: 'monospace',
       }}>
         <div>Initializing resource monitor...</div>
       </div>
@@ -249,7 +238,7 @@ export default function ResourceTab() {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '300px', color: '#ff0040', fontFamily: 'monospace',
+        minHeight: '300px', color: CYBER.red, fontFamily: 'monospace',
       }}>
         <div style={{ textAlign: 'center' }}>
           <div>Error: {error || 'No data'}</div>
@@ -293,10 +282,10 @@ export default function ResourceTab() {
         backdropFilter: 'blur(10px)',
       }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '18px', color: '#e0f0ff' }}>
+          <h2 style={{ margin: 0, fontSize: '18px', color: CYBER.text }}>
             Resource Monitoring
           </h2>
-          <div style={{ fontSize: '11px', color: '#667788', marginTop: '4px' }}>
+          <div style={{ fontSize: '11px', color: CYBER.textMuted, marginTop: '4px' }}>
             Last updated: {new Date(data.timestamp).toLocaleTimeString()}
           </div>
         </div>
@@ -323,7 +312,7 @@ export default function ResourceTab() {
           background: 'rgba(255, 165, 0, 0.08)',
           border: '1px solid rgba(255, 165, 0, 0.3)',
           borderRadius: '8px',
-          color: '#ffa500',
+          color: CYBER.orange,
           fontSize: '12px',
           fontFamily: 'monospace',
         }}>
@@ -389,7 +378,7 @@ export default function ResourceTab() {
             fontSize: '11px',
             textTransform: 'uppercase',
             letterSpacing: '1px',
-            color: '#8899aa',
+            color: CYBER.textMuted,
           }}>
             Database Size
           </div>
@@ -421,7 +410,7 @@ export default function ResourceTab() {
         <h3 style={{
           margin: '0 0 16px 0',
           fontSize: '13px',
-          color: '#8899aa',
+          color: CYBER.textMuted,
           textTransform: 'uppercase',
           letterSpacing: '1px',
         }}>
@@ -482,10 +471,10 @@ export default function ResourceTab() {
         borderRadius: '8px',
         padding: '16px',
         fontSize: '11px',
-        color: '#667788',
+        color: CYBER.textMuted,
         fontFamily: 'monospace',
       }}>
-        <div style={{ marginBottom: '8px', color: '#8899aa', fontWeight: '600' }}>
+        <div style={{ marginBottom: '8px', color: CYBER.textMuted, fontWeight: '600' }}>
           Prometheus Metrics Available
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -496,7 +485,7 @@ export default function ResourceTab() {
               background: 'rgba(0, 255, 170, 0.05)',
               border: '1px solid rgba(0, 255, 170, 0.15)',
               borderRadius: '4px',
-              color: '#00ffaa',
+              color: CYBER.green,
             }}>
               {metric}
             </code>

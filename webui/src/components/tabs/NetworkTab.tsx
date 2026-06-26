@@ -6,21 +6,20 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ForceGraph2D from 'react-force-graph-2d';
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { api } from '@/api';
 import type { IpFlowData } from '@/types';
+import { NETWORK, networkColor, CYBER, RECHARTS_TOOLTIP } from '@/utils/colors';
 import {
   Network, Activity, Globe, Shield, Server, Wifi, Radio,
   ArrowUpRight, ArrowDownRight, Eye, MousePointer2,
   Maximize2, Minimize2
 } from 'lucide-react';
 
-// ── Color Scheme ──
-const COLORS = {
-  LAN: '#00ff88', WAN: '#ff006e', VPN: '#8338ec', DMZ: '#ffbe0b', UNKNOWN: '#64748b',
-};
+// ── Color Scheme (now from shared colors) ──
+const COLORS = NETWORK;
 
 // ── Stat Card Component ──
 function StatCard({ title, value, subtitle, icon, color, trend }: {
@@ -68,7 +67,7 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
         id,
         label: node.label || id,
         size: Math.max(6, Math.min(20, (node.count || 0) / 50)),
-        color: COLORS[node.category] || '#64748b',
+        color: COLORS[node.category] || CYBER.textMuted,
         category: node.category,
         count: node.count || 0,
       });
@@ -89,9 +88,9 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
     return { nodes: Array.from(nodeMap.values()), links: graphEdges };
   }, [nodes, edges]);
 
-  const getNodeColor = (node: any) => node.color || '#64748b';
+  const getNodeColor = (node: any) => node.color || CYBER.textMuted;
   const getLinkColor = (link: any) => {
-    const baseColor = link.color || '#64748b';
+    const baseColor = link.color || CYBER.textMuted;
     return baseColor + '40'; // Add transparency
   };
 
@@ -113,7 +112,7 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
     ctx.font = `${fontSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#e2e8f0';
+    ctx.fillStyle = CYBER.text;
     ctx.fillText(label, node.x || 0, node.y || 0);
   }, []);
 
@@ -210,10 +209,10 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
 function TrafficDistribution({ stats }: { stats: any }) {
   const byType = stats?.by_type || {};
   const data = [
-    { name: 'External', value: byType.external || 0, color: '#ff006e' },
-    { name: 'Unknown', value: byType.unknown || 0, color: '#64748b' },
-    { name: 'Internal', value: byType.internal || 0, color: '#00ff88' },
-    { name: 'VPN', value: byType.vpn || 0, color: '#8338ec' },
+    { name: 'External', value: byType.external || 0, color: CYBER.pink },
+    { name: 'Unknown', value: byType.unknown || 0, color: CYBER.textMuted },
+    { name: 'Internal', value: byType.internal || 0, color: CYBER.green },
+    { name: 'VPN', value: byType.vpn || 0, color: CYBER.purple },
   ].filter(d => d.value > 0);
 
   return (
@@ -237,7 +236,7 @@ function TrafficDistribution({ stats }: { stats: any }) {
             ))}
           </Pie>
           <Tooltip
-            contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
+            contentStyle={RECHARTS_TOOLTIP}
             formatter={(value: number) => value.toLocaleString()}
           />
           <Legend />
@@ -257,7 +256,7 @@ function InterfaceTraffic({ stats }: { stats: any }) {
       name: s.interface,
       events: s.count,
       category: s.category,
-      color: COLORS[s.category] || '#64748b',
+      color: COLORS[s.category] || CYBER.textMuted,
     }))
     .sort((a, b) => b.events - a.events)
     .slice(0, 10);
@@ -285,10 +284,10 @@ function InterfaceTraffic({ stats }: { stats: any }) {
             dataKey="name"
             type="category"
             width={100}
-            tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }}
+            tick={{ fill: CYBER.textMuted, fontSize: 10, fontFamily: 'monospace' }}
           />
           <Tooltip
-            contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
+            contentStyle={RECHARTS_TOOLTIP}
             formatter={(value: number) => value.toLocaleString()}
           />
           <Bar dataKey="events" radius={[0, 4, 4, 0]} barSize={16}>
@@ -308,7 +307,7 @@ function CategoryStats({ stats }: { stats: any }) {
   const data = Object.entries(categories).map(([name, value]) => ({
     name,
     count: value as number,
-    color: COLORS[name] || '#64748b',
+    color: COLORS[name] || CYBER.textMuted,
   }));
 
   return (
@@ -320,11 +319,11 @@ function CategoryStats({ stats }: { stats: any }) {
         <BarChart data={data}>
           <XAxis
             dataKey="name"
-            tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }}
+            tick={{ fill: CYBER.textMuted, fontSize: 10, fontFamily: 'monospace' }}
           />
-          <YAxis tick={{ fill: '#64748b', fontSize: 10, fontFamily: 'monospace' }} />
+          <YAxis tick={{ fill: CYBER.textMuted, fontSize: 10, fontFamily: 'monospace' }} />
           <Tooltip
-            contentStyle={{ background: '#0d1117', border: '1px solid #1e293b', borderRadius: '8px', color: '#e2e8f0', fontFamily: 'monospace' }}
+            contentStyle={RECHARTS_TOOLTIP}
             formatter={(value: number) => value.toLocaleString()}
           />
           <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={40}>
@@ -371,8 +370,8 @@ function TopSourcesTable({ stats }: { stats: any }) {
                   <span
                     className="px-2 py-0.5 rounded text-xs"
                     style={{
-                      background: `${COLORS[source.category] || '#64748b'}15`,
-                      color: COLORS[source.category] || '#64748b',
+                      background: `${COLORS[source.category] || CYBER.textMuted}15`,
+                      color: COLORS[source.category] || CYBER.textMuted,
                     }}
                   >
                     {source.category}
@@ -436,7 +435,7 @@ export default function NetworkTab() {
           value={totalEvents}
           subtitle="Last 24 hours"
           icon={<Activity size={14} className="text-cyber-accent" />}
-          color="#00e5ff"
+          color={CYBER.accent}
           trend={{ value: 12, positive: true }}
         />
         <StatCard
@@ -444,21 +443,21 @@ export default function NetworkTab() {
           value={uniqueNodes}
           subtitle="Active connections"
           icon={<Server size={14} className="text-cyber-purple" />}
-          color="#8338ec"
+          color={CYBER.purple}
         />
         <StatCard
           title="Categories"
           value={categories}
           subtitle="Traffic types"
           icon={<Globe size={14} className="text-cyber-green" />}
-          color="#00ff88"
+          color={CYBER.green}
         />
         <StatCard
           title="Blocked"
           value={stats.blocked_24h || 0}
           subtitle="24h block count"
           icon={<Shield size={14} className="text-cyber-red" />}
-          color="#ff1744"
+          color={CYBER.red}
         />
       </div>
 

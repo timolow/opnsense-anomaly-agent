@@ -2,6 +2,7 @@
 // API Client - Fetches from the dashboard server
 // ═══════════════════════════════════════════════════
 
+import { CYBER } from '@/utils/colors';
 import type {
   StatsData, HeatmapData, IpFlowData, EventsData, MutesData,
   GeoData, HealthData, AlertsData, OpnsenseStatusData,
@@ -234,7 +235,7 @@ export const api = {
       countries: raw.map((c: any) => ({
         country: c.country || c.label || 'Unknown',
         count: c.count || 0,
-        color: c.color || '#888',
+        color: c.color || CYBER.textMuted,
         flag: c.flag || '',
         x: c.x || 0,
         y: c.y || 0,

@@ -83,16 +83,16 @@ export default function RulesTab() {
 
       {/* ── UNCERTAIN Feedback Banner ── */}
       {uncertainCount > 0 && (
-        <div className="relative overflow-hidden rounded-lg border border-yellow-500/30 bg-gradient-to-r from-yellow-500/5 via-yellow-500/10 to-yellow-500/5 p-4">
+        <div className="relative overflow-hidden rounded-lg border border-cyber-yellow/30 bg-gradient-to-r from-cyber-yellow/5 via-cyber-yellow/10 to-cyber-yellow/5 p-4">
           {/* Animated glow pulse */}
-          <div className="absolute inset-0 bg-yellow-500/5 animate-pulse" />
+          <div className="absolute inset-0 bg-cyber-yellow/5 animate-pulse" />
           <div className="relative flex items-start gap-3">
-            <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
-              <Lightbulb size={20} className="text-yellow-400" />
+            <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-cyber-yellow/10 border border-cyber-yellow/20 flex items-center justify-center">
+              <Lightbulb size={20} className="text-cyber-yellow" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <h3 className="font-bold text-yellow-400 text-sm">Help Train the ML Classifier</h3>
+                <h3 className="font-bold text-cyber-yellow text-sm">Help Train the ML Classifier</h3>
                 <span className="cyber-badge cyber-badge-warning text-xs">{uncertainCount} UNCERTAIN</span>
               </div>
               <p className="text-xs text-cyber-textMuted leading-relaxed">
@@ -101,13 +101,13 @@ export default function RulesTab() {
                 on each row to provide feedback. Each vote helps the ML model learn accurate rule classifications and improve threat detection.
               </p>
               <div className="flex items-center gap-4 mt-2">
-                <span className="text-xs font-mono text-yellow-300/70">
+                <span className="text-xs font-mono text-cyber-yellow/70">
                   Classified: {data.summary.good + data.summary.abusive} of {data.summary.total} rules
                 </span>
                 <div className="flex-1 max-w-xs">
                   <div className="cyber-progress-track h-1.5">
                     <div
-                      className="cyber-progress-fill bg-yellow-400 transition-all duration-500"
+                      className="cyber-progress-fill bg-cyber-yellow transition-all duration-500"
                       style={{ width: `${data.summary.total > 0 ? ((data.summary.good + data.summary.abusive) / data.summary.total * 100).toFixed(1) : 0}%` }}
                     />
                   </div>
@@ -136,8 +136,8 @@ export default function RulesTab() {
           <div className="text-xl font-bold font-mono text-neon-yellow">{data.summary.high_traffic}</div>
           <div className="cyber-stat-label">High Traffic</div>
         </div>
-        <div className={`cyber-card p-3 cyber-card-hover ${uncertainCount > 0 ? 'border-yellow-500/30' : ''}`}>
-          <div className="text-xl font-bold font-mono text-yellow-400">{uncertainCount}</div>
+        <div className={`cyber-card p-3 cyber-card-hover ${uncertainCount > 0 ? 'border-cyber-yellow/30' : ''}`}>
+          <div className="text-xl font-bold font-mono text-cyber-yellow">{uncertainCount}</div>
           <div className="cyber-stat-label">UNCERTAIN</div>
         </div>
       </div>
@@ -224,7 +224,7 @@ export default function RulesTab() {
                 <tr
                   key={rule.uuid}
                   className={`cursor-pointer hover:bg-cyber-panel/30 ${
-                    rule.classification === 'UNCERTAIN' ? 'bg-yellow-500/3' : ''
+                    rule.classification === 'UNCERTAIN' ? 'bg-cyber-yellow/10' : ''
                   } ${isFlashing ? (flash.label === 'GOOD' ? 'bg-neon-green/10' : 'bg-neon-red/10') : ''}`}
                   onClick={() => setSelectedRule(rule.uuid === selectedRule ? null : rule.uuid)}
                 >
@@ -238,7 +238,7 @@ export default function RulesTab() {
                       <div className="cyber-progress-track w-16">
                         <div
                           className={`cyber-progress-fill ${
-                            rule.confidence < 40 ? 'bg-yellow-400' : 'bg-cyber-accent'
+                            rule.confidence < 40 ? 'bg-cyber-yellow' : 'bg-cyber-accent'
                           }`}
                           style={{ width: `${rule.confidence}%` }}
                         />

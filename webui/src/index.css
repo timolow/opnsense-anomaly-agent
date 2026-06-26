@@ -286,6 +286,30 @@
     text-shadow: 0 0 10px rgba(0,229,255,0.5), 0 0 20px rgba(0,229,255,0.3);
   }
 
+  .text-neon-green {
+    text-shadow: 0 0 10px rgba(0,255,136,0.5), 0 0 20px rgba(0,255,136,0.3);
+  }
+
+  .text-neon-red {
+    text-shadow: 0 0 10px rgba(255,23,68,0.5), 0 0 20px rgba(255,23,68,0.3);
+  }
+
+  .text-neon-pink {
+    text-shadow: 0 0 10px rgba(255,0,110,0.5), 0 0 20px rgba(255,0,110,0.3);
+  }
+
+  .text-neon-yellow {
+    text-shadow: 0 0 10px rgba(255,190,11,0.5), 0 0 20px rgba(255,190,11,0.3);
+  }
+
+  .text-neon-purple {
+    text-shadow: 0 0 10px rgba(131,56,236,0.5), 0 0 20px rgba(131,56,236,0.3);
+  }
+
+  .text-neon-orange {
+    text-shadow: 0 0 10px rgba(255,120,0,0.5), 0 0 20px rgba(255,120,0,0.3);
+  }
+
   .text-gradient-cyber {
     @apply bg-gradient-to-r from-cyber-accent via-cyber-purple to-cyber-pink bg-clip-text text-transparent;
   }

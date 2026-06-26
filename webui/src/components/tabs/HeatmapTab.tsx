@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
 import { Flame } from 'lucide-react';
+import { CYBER } from '@/utils/colors';
 
 import { HeatmapSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
@@ -72,7 +73,7 @@ export default function HeatmapTab() {
     }
 
     // Draw labels
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = CYBER.textMuted;
     ctx.font = '9px monospace';
     ctx.textAlign = 'right';
     for (let i = 0; i < rowLabels.length; i++) {

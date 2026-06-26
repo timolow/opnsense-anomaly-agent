@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import uPlot from 'uplot';
 import { Activity } from 'lucide-react';
+import { CHART, CHART_THEME } from '@/utils/colors';
 
 interface TimelineData {
   time: number; // Unix timestamp
@@ -18,14 +19,14 @@ interface TimelineChartProps {
 }
 
 const COLORS = {
-  events: '#06b6d4',
-  eventsFill: 'rgba(6, 182, 212, 0.5)',
-  blocked: '#ff1744',
-  blockedFill: 'rgba(255, 23, 68, 0.2)',
-  grid: 'rgba(148, 163, 184, 0.15)',
-  tick: 'rgba(148, 163, 184, 0.3)',
-  label: '#94a3b8',
-  bg: '#0d1117',
+  events: CHART.teal,
+  eventsFill: CHART.tealFill,
+  blocked: CHART.red,
+  blockedFill: 'rgba(255, 23, 68, 0.15)',
+  grid: CHART_THEME.grid,
+  tick: CHART_THEME.tick,
+  label: CHART_THEME.label,
+  bg: CHART_THEME.bg,
 };
 
 const TimelineChart: React.FC<TimelineChartProps> = ({
@@ -150,7 +151,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
             show: true,
             size: 2,
             stroke: COLORS.events,
-            fill: '#0d1117',
+            fill: CHART_THEME.bg,
             filter: (self: any, idx: number) => {
               // Show ~8 points max
               const total = self.data[1].length;
@@ -162,7 +163,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
       ],
       cursor: {
         lock: true,
-        points: { size: 6, width: 2, stroke: COLORS.events, fill: '#0d1117' },
+        points: { size: 6, width: 2, stroke: COLORS.events, fill: CHART_THEME.bg },
         y: { show: true, size: 6, stroke: COLORS.label, font: '11px monospace' },
       },
       legend: {
@@ -199,7 +200,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
             </span>
           )}
         </h3>
-        <div className="w-full h-[300px] bg-slate-900/50 rounded-lg border border-slate-700/50 animate-pulse" />
+        <div className="w-full h-[300px] bg-cyber-dark/50 rounded-lg border border-cyber-border/50 animate-pulse" />
       </div>
     );
   }
@@ -216,8 +217,8 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
             </span>
           )}
         </h3>
-        <div className="w-full h-[300px] bg-slate-900/50 rounded-lg border border-slate-700/50 flex items-center justify-center">
-          <span className="text-slate-500 text-sm">No timeline data available</span>
+        <div className="w-full h-[300px] bg-cyber-dark/50 rounded-lg border border-cyber-border/50 flex items-center justify-center">
+          <span className="text-cyber-textMuted text-sm">No timeline data available</span>
         </div>
       </div>
     );
