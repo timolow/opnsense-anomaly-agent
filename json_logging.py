@@ -95,6 +95,9 @@ class RotatingJsonFileHandler(logging.handlers.TimedRotatingFileHandler):
         encoding: str = "utf-8",
     ) -> None:
         # Daily rotation at midnight UTC
+        # Ensure parent directory exists before opening
+        log_dir = os.path.dirname(os.path.abspath(filename))
+        os.makedirs(log_dir, exist_ok=True)
         super().__init__(
             filename,
             when="midnight",
@@ -249,3 +252,61 @@ def setup_json_logging(
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     return root
+
+
+# Reserved LogRecord attribute names that would collide with JsonFormatter
+# output. When passed as kwargs to StructuredLogger, these are remapped
+# by prepending "logger_".
+_RESERVED_KEYS = {
+    "module",      # collides with record.name (logger module path)
+}
+
+
+class StructuredLogger:
+    """Adapter around stdlib Logger that accepts keyword-arg structured context.
+
+    All keyword arguments are attached to the LogRecord as extra fields so
+    JsonFormatter merges them into the JSON output.  Reserved keys that
+    would collide with LogRecord attributes are remapped (e.g. ``module``
+    → ``logger_module``).
+
+    Usage:
+        slog = get_structured_logger(__name__)
+        slog.info("Firewall event", event_id="evt-1", ip="10.0.0.1", rule="FW-001")
+    """
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self.logger = logger
+
+    def _log_extra(self, level: int, msg: str, **kwargs: Any) -> None:
+        """Route through the underlying logger, injecting structured kwargs."""
+        remapped: Dict[str, Any] = {}
+        for k, v in kwargs.items():
+            remapped[k if k not in _RESERVED_KEYS else f"logger_{k}"] = v
+        self.logger.log(level, msg, extra=remapped)
+
+    def debug(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.DEBUG, msg, **kwargs)
+
+    def info(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.INFO, msg, **kwargs)
+
+    def warning(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.WARNING, msg, **kwargs)
+
+    def warn(self, msg: str, **kwargs: Any) -> None:
+        self.warning(msg, **kwargs)
+
+    def error(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.ERROR, msg, **kwargs)
+
+    def critical(self, msg: str, **kwargs: Any) -> None:
+        self._log_extra(logging.CRITICAL, msg, **kwargs)
+
+    def exception(self, msg: str, **kwargs: Any) -> None:
+        self.logger.exception(msg, extra=kwargs)
+
+
+def get_structured_logger(name: str) -> StructuredLogger:
+    """Factory: wrap a stdlib logger in StructuredLogger."""
+    return StructuredLogger(logging.getLogger(name))
