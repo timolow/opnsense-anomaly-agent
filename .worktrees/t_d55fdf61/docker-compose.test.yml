@@ -1,0 +1,48 @@
+# OPNsense Agent - E2E Test Environment
+services:
+  test-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: opnsense
+      POSTGRES_PASSWORD: testpass123
+      POSTGRES_DB: opnsense
+    ports:
+      - "5433:5432"
+    volumes:
+      - test_pgdata:/var/lib/postgresql/data
+
+  test-redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: --dbfilename test_dump.rdb
+
+  test-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - DB_HOST=test-postgres
+      - DB_PORT=5432
+      - DB_NAME=opnsense
+      - DB_USER=opnsense
+      - DB_PASSWORD=testpass123
+      - OPN_HOST=192.168.1.1
+      - OPN_PORT=443
+      - OPN_API_KEY=test_key
+      - OPN_API_SECRET=test_secret
+      - OPN_VERIFY_SSL=false
+      - REDIS_URL=redis://test-redis:6379/1
+      - DISCORD_TOKEN=test_token
+      - DEMO_MODE=true
+    ports:
+      - "8767:8766"
+    depends_on:
+      - test-postgres
+      - test-redis
+    volumes:
+      - ./test_agent_data:/app/agent_data
+
+volumes:
+  test_pgdata:
+  test_agent_data:

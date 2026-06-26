@@ -4815,6 +4815,7 @@ def run_server(host=None, port=8766):
         logger.exception("Dashboard server crashed")
         raise
 
+
 _server_instance = None  # Global reference for shutdown
 
 
