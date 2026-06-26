@@ -246,8 +246,8 @@ export const api = {
   alerts: async (): Promise<AlertsData> => {
       // Merge volume-based alerts from events with ML-detected anomalies
       const [rawAlerts, rawAnomalies] = await Promise.all([
-        json<Array<unknown>>('/api/alerts'),
-        json<Array<unknown>>('/api/anomalies'),
+        json<Array<unknown>>('/alerts'),
+        json<Array<unknown>>('/anomalies'),
       ]);
 
       const anomalies: AlertsData['anomalies'] = [];
