@@ -4798,29 +4798,24 @@ def run_server(host=None, port=8766):
     logger.info("run_server starting: host=%s, port=%s", host, port)
     
     bind_host = host or os.getenv("DASHBOARD_BIND", "0.0.0.0")
-    logger.info("bind_host=%s", bind_host)
-    
+    logger.info("bind_host=%s port=%s", bind_host, port)
+
     # Start SSE background cleaner thread
     sse_cleaner = threading_lib.Thread(target=sse_background_cleaner, daemon=True)
     sse_cleaner.start()
     logger.info("SSE background cleaner started")
-    
-    # Write a startup marker IMMEDIATELY - if this doesn't appear, import itself is crashing
-    import traceback as tb
-    marker = os.path.join(os.environ.get("AGENT_DATA_DIR", "/app/agent_data"), "server_debug.txt")
-    logger.info("Creating marker at %s", marker)
+
+    global _server_instance
     try:
-        os.makedirs(os.path.dirname(marker), exist_ok=True)
-        with open(marker, "w") as f:
-            f.write("run_server entered\n")
-            f.flush()
-            f.write(f"PID={os.getpid()}\n")
-            f.flush()
-        logger.info("Marker created successfully")
-    except Exception as e:
-        logger.error("Failed to create marker: %s", e)
-        tb.print_exc()
-    
+        _server_instance = ThreadedHTTPServer((bind_host, port), DashboardHandler)
+        logger.info("Dashboard server listening on %s:%s", bind_host, port)
+        _server_instance.serve_forever()
+        _server_instance = None
+    except Exception:
+        logger.exception("Dashboard server crashed")
+        raise
+
+
 _server_instance = None  # Global reference for shutdown
 
 
@@ -4828,7 +4823,6 @@ def shutdown_server(timeout: float = _MAX_DRAIN_WAIT) -> None:
     """Trigger graceful shutdown of the dashboard server."""
     global _server_instance
     if _server_instance:
-        # Start drain in background thread so the server thread can stop
         threading_lib.Thread(target=_do_shutdown, args=(timeout,), daemon=True).start()
 
 
@@ -4840,24 +4834,6 @@ def _do_shutdown(timeout: float):
         _server_instance.shutdown()
         _server_instance = None
 
-
-try:
-    server = ThreadedHTTPServer((bind_host, port), DashboardHandler)
-    _server_instance = server
-    with open(marker, "a") as f:
-        f.write("ThreadedHTTPServer created\n")
-        f.flush()
-    server.serve_forever()
-    _server_instance = None
-    with open(marker, "a") as f:
-        f.write("serve_forever exited\n")
-        f.flush()
-except Exception as e:
-    with open(marker, "a") as f:
-        f.write(f"EXCEPTION: {e}\n")
-        tb.print_exc(file=f)
-        f.flush()
-    raise
 
 if __name__ == "__main__":
     run_server()
