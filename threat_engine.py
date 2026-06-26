@@ -399,6 +399,79 @@ class ThreatEngine:
         if action == "block":
             self._update_block_ratio(ip)
 
+    def ingest_firewall_events(self, events: List[Dict[str, Any]]):
+        """Ingest a batch of firewall events and update threat scores.
+
+        Optimized for high volume: pre-warms profiles and defers
+        per-profile signal computation.
+        """
+        now = datetime.now(timezone.utc)
+        # Pre-warm: count events per IP, track blocks
+        ip_event_counts: Dict[str, int] = defaultdict(int)
+        ip_blocks: Dict[str, int] = defaultdict(int)
+        for event in events:
+            ip = event.get("src_ip")
+            if not ip:
+                continue
+            ip_event_counts[ip] += 1
+            if event.get("action") == "block":
+                ip_blocks[ip] += 1
+
+        # Bulk-update profiles
+        for ip, count in ip_event_counts.items():
+            profile = self._get_or_create_profile(ip)
+            profile.total_events += count
+            profile.firewall_events += count
+            profile.last_seen = now
+
+        # Per-event signal processing (baseline, port scan, dest scan)
+        for event in events:
+            ip = event.get("src_ip")
+            if not ip:
+                continue
+
+            # Check against baseline
+            rule = event.get("rule")
+            if rule and self.baseline_engine:
+                baseline = self.baseline_engine.get_baseline(rule)
+                if baseline:
+                    deviation = self._calculate_deviation(event, baseline)
+                    if deviation > 0:
+                        profile = self._profiles[ip]
+                        profile.baseline_deviations.append(deviation)
+                        norm_score = min(deviation / (deviation + 1), 1.0)
+                        self._add_signal(ip, "firewall", "volume_anomaly",
+                                       norm_score,
+                                       {"rule": rule, "deviation": deviation})
+
+            # Check for port scan pattern
+            if self._is_port_scan(ip, event):
+                self._add_signal(ip, "firewall", "firewall_port_scan",
+                               0.8,
+                               {"dst_port": event.get("dst_port")})
+
+            # Check for destination scan
+            if self._is_destination_scan(ip, event):
+                self._add_signal(ip, "firewall", "firewall_dest_scan",
+                               0.7,
+                               {"dst_ip": event.get("dst_ip")})
+
+        # Bulk-update block ratios
+        for ip, blocks in ip_blocks.items():
+            self._update_block_ratio_count(ip, blocks)
+
+    def _update_block_ratio_count(self, ip: str, block_count: int):
+        """Update block ratio by a count (batch-friendly variant)."""
+        profile = self._profiles.get(ip)
+        if not profile:
+            return
+        profile.blocked_events += block_count
+        ratio = profile.blocked_events / profile.firewall_events if profile.firewall_events else 0
+        if ratio > 0.5:
+            self._add_signal(ip, "firewall", "firewall_block_ratio",
+                           min(ratio, 1.0),
+                           {"blocked": profile.blocked_events, "total": profile.firewall_events})
+
     def ingest_http_event(self, event: Dict[str, Any]):
         """Ingest HTTP event and update threat scores."""
         ip = event.get("src_ip")

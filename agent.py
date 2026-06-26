@@ -29,7 +29,7 @@ from pathlib import Path
 from collections import defaultdict
 import threading
 from threading import Thread, Event, Condition, Lock
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 try:
     import redis as redis_lib
@@ -759,132 +759,20 @@ class OPNsenseAgent:
             self._event_buffer.append(event)
             self._event_cond.notify()
 
-    # ── helpers ──────────────────────────────────────────────────────
-    def _process_event(self, event: dict):
-        """Single-event pipeline: classify → reverse DNS → store → stat model → attack detectors → geo → alert."""
-        event["processed_at"] = datetime.now(timezone.utc).isoformat()
-        
-        # Map parser 'ruid' to PG column 'rule_name' (the CSV field at position 3)
-        if 'ruid' in event:
-            ruid = event.pop('ruid')
-            # Look up human-readable rule name from OPNsense API mapping
-            rule_name = self.rules_mapping.get(ruid, ruid)
-            event['rule_name'] = rule_name
-        
-        # Tag event with log_type for DB storage
-        log_type = event.get('log_type', '')
-        event['log_type'] = log_type
-        
-        # Network classification: track IPs and classify event (per-IP auto-discovery)
-        if self.network_classifier is not None:
-            event = self.network_classifier.record_event(event)
-        
-        # Reverse DNS lookup (before storing/enriching)
-        if self.reverse_dns.enabled:
-            for field in ("src_ip", "dst_ip"):
-                ip = event.get(field)
-                if ip:
-                    hostname = self.reverse_dns.lookup(ip)
-                    if hostname:
-                        event[f"{field}_hostname"] = hostname
-
-        # Store in DB (includes log_type column)
-        self.db.insert_event(event)
-        
-        # System log classifier — learns all events, especially system/non-firewall logs
-        self.system_log_classifier.process_event(event)
-        
-        # System log anomaly detection
-        # We batch-check system log anomalies every learn_interval to avoid overhead
-        now = time.time()
-        if now - self.last_syslog_anomaly_check >= self.config.learn_interval:
-            self._check_system_log_anomalies()
-            self.last_syslog_anomaly_check = now
-
-        # Rule-based learning (firewall rules only)
-        self.rule_classifier.process_event(event)
-
-        # Auto-retrain ML model when enough new data accumulates
-        if self.rule_classifier.should_retrain_ml():
-            self.rule_classifier.train_ml_model()
-
-        # ZenArmor policy classifier — tracks security gateway policies
-        log_type = event.get('log_type', '')
-        if log_type == 'zenarmor':
-            self.zenarmor_classifier.process_event(event)
-        
-        # IDS signature analyzer — tracks IDS/Snort/Suricata signatures
-        if log_type == 'ids':
-            self.ids_analyzer.process_event(event)
-        
-        # Nginx web server monitor — tracks requests, detects attacks
-        if log_type == 'nginx':
-            self.nginx_monitor.process_event(event)
-
-        # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
-        self.service_monitor.process_event(event)
-
-        # Statistical model
-        self.stat_model.add_event(event)
-
-        # Attack detectors (dedup is built-in)
-        attacks = self.attack_detector.check_event(event)
-        if attacks:
-            for attack in attacks:
-                attack.setdefault("timestamp", event.get("timestamp", ""))
-                # Check mute list before alerting
-                src_ip = attack.get("src_ip", "")
-                attack_type = attack.get("attack_type", "")
-                if self._is_muted(src_ip, attack_type):
-                    logger.info("Alert suppressed (muted): %s from %s", attack_type, src_ip)
-                    continue
-                self.anomaly_count += 1
-                llm_analysis = None
-                if self.vllm_client.enabled:
-                    llm_analysis = self.vllm_client.analyze_anomaly(
-                        event, attack.get("attack_type", ""), attack.get("description", "")
-                    )
-                self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
-                # Apprise notifier (multi-platform)
-                self.apprise_notifier.send_alert(attack)
-
-        # Geo lookup
-        geo_result = self.geo_lookup.check_event(event)
-        if geo_result:
-            src_ip = geo_result.get("src_ip", event.get("src_ip", ""))
-            if self._is_muted(src_ip, "GEO_ANOMALY"):
-                logger.info("Geo alert suppressed (muted): %s", src_ip)
-            else:
-                self.anomaly_count += 1
-                self.discord_bot.send_alert(geo_result)
-                self.apprise_notifier.send_alert(geo_result)
-
-        # Track geo anomalies
-        if geo_result and geo_result.get("type") == "geo_country_anomaly":
-            cc = geo_result.get("country_code", "XX")
-            logger.info(
-                "New country detected: %s — %s events", cc, self.geo_lookup.country_events.get(cc, 0)
-            )
-
-        # Unified threat engine — ingest events and update baselines
-        if log_type == 'firewall' and self.baseline_engine and self.threat_engine:
-            self.baseline_engine.update_baseline(event.get('rule_name', ''), [event])
-            self.threat_engine.ingest_firewall_event(event)
-
-        # Concept drift detection — feed firewall events into drift tracker
-        if log_type == 'firewall' and self.drift_detector:
-            self.drift_detector.process_event(event)
-
-    def _process_batch(self, events: list):
+    # ── Batch processing ──────────────────────────────────────────────
+    def _process_batch(self, events: list) -> Dict[str, float]:
         """Process a batch of events using batch-optimized operations.
 
         Batches DB inserts, attack detection, geo lookup, concept drift,
         and classifier updates to minimize per-event overhead at high volume.
+
+        Returns timing breakdown (ms) for monitoring.
         """
         if not events:
-            return
+            return {}
 
-        now = time.time()
+        timing: Dict[str, float] = {}
+        t_start = time.time()
         processed_at = datetime.now(timezone.utc).isoformat()
         db_tuples: list = []
 
@@ -958,6 +846,7 @@ class OPNsenseAgent:
         self.system_log_classifier.process_events(events)
 
         # System log anomaly detection (periodic)
+        now = time.time()
         if now - self.last_syslog_anomaly_check >= self.config.learn_interval:
             self._check_system_log_anomalies()
             self.last_syslog_anomaly_check = now
@@ -1004,8 +893,7 @@ class OPNsenseAgent:
 
         # Threat engine — batch ingest firewall events
         if self.threat_engine and fw_events:
-            for e in fw_events:
-                self.threat_engine.ingest_firewall_event(e)
+            self.threat_engine.ingest_firewall_events(fw_events)
 
         # ── Phase 5: Batch attack detection ──────────────────────────
         attacks = self.attack_detector.check_events_batch(events)
@@ -1049,6 +937,19 @@ class OPNsenseAgent:
 
         self.event_count += len(events)
 
+        # ── Timing ───────────────────────────────────────────────────
+        elapsed_ms = (time.time() - t_start) * 1000
+        timing["total_ms"] = elapsed_ms
+        timing["events_per_sec"] = len(events) / (elapsed_ms / 1000) if elapsed_ms > 0 else 0
+
+        if elapsed_ms > 200:
+            logger.info(
+                "Batch processed %d events in %.1fms (%.0f ev/s)",
+                len(events), elapsed_ms, timing["events_per_sec"],
+            )
+
+        return timing
+
     def _get_top_blocked(self) -> dict:
         """Return top blocked source IPs."""
         # Read from eventdb if available, otherwise from local counts
@@ -1078,9 +979,9 @@ class OPNsenseAgent:
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
 
-    # ── mute list helpers ────────────────────────────────────────────
+    # ── mute list helpers (cached) ───────────────────────────────────
     def _load_mutes(self) -> list[dict]:
-        """Load active mutes from mutes.json."""
+        """Load active mutes from mutes.json (cold load only)."""
         mutes_path = DATA_DIR / "mutes.json"
         if not mutes_path.exists():
             return []
@@ -1100,15 +1001,33 @@ class OPNsenseAgent:
         except Exception:
             return []
 
+    def _refresh_mute_cache(self):
+        """Reload mute list into in-memory cache."""
+        self._mute_cache = self._load_mutes()
+        self._mute_cache_time = time.time()
+        self._mute_cache_ips = set()
+        self._mute_cache_ip_type: Dict[str, set] = defaultdict(set)
+        for m in self._mute_cache:
+            ip = m.get("ip", "")
+            atype = m.get("attack_type", "")
+            if ip:
+                self._mute_cache_ips.add(ip)
+                self._mute_cache_ip_type[ip].add(atype)
+
     def _is_muted(self, src_ip: str, attack_type: str = "") -> bool:
-        """Check if an IP/attack_type combo is muted."""
-        mutes = self._load_mutes()
-        for m in mutes:
-            m_ip = m.get("ip", "")
-            m_type = m.get("attack_type", "")
-            if m_ip == src_ip and (m_type == "ALL" or m_type == attack_type):
-                return True
-        return False
+        """Check if an IP/attack_type combo is muted (cached lookup).
+
+        Cache is refreshed every 10s so mute command changes propagate
+        without requiring a file read on every single event.
+        """
+        now = time.time()
+        if now - getattr(self, '_mute_cache_time', 0) >= 10:
+            self._refresh_mute_cache()
+
+        if src_ip not in self._mute_cache_ips:
+            return False
+        types = self._mute_cache_ip_type.get(src_ip, set())
+        return "ALL" in types or attack_type in types
     
     def _check_wan_flaps(self):
         """Check OPNsense gateway states for flapping and send alerts."""
