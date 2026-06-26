@@ -227,6 +227,17 @@ class TestRunMigrations:
         versions = [r["version"] for r in applied]
         assert versions == list(range(1, CURRENT_SCHEMA_VERSION + 1))
 
+    def test_v8_creates_adaptive_weights(self):
+        """Verify v8 migration (adaptive_weights table) is present and has no DO blocks."""
+        v8 = next(m for m in MIGRATIONS if m["version"] == 8)
+        assert "adaptive_weights" in v8["description"].lower()
+        has_create = False
+        for sql in v8["sql"]:
+            if "CREATE TABLE IF NOT EXISTS adaptive_weights" in sql:
+                has_create = True
+            assert "DO $$" not in sql
+        assert has_create, "v8 should create adaptive_weights table"
+
     def test_skips_already_applied_migrations(self):
         db, conn, cur = self._make_mock_db(current_version=5)
 
@@ -235,7 +246,7 @@ class TestRunMigrations:
         skipped = [r for r in results if r["status"] == "skipped"]
         applied = [r for r in results if r["status"] == "applied"]
         assert len(skipped) == 5  # v1-v5 skipped
-        assert len(applied) == 2  # v6, v7 applied
+        assert len(applied) == 3  # v6, v7, v8 applied
 
     def test_returns_already_current_when_up_to_date(self):
         db, conn, cur = self._make_mock_db(current_version=CURRENT_SCHEMA_VERSION)

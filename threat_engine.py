@@ -103,21 +103,9 @@ class AdaptiveWeights:
     # ── Persistence ──
 
     def _ensure_table(self):
-        try:
-            self.db.execute("""
-                CREATE TABLE IF NOT EXISTS adaptive_weights (
-                    signal_type TEXT PRIMARY KEY,
-                    attack_count INTEGER NOT NULL DEFAULT 0,
-                    benign_count INTEGER NOT NULL DEFAULT 0,
-                    last_attack TEXT,
-                    last_benign TEXT,
-                    weight REAL,
-                    decay_multiplier REAL NOT NULL DEFAULT 1.0
-                )
-            """)
-            self.db.commit()
-        except Exception as e:
-            logger.debug(f"adaptive_weights table setup: {e}")
+        # adaptive_weights table is now managed by schema_migrations.py (v8).
+        # This method is a no-op — called before _load_from_db for ordering.
+        pass
 
     def _load_from_db(self):
         try:

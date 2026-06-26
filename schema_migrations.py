@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -464,6 +464,28 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """
             CREATE INDEX IF NOT EXISTS idx_signal_weight_tuning_updated
                 ON signal_weight_tuning(updated_at DESC);
+            """,
+        ],
+    },
+
+    # ------------------------------------------------------------------
+    # V8: Adaptive weights table (migrated from inline threat_engine.py)
+    # Removes the last ad-hoc CREATE TABLE IF NOT EXISTS from application code.
+    # ------------------------------------------------------------------
+    {
+        "version": 8,
+        "description": "Create adaptive_weights table (migrated from threat_engine.py)",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS adaptive_weights (
+                signal_type TEXT PRIMARY KEY,
+                attack_count INTEGER NOT NULL DEFAULT 0,
+                benign_count INTEGER NOT NULL DEFAULT 0,
+                last_attack TEXT,
+                last_benign TEXT,
+                weight REAL,
+                decay_multiplier REAL NOT NULL DEFAULT 1.0
+            );
             """,
         ],
     },
