@@ -107,6 +107,7 @@ export default function App() {
       const map: Record<string, string> = {
         'firewall-rules': 'rules',
         'rules-ml': 'rules-classified',
+        'wanflap': 'wan-flap',
         'wan-flap': 'wan-flap',
         'network-topology': 'network',
         'threat-alerts': 'alerts',
