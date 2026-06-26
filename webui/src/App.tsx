@@ -106,10 +106,12 @@ export default function App() {
       const hash = window.location.hash.slice(1);
       const map: Record<string, string> = {
         'firewall-rules': 'rules',
+        'firerules': 'rules',
         'rules-ml': 'rules-classified',
+        'rulesml': 'rules-classified',
+        'querylogs': 'logs',
         'wanflap': 'wan-flap',
         'wan-flap': 'wan-flap',
-        'wanflap': 'wan-flap',
         'network-topology': 'network',
         'threat-alerts': 'alerts',
         'traffic-heatmap': 'heatmap',
