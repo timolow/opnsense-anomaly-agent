@@ -226,27 +226,7 @@ export default function HeatmapTab() {
         </div>
       </div>
 
-      <div className="cyber-card p-4 scanlines relative">
-        <canvas
-          ref={canvasRef}
-          className="w-full h-auto rounded cursor-crosshair"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={() => setTooltip(null)}
-        />
-
-        {tooltip && (
-          <div
-            className="fixed pointer-events-none z-50 cyber-card px-3 py-2 text-xs font-mono"
-            style={{ left: tooltip.x + 10, top: tooltip.y - 40, minWidth: 150 }}
-          >
-            <div className="font-semibold">{tooltip.ip}</div>
-            <div className="text-cyber-textMuted">{tooltip.hour}</div>
-            <div className="text-cyber-accent">{tooltip.val.toLocaleString()} events</div>
-          </div>
-        )}
-      </div>
-
-      {/* Color legend — prominent bar with labels */}
+      {/* Color legend — prominent bar with labels, placed above the grid */}
       <div className="cyber-card p-3">
         <div className="text-xs text-cyber-textMuted font-mono mb-2">Events per hour</div>
         <div className="flex items-center gap-3">
@@ -269,6 +249,26 @@ export default function HeatmapTab() {
             })() : ''}
           </span>
         </div>
+      </div>
+
+      <div className="cyber-card p-4 scanlines relative">
+        <canvas
+          ref={canvasRef}
+          className="w-full h-auto rounded cursor-crosshair"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => setTooltip(null)}
+        />
+
+        {tooltip && (
+          <div
+            className="fixed pointer-events-none z-50 cyber-card px-3 py-2 text-xs font-mono"
+            style={{ left: tooltip.x + 10, top: tooltip.y - 40, minWidth: 150 }}
+          >
+            <div className="font-semibold">{tooltip.ip}</div>
+            <div className="text-cyber-textMuted">{tooltip.hour}</div>
+            <div className="text-cyber-accent">{tooltip.val.toLocaleString()} events</div>
+          </div>
+        )}
       </div>
     </div>
   );
