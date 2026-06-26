@@ -311,13 +311,15 @@ class TestUnifiedScore:
 
     def test_adaptive_weight_used(self):
         """Unified score should use adaptive weights, not static SIGNAL_WEIGHTS."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
         db = MagicMock()
         engine = ThreatEngine(db)
         engine._add_signal("1.2.3.4", "ids", "ids_signature", 0.8)
         initial_score = engine._ip_profiles["1.2.3.4"].unified_score
 
-        # Record attacks for ids_signature — weight should increase
-        engine.record_attack("1.2.3.4")
+        # Record enough attacks to exceed MIN_FEEDBACK threshold — weight should increase
+        for _ in range(ADAPTIVE_MIN_FEEDBACK + 1):
+            engine.record_attack("1.2.3.4")
 
         # Reset signals, re-add same signal — should get higher weight
         profile = engine._ip_profiles["1.2.3.4"]
@@ -554,6 +556,7 @@ class TestFeedbackIntegration:
 
     def test_record_attack(self):
         """record_attack extracts signal types from IP profile."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
         db = MagicMock()
         engine = ThreatEngine(db)
         engine.ingest_ids_event({
@@ -561,7 +564,9 @@ class TestFeedbackIntegration:
             "signature": "ET MALWARE",
             "severity": "critical",
         })
-        engine.record_attack("1.2.3.4")
+        # Record enough attacks to exceed MIN_FEEDBACK threshold
+        for _ in range(ADAPTIVE_MIN_FEEDBACK + 1):
+            engine.record_attack("1.2.3.4")
         # Verify weight was boosted
         weight = engine.adaptive_weights.get_weight("ids_signature")
         assert weight > SIGNAL_WEIGHTS["ids_signature"]
@@ -658,3 +663,170 @@ class TestFeedbackIntegration:
         summary = engine.get_adaptive_weights_summary()
         assert "ids_signature" in summary
         assert summary["ids_signature"]["attack_count"] == 1
+
+
+class TestMinFeedbackThreshold:
+    """Test ADAPTIVE_MIN_FEEDBACK threshold enforcement."""
+
+    def test_weight_unchanged_below_threshold(self):
+        """Weights should NOT change when feedback < ADAPTIVE_MIN_FEEDBACK."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
+        aw = AdaptiveWeights()
+        default_weight = aw.get_weight("ids_signature")
+
+        # Record fewer attacks than threshold
+        for _ in range(ADAPTIVE_MIN_FEEDBACK - 1):
+            aw.record_attack(["ids_signature"])
+
+        # Weight should still be the default (not tuned yet)
+        weight = aw.get_weight("ids_signature")
+        assert weight == default_weight, \
+            f"Weight should not change below threshold: {weight} != {default_weight}"
+
+    def test_weight_changes_at_threshold(self):
+        """Weight should start changing once feedback >= ADAPTIVE_MIN_FEEDBACK."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
+        aw = AdaptiveWeights()
+        default_weight = aw.get_weight("ids_signature")
+
+        # Record enough attacks to cross threshold
+        for _ in range(ADAPTIVE_MIN_FEEDBACK + 1):
+            aw.record_attack(["ids_signature"])
+
+        weight = aw.get_weight("ids_signature")
+        assert weight > default_weight, \
+            f"Weight should change after threshold: {weight} <= {default_weight}"
+
+    def test_benign_weight_unchanged_below_threshold(self):
+        """Benign feedback should NOT change weights below threshold."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
+        aw = AdaptiveWeights()
+        default_weight = aw.get_weight("http_anomaly")
+
+        for _ in range(ADAPTIVE_MIN_FEEDBACK - 1):
+            aw.record_benign(["http_anomaly"])
+
+        weight = aw.get_weight("http_anomaly")
+        assert weight == default_weight, \
+            f"Weight should not change below threshold: {weight} != {default_weight}"
+
+    def test_benign_decay_unchanged_below_threshold(self):
+        """Decay multiplier should NOT change below threshold."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
+        aw = AdaptiveWeights()
+
+        for _ in range(ADAPTIVE_MIN_FEEDBACK - 1):
+            aw.record_benign(["http_anomaly"])
+
+        decay = aw.get_decay_multiplier("http_anomaly")
+        assert decay == 1.0, \
+            f"Decay should not change below threshold: {decay} != 1.0"
+
+    def test_counts_still_incremented_below_threshold(self):
+        """Feedback counts should still be tracked even below threshold."""
+        from threat_engine import ADAPTIVE_MIN_FEEDBACK
+        aw = AdaptiveWeights()
+
+        for _ in range(ADAPTIVE_MIN_FEEDBACK - 1):
+            aw.record_attack(["ids_signature"])
+
+        fb = aw._feedback["ids_signature"]
+        assert fb.attack_count == ADAPTIVE_MIN_FEEDBACK - 1
+        # Weight should NOT have been tuned
+        assert aw.get_weight("ids_signature") == SIGNAL_WEIGHTS["ids_signature"]
+
+
+class TestBatchProcessing:
+    """Test batch processing paths in ThreatEngine."""
+
+    def test_ingest_firewall_events_basic(self):
+        """ingest_firewall_events should create profiles and count events."""
+        db = MagicMock()
+        engine = ThreatEngine(db)
+        events = [
+            {"src_ip": "1.2.3.4", "action": "pass"},
+            {"src_ip": "1.2.3.4", "action": "block"},
+            {"src_ip": "5.6.7.8", "action": "pass"},
+        ]
+        engine.ingest_firewall_events(events)
+
+        assert "1.2.3.4" in engine._ip_profiles
+        assert "5.6.7.8" in engine._ip_profiles
+        assert engine._ip_profiles["1.2.3.4"].firewall_events == 2
+        assert engine._ip_profiles["5.6.7.8"].firewall_events == 1
+
+    def test_ingest_firewall_events_skip_no_src_ip(self):
+        """Events without src_ip should be silently skipped."""
+        db = MagicMock()
+        engine = ThreatEngine(db)
+        engine.ingest_firewall_events([
+            {"action": "block"},
+            {"src_ip": None, "action": "pass"},
+            {"src_ip": "1.2.3.4", "action": "pass"},
+        ])
+        assert len(engine._ip_profiles) == 1
+        assert "1.2.3.4" in engine._ip_profiles
+
+    def test_ingest_firewall_events_with_baseline(self):
+        """Batch ingestion with baseline engine should compute deviations."""
+        db = MagicMock()
+        fake_baseline = MagicMock()
+        fake_baseline.avg_events_per_hour = 100
+        fake_baseline.std_events_per_hour = 10
+        baseline_engine = MagicMock()
+        baseline_engine.get_baseline.return_value = fake_baseline
+        engine = ThreatEngine(db, baseline_engine=baseline_engine)
+
+        engine.ingest_firewall_events([
+            {"src_ip": "1.2.3.4", "rule": "r1", "volume": 200},
+        ])
+        profile = engine._ip_profiles["1.2.3.4"]
+        assert len(profile.baseline_deviations) > 0
+
+    def test_ingest_firewall_events_blocks(self):
+        """Batch block events should update blocked_events count."""
+        db = MagicMock()
+        engine = ThreatEngine(db)
+        events = [{"src_ip": "1.2.3.4", "action": "block"}] * 5 + \
+                 [{"src_ip": "1.2.3.4", "action": "pass"}] * 5
+        engine.ingest_firewall_events(events)
+        profile = engine._ip_profiles["1.2.3.4"]
+        assert profile.firewall_events == 10
+        assert profile.blocked_events == 5
+
+    def test_update_block_ratio_count(self):
+        """_update_block_ratio_count should update blocked_events and add signal."""
+        db = MagicMock()
+        engine = ThreatEngine(db)
+        # Pre-populate profile
+        engine._add_signal("1.2.3.4", "firewall", "firewall_block_ratio", 0.5)
+        profile = engine._ip_profiles["1.2.3.4"]
+        profile.firewall_events = 20
+        profile.blocked_events = 10
+
+        # Add more blocks
+        engine._update_block_ratio_count("1.2.3.4", 5)
+        assert profile.blocked_events == 15
+        # Check that a new block ratio signal was added (ratio > 0.5)
+        block_signals = [s for s in profile.signals if s.signal_type == "firewall_block_ratio"]
+        assert len(block_signals) >= 2
+
+
+class TestBlockedEvents:
+    """Test blocked_events field on IPThreatProfile."""
+
+    def test_blocked_events_defaults_to_zero(self):
+        """blocked_events should default to 0."""
+        profile = IPThreatProfile(ip="1.2.3.4")
+        assert profile.blocked_events == 0
+
+    def test_blocked_events_increments_in_batch(self):
+        """blocked_events should be incremented by _update_block_ratio_count."""
+        db = MagicMock()
+        engine = ThreatEngine(db)
+        engine._add_signal("1.2.3.4", "firewall", "firewall_block_ratio", 0.5)
+        profile = engine._ip_profiles["1.2.3.4"]
+        profile.firewall_events = 10
+
+        engine._update_block_ratio_count("1.2.3.4", 8)
+        assert profile.blocked_events == 8

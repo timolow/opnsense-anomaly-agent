@@ -182,11 +182,18 @@ class AdaptiveWeights:
             fb = self._feedback.setdefault(st, SignalFeedback(signal_type=st))
             fb.attack_count += 1
             fb.last_attack = ts
+            # Don't auto-tune until we have enough feedback
+            total = fb.attack_count + fb.benign_count
+            if total < ADAPTIVE_MIN_FEEDBACK:
+                logger.debug(
+                    f"Skipping weight update for {st}: only {total}/{ADAPTIVE_MIN_FEEDBACK} feedback samples"
+                )
+                continue
             # Boost weight proportional to attack correlation
             if fb.current_weight is None:
                 fb.current_weight = SIGNAL_WEIGHTS.get(st, 0.5)
             # Ratio of attacks to total feedback — drives weight toward ADAPTIVE_WEIGHT_MAX
-            ratio = fb.attack_count / (fb.attack_count + fb.benign_count)
+            ratio = fb.attack_count / total
             # Target: scale between min and max based on ratio
             target = ADAPTIVE_WEIGHT_MIN + ratio * (ADAPTIVE_WEIGHT_MAX - ADAPTIVE_WEIGHT_MIN)
             target = min(target * ADAPTIVE_ATTACK_BOOST, ADAPTIVE_WEIGHT_MAX)
@@ -210,11 +217,18 @@ class AdaptiveWeights:
             fb = self._feedback.setdefault(st, SignalFeedback(signal_type=st))
             fb.benign_count += 1
             fb.last_benign = ts
+            # Don't auto-tune until we have enough feedback
+            total = fb.attack_count + fb.benign_count
+            if total < ADAPTIVE_MIN_FEEDBACK:
+                logger.debug(
+                    f"Skipping weight update for {st}: only {total}/{ADAPTIVE_MIN_FEEDBACK} feedback samples"
+                )
+                continue
             if fb.current_weight is None:
                 fb.current_weight = SIGNAL_WEIGHTS.get(st, 0.5)
             # Lower weight — signal was a false positive
             # Target: scale from max (all attacks) to min (all benign)
-            ratio = fb.attack_count / (fb.attack_count + fb.benign_count)
+            ratio = fb.attack_count / total
             target = ADAPTIVE_WEIGHT_MIN + ratio * (ADAPTIVE_WEIGHT_MAX - ADAPTIVE_WEIGHT_MIN)
             fb.current_weight += ADAPTIVE_LEARNING_RATE * (target - fb.current_weight)
             fb.current_weight = max(fb.current_weight, ADAPTIVE_WEIGHT_MIN)
@@ -279,6 +293,7 @@ class IPThreatProfile:
     ids_events: int = 0
     zenarmor_events: int = 0
     nginx_events: int = 0
+    blocked_events: int = 0
     baseline_deviations: List[float] = field(default_factory=list)
     geo_info: Optional[Dict[str, Any]] = None
 
@@ -437,7 +452,7 @@ class ThreatEngine:
                 if baseline:
                     deviation = self._calculate_deviation(event, baseline)
                     if deviation > 0:
-                        profile = self._profiles[ip]
+                        profile = self._ip_profiles[ip]
                         profile.baseline_deviations.append(deviation)
                         norm_score = min(deviation / (deviation + 1), 1.0)
                         self._add_signal(ip, "firewall", "volume_anomaly",
@@ -462,7 +477,7 @@ class ThreatEngine:
 
     def _update_block_ratio_count(self, ip: str, block_count: int):
         """Update block ratio by a count (batch-friendly variant)."""
-        profile = self._profiles.get(ip)
+        profile = self._ip_profiles.get(ip)
         if not profile:
             return
         profile.blocked_events += block_count
