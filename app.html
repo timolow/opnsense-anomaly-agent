@@ -502,7 +502,34 @@ tr:hover { background: var(--bg-tertiary); }
 .sidebar-nav::-webkit-scrollbar { width: 4px; }
 .sidebar-nav::-webkit-scrollbar-track { background: transparent; }
 .sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+/* Geo Map Layout */
+.geo-container { display: grid; grid-template-columns: 1fr 380px; gap: 16px; min-height: 500px; }
+.geo-map-wrapper { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--bg-tertiary); }
+#geoMap { width: 100%; height: 500px; }
+.geo-panel { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; max-height: 500px; }
+.geo-panel-card { background: var(--bg-tertiary); border-radius: var(--radius); padding: 12px; }
+.geo-panel-title { font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px; letter-spacing: 0.5px; }
+.geo-total-events { font-size: 28px; font-weight: 700; color: var(--text-primary); }
+.geo-total-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.geo-bar-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; border-radius: 4px; transition: background 0.15s; }
+.geo-bar-row:hover { background: var(--bg-primary); }
+.geo-bar-flag { font-size: 20px; flex-shrink: 0; }
+.geo-bar-code { font-size: 11px; font-weight: 600; color: var(--text-muted); width: 28px; flex-shrink: 0; }
+.geo-bar-info { flex: 1; min-width: 0; }
+.geo-bar-name { font-size: 13px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.geo-bar-track { height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.geo-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+.geo-bar-count { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; text-align: right; min-width: 60px; }
+.geo-bar-pct { font-size: 11px; color: var(--text-muted); font-weight: 600; flex-shrink: 0; min-width: 36px; text-align: right; }
+.geo-empty { padding: 40px 20px; text-align: center; color: var(--text-muted); }
+.geo-map-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); z-index: 1000; }
+/* Leaflet overrides for dark theme */
+.leaflet-container { background: #1a1a2e; }
+@media (max-width: 900px) { .geo-container { grid-template-columns: 1fr; } #geoMap { height: 350px; } }
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 
@@ -934,11 +961,23 @@ tr:hover { background: var(--bg-tertiary); }
         </div>
       </div>
     </div>
- id="tab-geo">
-      <div class="card">
-        <div class="card-header">Traffic by Country</div>
-        <div class="card-body">
-          <div class="geo-grid" id="geoGrid"></div>
+    <!-- Geo Tab -->
+    <div class="tab-content" id="tab-geo">
+      <div class="geo-container">
+        <div class="geo-map-wrapper">
+          <div id="geoMap"></div>
+          <div class="geo-map-loading" id="geoMapLoading"><div class="loading-spinner"></div></div>
+        </div>
+        <div class="geo-panel">
+          <div class="geo-panel-card">
+            <div class="geo-panel-title">Total Events (24h)</div>
+            <div class="geo-total-events" id="geoTotalEvents">-</div>
+            <div class="geo-total-label">from tracked source IPs</div>
+          </div>
+          <div class="geo-panel-card">
+            <div class="geo-panel-title">Top Regions</div>
+            <div id="geoBarChart"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1740,20 +1779,154 @@ function removeMute(ip) {
   });
 }
 
-// Geo
+// Geo — Leaflet map + bar chart panel
+var geoMapInstance = null;
+var geoMapMarkers = {};
+
+function initGeoMap() {
+  if (geoMapInstance) return; // already initialized
+  
+  var mapEl = document.getElementById('geoMap');
+  if (!mapEl) return;
+  
+  geoMapInstance = L.map('geoMap', {
+    center: [30, 10],
+    zoom: 2,
+    zoomControl: true,
+    scrollWheelZoom: true,
+  });
+  
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19,
+  }).addTo(geoMapInstance);
+}
+
+function renderGeoMap(regions) {
+  if (!geoMapInstance) return;
+  
+  // Clear existing markers
+  for (var key in geoMapMarkers) {
+    geoMapInstance.removeLayer(geoMapMarkers[key]);
+  }
+  geoMapMarkers = {};
+  
+  var maxCount = regions.length > 0 ? regions[0].count : 1;
+  
+  for (var i = 0; i < regions.length; i++) {
+    var r = regions[i];
+    if (!r.lat || !r.lon || r.country === 'Other') continue;
+    
+    var radius = Math.max(10, Math.min(60, (r.count / maxCount) * 60));
+    var opacity = Math.max(0.3, Math.min(0.7, (r.count / maxCount) * 0.7));
+    
+    var marker = L.circleMarker([r.lat, r.lon], {
+      radius: radius,
+      fillColor: r.color,
+      color: r.color,
+      weight: 1,
+      opacity: 0.8,
+      fillOpacity: opacity,
+    }).addTo(geoMapInstance);
+    
+    marker.bindPopup(
+      '<div style="font-family:system-ui;min-width:120px">' +
+      '<strong>' + (r.flag || '') + ' ' + escapeHtml(r.country) + '</strong><br>' +
+      '<span style="font-size:12px;color:#666">' + r.code + '</span><br><br>' +
+      '<span style="font-size:18px;font-weight:700">' + r.count.toLocaleString() + '</span>' +
+      ' <span style="font-size:11px;color:#888">events</span><br>' +
+      '<span style="font-size:12px;color:#888">' + r.percentage + '% of total</span>' +
+      '</div>'
+    );
+    
+    // Click marker zooms to region
+    marker.on('click', function() {
+      var d = this.getLatLng();
+      geoMapInstance.flyTo([d.lat, d.lng], 5, { duration: 1 });
+    });
+    
+    geoMapMarkers[r.country] = marker;
+  }
+}
+
+function renderGeoBarChart(regions, totalEvents) {
+  var container = document.getElementById('geoBarChart');
+  if (!container) return;
+  
+  if (!regions || regions.length === 0) {
+    container.innerHTML = '<div class="geo-empty">No geographic data available</div>';
+    return;
+  }
+  
+  var html = '';
+  for (var i = 0; i < regions.length; i++) {
+    var r = regions[i];
+    html += '<div class="geo-bar-row" onclick="zoomMapToRegion(\'' + escapeHtml(r.country) + '\')">' +
+      '<span class="geo-bar-flag">' + (r.flag || '🌍') + '</span>' +
+      '<span class="geo-bar-code">' + escapeHtml(r.code) + '</span>' +
+      '<div class="geo-bar-info">' +
+        '<div class="geo-bar-name">' + escapeHtml(r.country) + '</div>' +
+        '<div class="geo-bar-track"><div class="geo-bar-fill" style="width:' + r.percentage + '%;background:' + r.color + '"></div></div>' +
+      '</div>' +
+      '<span class="geo-bar-count">' + r.count.toLocaleString() + '</span>' +
+      '<span class="geo-bar-pct">' + r.percentage + '%</span>' +
+    '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function zoomMapToRegion(country) {
+  if (!geoMapInstance) return;
+  var region = null;
+  for (var key in geoMapMarkers) {
+    if (key === country) {
+      region = geoMapMarkers[key];
+      break;
+    }
+  }
+  if (!region) {
+    // Fallback: find center from regions data
+    var el = document.querySelector('.geo-bar-row'); // rough fallback
+    return;
+  }
+  var latlng = region.getLatLng();
+  geoMapInstance.flyTo([latlng.lat, latlng.lng], 5, { duration: 1 });
+}
+
 function loadGeo() {
+  initGeoMap();
+  
   apiFetch('/api/geo').then(function(data) {
-    if (!data) {
-      document.getElementById('geoGrid').innerHTML = '<div class="error-msg">Geo data unavailable</div>';
+    // Hide loading overlay
+    var loading = document.getElementById('geoMapLoading');
+    if (loading) loading.style.display = 'none';
+    
+    if (!data || !data.regions) {
+      document.getElementById('geoBarChart').innerHTML = '<div class="geo-empty">Geo data unavailable</div>';
       return;
     }
-    var html = '<div class="geo-grid">';
-    for (var i = 0; i < data.length; i++) {
-      var g = data[i];
-      html += '<div class="geo-item"><span class="geo-flag">' + (g.flag || '🌍') + '</span><div class="geo-info"><div class="geo-name">' + escapeHtml(g.country) + '</div><div class="geo-count">' + (g.count || 0) + ' events</div></div></div>';
+    
+    var totalEvents = data.total_events || 0;
+    var regions = data.regions || [];
+    
+    // Update total
+    var totalEl = document.getElementById('geoTotalEvents');
+    if (totalEl) totalEl.textContent = totalEvents.toLocaleString();
+    
+    // Render bar chart
+    renderGeoBarChart(regions, totalEvents);
+    
+    // Render map markers
+    renderGeoMap(regions);
+    
+    // Fit bounds if we have markers
+    if (regions.length > 0) {
+      var group = L.featureGroup(Object.values(geoMapMarkers));
+      if (group.getLayers().length > 0) {
+        geoMapInstance.fitBounds(group.getBounds().pad(0.1));
+      }
     }
-    html += '</div>';
-    document.getElementById('geoGrid').innerHTML = html;
   });
 }
 

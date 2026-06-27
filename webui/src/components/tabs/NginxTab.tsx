@@ -83,7 +83,6 @@ function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
             <div key={code} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{
                 fontSize: '13px', fontFamily: 'monospace', color, minWidth: '50px',
-                textShadow: `0 0 8px ${color}50`,
               }}>
                 {code}
               </div>
@@ -95,7 +94,6 @@ function StatusCodeChart({ by_status }: { by_status: Record<string, number> }) {
                   width: `${pct}%`, height: '100%',
                   background: `linear-gradient(90deg, ${color}80, ${color})`,
                   borderRadius: '4px',
-                  boxShadow: `0 0 8px ${color}40`,
                   transition: 'width 0.3s ease',
                 }} />
               </div>
@@ -146,8 +144,7 @@ function MethodChart({ by_method }: { by_method: Record<string, number> }) {
               flex: '1 1 80px',
               minWidth: '80px',
             }}>
-              <div style={{ fontSize: '12px', fontWeight: '700', color, fontFamily: 'monospace',
-                textShadow: `0 0 8px ${color}40`,
+              <div style={{ fontSize: '12px', fontWeight: '700', color, fontFamily: 'monospace'
               }}>{method}</div>
               <div style={{ fontSize: '16px', fontWeight: '700', color, fontFamily: 'monospace' }}>
                 {count || 0}
@@ -296,8 +293,6 @@ function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
                     padding: '2px 8px',
                     fontSize: '11px',
                     fontWeight: '600',
-                    textShadow: `0 0 6px ${sev.glow}`,
-                    boxShadow: `0 0 10px ${sev.bg}`,
                   }}>
                     {a.severity}
                   </span>
@@ -403,7 +398,7 @@ export const NginxTab: React.FC = () => {
       }}>
         <div style={{ fontSize: '32px' }}>🌐</div>
         <div>
-          <h1 style={{ margin: 0, fontSize: '20px', color: CYBER.green, textShadow: '0 0 12px rgba(0,255,170,0.4)' }}>
+          <h1 style={{ margin: 0, fontSize: '20px', color: CYBER.green }}>
             Nginx Web Server Monitor
           </h1>
           <div style={{ fontSize: '12px', color: CYBER.textMuted, marginTop: '4px' }}>
@@ -426,7 +421,6 @@ export const NginxTab: React.FC = () => {
               <span style={{
                 width: '6px', height: '6px', borderRadius: '50%',
                 background: CYBER.green,
-                boxShadow: `0 0 8px ${CYBER.green}`,
                 animation: 'pulse 2s ease-in-out infinite',
               }} />
               LIVE
@@ -525,7 +519,6 @@ export const NginxTab: React.FC = () => {
                       <span key={sev} style={{
                         fontSize: '10px',
                         color: c.text,
-                        textShadow: `0 0 4px ${c.glow}`,
                       }}>
                         {sev}: {count}
                       </span>

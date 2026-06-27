@@ -137,8 +137,8 @@ export default function Sidebar() {
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-14 border-b border-cyber-border flex-shrink-0">
-        <div className="w-8 h-8 rounded-md bg-gradient-to-br from-cyber-accent to-cyber-purple flex items-center justify-center shadow-neon-cyan flex-shrink-0">
-          <Activity size={18} className="text-cyber-darker" />
+        <div className="w-8 h-8 rounded-md bg-cyber-accent/20 flex items-center justify-center flex-shrink-0">
+          <Activity size={18} className="text-cyber-accent" />
         </div>
         {!sidebarCollapsed && (
           <span className="text-sm font-bold tracking-wider text-gradient-cyber">
@@ -202,30 +202,7 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* System Health */}
-      {!sidebarCollapsed && (
-        <div className="border-t border-cyber-border p-4 flex-shrink-0">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyber-textMuted mb-3">System Health</div>
-          <div className="flex flex-wrap gap-2">
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-cyber-panelHover text-xs">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyber-green animate-pulse" />
-              <span className="text-cyber-textMuted">Postgres</span>
-            </div>
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-cyber-panelHover text-xs">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyber-green animate-pulse" />
-              <span className="text-cyber-textMuted">Redis</span>
-            </div>
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-cyber-panelHover text-xs">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyber-green animate-pulse" />
-              <span className="text-cyber-textMuted">OPNsense</span>
-            </div>
-          </div>
-          <div className="mt-3 flex items-center gap-2 px-2">
-            <div className="w-2 h-2 rounded-full bg-cyber-green animate-pulse" />
-            <span className="text-xs text-cyber-textMuted">Agent Running</span>
-          </div>
-        </div>
-      )}
+
     </aside>
   );
 }

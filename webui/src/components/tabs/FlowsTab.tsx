@@ -23,7 +23,7 @@ function IpFlowView({ data }: { data: IpFlowData }) {
   const categoryColors = NETWORK;
 
   return (
-    <div className="cyber-card p-4 scanlines relative">
+    <div className="cyber-card p-4 relative">
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
         <svg className="w-full min-w-[600px]" viewBox="0 0 1200 500" preserveAspectRatio="xMidYMid meet">
           <defs>
@@ -177,7 +177,7 @@ function ClusterFlowView({ data, expandCluster, setExpandCluster, threshold, set
   }, [nodes, activeClusterKeys, expandCluster, clusters, svgH]);
 
   return (
-    <div className="cyber-card p-4 scanlines relative">
+    <div className="cyber-card p-4 relative">
       {/* Controls bar */}
       <div className="flex flex-wrap items-center gap-4 mb-4 pb-3 border-b border-cyber-border">
         {/* Edge threshold slider */}
@@ -441,7 +441,7 @@ export default function FlowsTab() {
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-3 cyber-card-hover">
-          <div className="text-xl font-bold font-mono text-neon-cyan">{allNodes.length}</div>
+          <div className="text-xl font-bold font-mono text-cyber-accent">{allNodes.length}</div>
           <div className="text-xs text-cyber-textMuted uppercase tracking-wider">Nodes</div>
         </div>
         <div className="cyber-card p-3 cyber-card-hover">
@@ -477,7 +477,7 @@ export default function FlowsTab() {
 
       {/* Top flows table */}
       {allEdges.length > 0 && (
-        <div className="cyber-card p-4 scanlines">
+        <div className="cyber-card p-4">
           <div className="flex items-center gap-2 mb-3">
             <Layers size={14} className="text-cyber-textMuted" />
             <h3 className="text-sm font-bold text-cyber-textMuted uppercase tracking-wider">Top Flows</h3>

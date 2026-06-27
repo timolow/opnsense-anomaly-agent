@@ -185,21 +185,11 @@ export default function App() {
             >
               <Menu size={16} />
             </button>
-            <h1 className="text-sm md:text-lg font-bold text-gradient-cyber truncate">{TAB_TITLE[activeTab] || 'Dashboard'}</h1>
-            <span className="text-xs text-cyber-textMuted font-mono hidden md:inline">
-              {activeTab} · v2.0.0
-            </span>
+            <h1 className="text-sm md:text-lg font-semibold text-cyber-text truncate">{TAB_TITLE[activeTab] || 'Dashboard'}</h1>
           </div>
           
           <div className="flex items-center gap-2 md:gap-3">
             <TimeRangePicker />
-            <div className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1 rounded-full bg-cyber-panelHover border border-cyber-border">
-              <div className="w-2 h-2 rounded-full bg-cyber-green animate-pulse" />
-              <span className="text-xs text-cyber-textMuted">Live</span>
-            </div>
-            <div className="text-xs text-cyber-textMuted font-mono hidden sm:block">
-              {new Date().toLocaleTimeString()}
-            </div>
           </div>
         </header>
 

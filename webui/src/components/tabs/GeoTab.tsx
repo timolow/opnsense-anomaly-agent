@@ -1,412 +1,849 @@
 // ═══════════════════════════════════════════════════
-// Geo Tab - Interactive world map visualization
+// Geo Tab - Interactive geographic map with hotspot markers & heatmap overlay
 // ═══════════════════════════════════════════════════
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { api } from '@/api';
-import type { GeoData } from '@/types';
-import { Globe, Map as MapIcon } from 'lucide-react';
+import type { GeoData, GeoHotspot } from '@/types';
+import { useStore, timeRanges, type TimeRange } from '@/store';
+import { Globe, MapPin, AlertTriangle, Shield, ExternalLink, X, SlidersHorizontal, Map as MapIcon, Layers } from 'lucide-react';
+import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { SEVERITY, CYBER } from '@/utils/colors';
 
-// Fix for Leaflet default marker icons in Vite builds
-delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl;
+const FLAG_MAP: Record<string, string> = {
+  'US': '🇺🇸', 'CN': '🇨🇳', 'RU': '🇷🇺', 'DE': '🇩🇪', 'GB': '🇬🇧',
+  'FR': '🇫🇷', 'JP': '🇯🇵', 'BR': '🇧🇷', 'IN': '🇮🇳', 'KR': '🇰🇷',
+  'AU': '🇦🇺', 'CA': '🇨🇦', 'NL': '🇳🇱', 'IT': '🇮🇹', 'ES': '🇪🇸',
+  'IR': '🇮🇷', 'KP': '🇰🇵', 'UA': '🇺🇦', 'SE': '🇸🇪', 'NO': '🇳🇴',
+  'EU': '🇪🇺', 'OTHER': '🌐',
+};
+
+import { GeoSkeleton } from '../../components/SkeletonLoaders';
+import { TabQueryError } from '../../components/TabShell';
+
+// Fix default marker icons in React
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
 });
 
-// Region-to-coordinate mapping (center points for markers)
-const REGION_COORDS: Record<string, [number, number]> = {
-  'US': [39.8283, -98.5795],
-  'China': [35.8617, 104.1954],
-  'Europe/Russia': [55.7558, 37.6173],
-  'Japan/Korea': [36.2048, 128.5000],
-  'Other': [0, 0],
-  'EU': [50.8503, 4.9058],
-  'UK': [51.5074, -0.1278],
-  'Germany': [51.1657, 10.4515],
-  'France': [46.2276, 2.2137],
-  'Brazil': [-14.235, -51.9253],
-  'India': [20.5937, 78.9629],
-  'Australia': [-25.2744, 133.7751],
-  'Canada': [56.1304, -106.3468],
-  'Russia': [61.5240, 105.3188],
-  'Japan': [36.2048, 138.2529],
-  'South Korea': [35.9078, 127.7669],
+// Severity color mapping
+const SEVERITY_COLORS: Record<string, string> = {
+  CRITICAL: SEVERITY.CRITICAL,
+  HIGH: SEVERITY.HIGH,
+  MEDIUM: SEVERITY.MEDIUM,
+  LOW: SEVERITY.LOW,
 };
 
-// ISO country code to coordinates
-const COUNTRY_TO_COORDS: Record<string, [number, number]> = {
-  'US': [39.8283, -98.5795],
-  'RU': [61.5240, 105.3188],
-  'DE': [51.1657, 10.4515],
-  'GB': [51.5074, -0.1278],
-  'FR': [46.2276, 2.2137],
-  'JP': [36.2048, 138.2529],
-  'BR': [-14.235, -51.9253],
-  'IN': [20.5937, 78.9629],
-  'KR': [35.9078, 127.7669],
-  'AU': [-25.2744, 133.7751],
-  'CA': [56.1304, -106.3468],
-  'NL': [52.1326, 5.2913],
-  'IT': [41.8719, 12.5674],
-  'ES': [40.4637, -3.7492],
-  'IR': [32.4279, 53.6880],
-  'KP': [40.3399, 127.5101],
-  'UA': [48.3794, 31.1656],
-  'SE': [60.1282, 18.6435],
-  'NO': [60.4720, 8.4689],
-  'CN': [35.8617, 104.1954],
-};
-
-function getCoords(country: string): [number, number] {
-  if (REGION_COORDS[country]) return REGION_COORDS[country];
-  if (COUNTRY_TO_COORDS[country]) return COUNTRY_TO_COORDS[country];
-  // Extract ISO-like part from compound names (e.g., "Europe/Russia")
-  const parts = country.split('/');
-  for (const part of parts) {
-    if (REGION_COORDS[part]) return REGION_COORDS[part];
-    if (COUNTRY_TO_COORDS[part]) return COUNTRY_TO_COORDS[part];
-  }
-  // Fallback scatter for unknown regions
-  const hash = country.split('').reduce((a, ch) => a + ch.charCodeAt(0), 0);
-  return [Math.sin(hash) * 25, Math.cos(hash * 1.3) * 40];
+// Calculate marker radius based on event count (logarithmic scale)
+function markerRadius(count: number): number {
+  if (count <= 0) return 5;
+  const minR = 6;
+  const maxR = 40;
+  const logMin = Math.log10(1);
+  const logMax = Math.log10(50000);
+  const logVal = Math.log10(Math.max(count, 1));
+  return minR + ((logVal - logMin) / (logMax - logMin)) * (maxR - minR);
 }
 
-// ── Leaflet dark-theme CSS overrides ──
-const LeafletStyles = () => (
-  <style dangerouslySetInnerHTML={{ __html: `
-    .leaflet-control-attribution {
-      background: rgba(10, 14, 23, 0.85) !important;
-      color: #64748b !important;
-      backdrop-filter: blur(8px);
-    }
-    .leaflet-control-attribution a {
-      color: #00e5ff !important;
-    }
-    .leaflet-bar a {
-      background: rgba(17, 24, 39, 0.9) !important;
-      color: #00e5ff !important;
-      border-bottom-color: #1e293b !important;
-      backdrop-filter: blur(8px);
-    }
-    .leaflet-bar a:hover {
-      background: rgba(0, 229, 255, 0.15) !important;
-      color: #00e5ff !important;
-    }
-    .leaflet-bar {
-      border: 1px solid #1e293b !important;
-      border-radius: 8px !important;
-      overflow: hidden;
-    }
-    .leaflet-popup-content-wrapper {
-      background: rgba(17, 24, 39, 0.95) !important;
-      color: #e2e8f0 !important;
-      border: 1px solid #1e293b !important;
-      border-radius: 10px !important;
-      box-shadow: 0 0 20px rgba(0, 229, 255, 0.15), 0 8px 32px rgba(0, 0, 0, 0.4) !important;
-      backdrop-filter: blur(12px);
-    }
-    .leaflet-popup-tip {
-      background: rgba(17, 24, 39, 0.95) !important;
-      border: 1px solid #1e293b !important;
-    }
-    .leaflet-popup-close-button {
-      color: #64748b !important;
-    }
-    .leaflet-popup-close-button:hover {
-      color: #00e5ff !important;
-    }
-    .leaflet-container {
-      background: #0a0e17 !important;
-    }
-    .geo-tooltip {
-      background: rgba(17, 24, 39, 0.9) !important;
-      border: 1px solid #1e293b !important;
-      color: #e2e8f0 !important;
-      border-radius: 6px !important;
-      padding: 4px 8px !important;
-      font-family: 'JetBrains Mono', monospace !important;
-      font-size: 11px !important;
-      box-shadow: 0 0 10px rgba(0, 229, 255, 0.2) !important;
-    }
-    .geo-tooltip::before {
-      border-top-color: rgba(17, 24, 39, 0.9) !important;
-    }
-  ` }} />
-);
+// Country code to flag emoji
+function countryFlag(code: string): string {
+  return FLAG_MAP[code] || '🌐';
+}
 
-// ── Map component ──
-function MapLayer({ data }: { data: GeoData }) {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstance = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.CircleMarker[]>([]);
+// ─────────────────────────────────────────────
+// GeoHeatmapLayer — Canvas-based heatmap overlay
+// ─────────────────────────────────────────────
+// Renders radial gradients (teal→pink) at each hotspot position.
+// Supports world-wrap for hotspots near the map edges.
 
-  // Initialize map once
+class GeoHeatmapLayer extends L.Layer {
+  private canvas: HTMLCanvasElement | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
+  private pane: HTMLElement | null = null;
+  private map: L.Map | null = null;
+  private _hotspots: GeoHotspot[] = [];
+  private _radius: number = 100;
+  private _intensity: number = 0.6;
+  private _animFrame: number = 0;
+
+  // Teal (#00e5ff) → Pink (#ff006e) interpolation
+  private heatColor(t: number): [number, number, number] {
+    const r = Math.round(0 + t * 255);
+    const g = Math.round(229 * (1 - t));
+    const b = Math.round(255 * (1 - t) + 110 * t);
+    return [r, g, b];
+  }
+
+  onAdd(map: L.Map): this {
+    this.map = map;
+
+    const pane = map.createPane('heatmapPane');
+    pane.style.zIndex = '650';
+    pane.style.pointerEvents = 'none';
+    this.pane = pane;
+
+    const canvas = document.createElement('canvas');
+    canvas.style.position = 'absolute';
+    canvas.style.left = '0';
+    canvas.style.top = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.transition = 'opacity 0.3s ease';
+    pane.appendChild(canvas);
+    this.canvas = canvas;
+
+    this.ctx = canvas.getContext('2d', { alpha: true });
+
+    map.on('moveend zoomend resize', this._redraw, this);
+    this._redraw();
+
+    return this;
+  }
+
+  onRemove(map: L.Map): void {
+    map.off('moveend zoomend resize', this._redraw, this);
+    if (this._animFrame) cancelAnimationFrame(this._animFrame);
+    if (this.pane && this.canvas) {
+      this.pane.removeChild(this.canvas);
+    }
+    this.canvas = null;
+    this.ctx = null;
+    this.pane = null;
+    this.map = null;
+  }
+
+  // Public API: update data / radius / intensity
+  update(hotspots: GeoHotspot[], radius: number, intensity: number): void {
+    this._hotspots = hotspots;
+    this._radius = radius;
+    this._intensity = intensity;
+    this._redraw();
+  }
+
+  setOpacity(opacity: number): void {
+    if (this.canvas) {
+      this.canvas.style.opacity = String(opacity);
+    }
+  }
+
+  private _redraw = (): void => {
+    const map = this.map;
+    const canvas = this.canvas;
+    const ctx = this.ctx;
+    if (!map || !canvas || !ctx) return;
+
+    const size = map.getSize();
+    canvas.width = size.x;
+    canvas.height = size.y;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const hotspots = this._hotspots;
+    if (hotspots.length === 0) return;
+
+    // Find max count for normalization
+    const maxCount = Math.max(...hotspots.map(h => h.count), 1);
+
+    // Sort by count (draw low-density first so high-density overlays)
+    const sorted = [...hotspots].sort((a, b) => a.count - b.count);
+
+    // World width in pixels (for wrapping)
+    const worldPx = size.x;
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (const h of sorted) {
+      // Normalize count → [0, 1] → color
+      const t = h.count / maxCount;
+      const [r, g, b] = this.heatColor(t);
+      const alpha = this._intensity;
+
+      // Draw at primary position and wrapped copies
+      const center = map.latLngToContainerPoint([h.lat, h.lon]);
+
+      // Draw up to 3 copies to handle wrapping at map edges
+      for (let i = -1; i <= 1; i++) {
+        const px = center.x + i * worldPx;
+
+        // Skip if entirely outside viewport
+        if (px + this._radius < 0 || px - this._radius > canvas.width) continue;
+        if (center.y + this._radius < 0 || center.y - this._radius > canvas.height) continue;
+
+        const gradient = ctx.createRadialGradient(px, center.y, 0, px, center.y, this._radius);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha})`);
+        gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${alpha * 0.5})`);
+        gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(px, center.y, this._radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+  };
+}
+
+// View mode type
+type GeoViewMode = 'markers' | 'heatmap' | 'both';
+
+// ─────────────────────────────────────────────
+// GeoMap component — Leaflet map + markers + heatmap layer
+// ─────────────────────────────────────────────
+function GeoMap({
+  hotspots,
+  onHotspotClick,
+  viewMode,
+  heatmapRadius,
+  heatmapIntensity,
+}: {
+  hotspots: GeoHotspot[];
+  onHotspotClick: (h: GeoHotspot) => void;
+  viewMode: GeoViewMode;
+  heatmapRadius: number;
+  heatmapIntensity: number;
+}) {
+  const containersRef = useRef<HTMLDivElement>(null);
+  const circlesRef = useRef<L.CircleMarker[]>([]);
+  const pulseCirclesRef = useRef<L.CircleMarker[]>([]);
+  const pulseIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const heatmapRef = useRef<GeoHeatmapLayer | null>(null);
+  const prevViewModeRef = useRef<GeoViewMode>('markers');
+
+  // Initialize map
   useEffect(() => {
-    if (!mapRef.current || mapInstance.current) return;
+    if (!containersRef.current || mapInstanceRef.current) return;
 
-    const map = L.map(mapRef.current, {
+    const map = L.map(containersRef.current, {
       center: [30, 10] as [number, number],
-      zoom: 3,
+      zoom: 2,
       minZoom: 2,
-      maxZoom: 8,
-      zoomControl: false,
+      maxZoom: 10,
+      zoomControl: true,
       attributionControl: true,
       worldCopyJump: true,
     });
 
-    // CartoDB Dark Matter tiles - no API key needed
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
       subdomains: 'abcd',
-      maxZoom: 19,
+      maxZoom: 20,
     }).addTo(map);
 
-    // Zoom control top-right
-    L.control.zoom({ position: 'topright' }).addTo(map);
-
-    mapInstance.current = map;
+    mapInstanceRef.current = map;
 
     return () => {
       map.remove();
-      mapInstance.current = null;
+      mapInstanceRef.current = null;
     };
   }, []);
 
-  // Update markers on data change
+  // Manage heatmap layer creation/destruction
   useEffect(() => {
-    if (!mapInstance.current || !data?.countries?.length) return;
+    const map = mapInstanceRef.current;
+    if (!map) return;
 
-    const map = mapInstance.current;
-    const maxCount = Math.max(...data.countries.map(c => c.count));
-    const total = data.countries.reduce((s, c) => s + c.count, 0);
+    const needsHeatmap = viewMode === 'heatmap' || viewMode === 'both';
+    const hadHeatmap = heatmapRef.current !== null;
 
-    // Clear old markers
-    markersRef.current.forEach(m => m.remove());
-    markersRef.current = [];
+    if (needsHeatmap && !hadHeatmap) {
+      const layer = new GeoHeatmapLayer();
+      layer.addTo(map);
+      layer.update(hotspots, heatmapRadius, heatmapIntensity);
+      // Animate in
+      layer.setOpacity(0);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          layer.setOpacity(1);
+        });
+      });
+      heatmapRef.current = layer;
+    } else if (!needsHeatmap && hadHeatmap) {
+      // Animate out, then remove
+      const layer = heatmapRef.current!;
+      layer.setOpacity(0);
+      setTimeout(() => {
+        if (heatmapRef.current === layer) {
+          layer.remove();
+          heatmapRef.current = null;
+        }
+      }, 350);
+    }
 
-    const bounds: L.LatLngTuple[] = [];
+    prevViewModeRef.current = viewMode;
+  }, [viewMode]);
 
-    data.countries
-      .filter(c => c.country !== 'Other')
-      .sort((a, b) => b.count - a.count)
-      .forEach(c => {
-        const coords = getCoords(c.country);
-        const ratio = maxCount > 0 ? c.count / maxCount : 0;
-        const radius = 6 + ratio * 34;
+  // Update heatmap layer data when hotspots/radius/intensity change
+  useEffect(() => {
+    if (heatmapRef.current) {
+      heatmapRef.current.update(hotspots, heatmapRadius, heatmapIntensity);
+    }
+  }, [hotspots, heatmapRadius, heatmapIntensity]);
 
-        const circle = L.circleMarker(coords as L.LatLngExpression, {
-          radius,
-          fillColor: c.color || '#00e5ff',
-          color: c.color || '#00e5ff',
-          weight: 1.5,
-          opacity: 0.9,
-          fillOpacity: 0.35,
+  // Update heatmap layer opacity when switching between heatmap/both
+  useEffect(() => {
+    if (!heatmapRef.current) return;
+    // Both modes: heatmap always visible when layer exists
+    heatmapRef.current.setOpacity(1);
+  }, [viewMode]);
+
+  // Update markers when hotspots change
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Show/hide markers based on view mode
+    const showMarkers = viewMode === 'markers' || viewMode === 'both';
+    const markerOpacity = viewMode === 'both' ? 0.5 : 0.9;
+    const markerFillOpacity = viewMode === 'both' ? 0.2 : 0.35;
+
+    // Remove old markers and cleanup
+    circlesRef.current.forEach(c => {
+      if ((c as any)._pulseInterval) {
+        clearInterval((c as any)._pulseInterval);
+        (c as any)._pulseCircle?.remove();
+      }
+      c.remove();
+    });
+    pulseCirclesRef.current.forEach(c => c.remove());
+    pulseIntervalsRef.current.forEach(id => clearInterval(id));
+    circlesRef.current = [];
+    pulseCirclesRef.current = [];
+    pulseIntervalsRef.current = [];
+
+    if (!showMarkers) return;
+
+    hotspots.forEach(h => {
+      const color = SEVERITY_COLORS[h.severity] || SEVERITY.LOW;
+      const radius = markerRadius(h.count);
+
+      const circle = L.circleMarker([h.lat, h.lon], {
+        radius,
+        fillColor: color,
+        color: color,
+        weight: 2,
+        opacity: markerOpacity,
+        fillOpacity: markerFillOpacity,
+        bubblingMouseEvents: false,
+      }).addTo(map);
+
+      // Pulsing effect for critical/high
+      if (h.severity === 'CRITICAL' || h.severity === 'HIGH') {
+        const pulseCircle = L.circleMarker([h.lat, h.lon], {
+          radius: radius * 1.5,
+          fillColor: color,
+          color: color,
+          weight: 1,
+          opacity: 0,
+          fillOpacity: 0,
+          bubblingMouseEvents: false,
         }).addTo(map);
 
-        const share = total > 0 ? ((c.count / total) * 100).toFixed(1) : '0.0';
+        pulseCirclesRef.current.push(pulseCircle);
 
-        const popupContent = document.createElement('div');
-        popupContent.style.fontFamily = "'JetBrains Mono', monospace";
-        popupContent.style.minWidth = '180px';
+        let pulseOpacity = 0;
+        let growing = true;
+        const interval = setInterval(() => {
+          pulseOpacity += growing ? 0.02 : -0.02;
+          if (pulseOpacity >= 0.15) growing = false;
+          if (pulseOpacity <= 0) growing = true;
+          pulseCircle.setStyle({
+            opacity: pulseOpacity,
+            fillOpacity: pulseOpacity * 0.5,
+          });
+        }, 50);
 
-        const nameDiv = document.createElement('div');
-        nameDiv.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:6px;';
-        nameDiv.style.color = c.color || '#00e5ff';
-        nameDiv.textContent = c.country;
-        popupContent.appendChild(nameDiv);
+        (circle as any)._pulseInterval = interval;
+        (circle as any)._pulseCircle = pulseCircle;
+        pulseIntervalsRef.current.push(interval);
+      }
 
-        const row1 = document.createElement('div');
-        row1.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;';
-        row1.innerHTML = '<span style="color:#64748b;">Events (24h)</span><span style="color:#e2e8f0;">' + c.count.toLocaleString() + '</span>';
-        popupContent.appendChild(row1);
-
-        const row2 = document.createElement('div');
-        row2.style.cssText = 'display:flex;justify-content:space-between;';
-        row2.innerHTML = '<span style="color:#64748b;">Share</span><span style="color:#00e5ff;">' + share + '%</span>';
-        popupContent.appendChild(row2);
-
-        circle.bindPopup(popupContent, { maxWidth: 300 });
-        circle.bindTooltip(c.country, {
-          permanent: false,
-          direction: 'top',
-          offset: [0, -10],
-          className: 'geo-tooltip',
+      circle.on('mouseover', () => {
+        circle.setStyle({
+          fillOpacity: viewMode === 'both' ? 0.4 : 0.6,
+          weight: 3,
+          opacity: 1,
         });
-
-        markersRef.current.push(circle);
-        bounds.push(coords);
       });
 
-    if (bounds.length > 1) {
-      map.fitBounds(L.latLngBounds(bounds).pad(0.3), { animate: true, duration: 0.8 });
+      circle.on('mouseout', () => {
+        circle.setStyle({
+          fillOpacity: markerFillOpacity,
+          weight: 2,
+          opacity: markerOpacity,
+        });
+      });
+
+      circle.on('click', () => {
+        onHotspotClick(h);
+        map.flyTo([h.lat, h.lon], Math.max(map.getZoom(), 5), { duration: 1 });
+      });
+
+      circlesRef.current.push(circle);
+    });
+
+    // Fit bounds if we have hotspots
+    if (hotspots.length > 0 && showMarkers) {
+      const group = L.featureGroup(circlesRef.current);
+      map.flyToBounds(group.getBounds().pad(0.3), { duration: 1.5 });
     }
-  }, [data]);
 
-  return (
-    <div className="relative w-full h-full rounded-xl overflow-hidden border border-cyber-border">
-      <div ref={mapRef} className="w-full h-full" />
-      <div className="pointer-events-none absolute inset-0 scanlines opacity-10" style={{ zIndex: 1000 }} />
-    </div>
-  );
+    // Cleanup on unmount
+    return () => {
+      circlesRef.current.forEach(c => {
+        if ((c as any)._pulseInterval) {
+          clearInterval((c as any)._pulseInterval);
+          (c as any)._pulseCircle?.remove();
+        }
+        c.remove();
+      });
+      pulseCirclesRef.current.forEach(c => c.remove());
+      pulseIntervalsRef.current.forEach(id => clearInterval(id));
+      circlesRef.current = [];
+      pulseCirclesRef.current = [];
+      pulseIntervalsRef.current = [];
+    };
+  }, [hotspots, onHotspotClick, viewMode]);
+
+  return <div ref={containersRef} className="w-full h-full rounded-lg overflow-hidden" />;
 }
 
-// ── Stats Bar ──
-function GeoStats({ countries }: { countries: Array<{ country: string; count: number; color: string }> }) {
-  const total = countries.reduce((s, c) => s + c.count, 0);
-  const top = countries[0];
-  const unique = countries.length;
+// Severity filter option type
+type SeverityFilter = '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-      {[
-        { label: 'Total Events', value: total.toLocaleString(), icon: Globe },
-        { label: 'Top Source', value: top?.country || '\u2014', icon: MapIcon },
-        { label: 'Top Count', value: top?.count.toLocaleString() || '0', icon: Globe },
-        { label: 'Unique Regions', value: unique.toString(), icon: MapIcon },
-      ].map(({ label, value, icon: Icon }) => (
-        <div key={label} className="cyber-card p-3 scanlines">
-          <div className="flex items-center gap-2 mb-1">
-            <Icon size={14} className="text-cyber-textMuted" />
-            <span className="text-xs text-cyber-textMuted uppercase tracking-wider">{label}</span>
-          </div>
-          <div className="text-lg font-bold font-mono truncate" style={{ color: '#e2e8f0' }}>{value}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Top Sources sidebar ──
-function TopSources({ countries }: { countries: Array<{ country: string; count: number; color: string }> }) {
-  const total = countries.reduce((s, c) => s + c.count, 0);
-  const topCountries = countries.slice(0, 15);
-
-  return (
-    <div className="cyber-card p-4 scanlines h-full overflow-y-auto">
-      <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-        <Globe size={14} className="text-cyber-accent" />
-        Top Sources
-      </h3>
-      <div className="space-y-2">
-        {topCountries.map((c, i) => {
-          const pct = total > 0 ? (c.count / total) * 100 : 0;
-          return (
-            <div key={c.country} className="flex items-center gap-3">
-              <span className="text-xs font-mono text-cyber-textDim w-4 text-right">{i + 1}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium truncate" title={c.country}>{c.country}</span>
-                  <span className="text-xs font-mono text-cyber-textMuted ml-2">{c.count.toLocaleString()}</span>
-                </div>
-                <div className="cyber-progress-track h-1.5">
-                  <div
-                    className="cyber-progress-fill h-1.5 rounded-full transition-all"
-                    style={{
-                      width: `${pct}%`,
-                      background: `linear-gradient(90deg, ${c.color}, ${c.color}80)`,
-                      boxShadow: `0 0 6px ${c.color}40`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Main Tab ──
+// ─────────────────────────────────────────────
+// GeoTab — Main component with controls
+// ─────────────────────────────────────────────
 export default function GeoTab() {
+  const timeRange = useStore(s => s.timeRange);
+  const hours = timeRanges[timeRange as TimeRange]?.hours ?? 24;
+
   const { data, isLoading, isError, error, refetch } = useQuery<GeoData>({
-    queryKey: ['geo'],
-    queryFn: api.geo,
+    queryKey: ['geo', hours],
+    queryFn: () => api.geo(hours),
     refetchInterval: 60000,
   });
 
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center animate-pulse">
-            <Globe size={16} className="text-cyber-accent" />
-          </div>
-          <h2 className="text-lg font-bold">Geographic Distribution</h2>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="cyber-card p-3 animate-pulse h-20 bg-cyber-panel/50" />
-          ))}
-        </div>
-        <div className="cyber-card animate-pulse h-96 bg-cyber-panel/50 rounded-xl" />
-      </div>
-    );
-  }
+  // Severity filter state
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('');
+  const [selectedHotspot, setSelectedHotspot] = useState<GeoHotspot | null>(null);
+  const [showSidebar, setShowSidebar] = useState(true);
 
-  if (isError && error) {
-    return (
-      <div className="cyber-card p-8 text-center">
-        <Globe size={32} className="mx-auto text-cyber-red mb-3" />
-        <h3 className="text-lg font-bold text-cyber-red mb-2">Failed to load geographic data</h3>
-        <p className="text-sm text-cyber-textMuted mb-4">{error.message}</p>
-        <button
-          onClick={() => refetch()}
-          className="px-4 py-2 rounded-lg bg-cyber-accent/10 border border-cyber-accent/30 text-cyber-accent hover:bg-cyber-accent/20 transition-all"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
+  // Heatmap state
+  const [viewMode, setViewMode] = useState<GeoViewMode>('markers');
+  const [heatmapRadius, setHeatmapRadius] = useState(120);
+  const [heatmapIntensity, setHeatmapIntensity] = useState(0.6);
+  const [showControls, setShowControls] = useState(false);
 
-  if (!data?.countries?.length) {
-    return (
-      <div className="cyber-card p-8 text-center">
-        <Globe size={32} className="mx-auto text-cyber-textMuted mb-3" />
-        <h3 className="text-lg font-bold mb-2">No geographic data</h3>
-        <p className="text-sm text-cyber-textMuted">No country-level event data available yet.</p>
-      </div>
-    );
-  }
+  const hotspots = data?.hotspots || [];
+  const topCountries = data?.countries?.slice(0, 20) || [];
+  const totalEvents = topCountries.reduce((s, c) => s + c.count, 0);
+
+  // Filtered hotspots
+  const filteredHotspots = useMemo(() => {
+    if (!severityFilter) return hotspots;
+    return hotspots.filter(h => h.severity === severityFilter);
+  }, [hotspots, severityFilter]);
+
+  // Stats
+  const severityStats = useMemo(() => {
+    const stats = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    hotspots.forEach(h => {
+      stats[h.severity] = (stats[h.severity] || 0) + 1;
+    });
+    return stats;
+  }, [hotspots]);
+
+  const handleHotspotClick = useCallback((h: GeoHotspot) => {
+    setSelectedHotspot(h);
+  }, []);
+
+  if (isLoading) return <GeoSkeleton />;
+  if (isError && error) return <TabQueryError error={error} isError={isError} onRetry={refetch} tabName="Geography" />;
 
   return (
-    <div className="space-y-4 h-full flex flex-col">
-      <LeafletStyles />
-
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
             <Globe size={16} className="text-cyber-accent" />
           </div>
           <h2 className="text-lg font-bold">Geographic Distribution</h2>
           <span className="text-xs text-cyber-textMuted font-mono">
-            {data.countries.reduce((s, c) => s + c.count, 0).toLocaleString()} total events
+            {totalEvents.toLocaleString()} total events · {hotspots.length} sources
           </span>
         </div>
+        <div className="flex items-center gap-2">
+          {/* View mode toggle */}
+          <div className="flex items-center bg-cyber-darker border border-cyber-border rounded-lg overflow-hidden">
+            {(['markers', 'heatmap', 'both'] as GeoViewMode[]).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`px-3 py-1.5 text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  viewMode === mode
+                    ? 'bg-cyber-accent/20 text-cyber-accent border-r border-cyber-border last:border-r-0'
+                    : 'text-cyber-textMuted hover:text-cyber-text hover:bg-cyber-panel/50 border-r border-cyber-border last:border-r-0'
+                }`}
+                title={mode === 'markers' ? 'Show markers only' : mode === 'heatmap' ? 'Show heatmap only' : 'Show both'}
+              >
+                {mode === 'markers' && <MapIcon size={12} />}
+                {mode === 'heatmap' && <Layers size={12} />}
+                {mode === 'both' && <Layers size={12} />}
+                <span className="hidden sm:inline capitalize">{mode}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="text-xs px-2 py-1 rounded border border-cyber-border text-cyber-textMuted hover:text-cyber-text hover:border-cyber-accent transition-all"
+          >
+            {showSidebar ? 'Hide' : 'Show'} Details
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <GeoStats countries={data.countries} />
+      <div className={`grid gap-4 ${showSidebar ? 'grid-cols-1 lg:grid-cols-4' : 'grid-cols-1'}`}>
+        {/* Map area */}
+        <div className={`${showSidebar ? 'lg:col-span-3' : 'col-span-1'} cyber-card scanlines overflow-hidden`} style={{ minHeight: '500px' }}>
+          <div className="h-[500px] lg:h-[600px] xl:h-[700px] relative">
+            {filteredHotspots.length > 0 ? (
+              <GeoMap
+                hotspots={filteredHotspots}
+                onHotspotClick={handleHotspotClick}
+                viewMode={viewMode}
+                heatmapRadius={heatmapRadius}
+                heatmapIntensity={heatmapIntensity}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-cyber-textMuted">
+                <div className="text-center">
+                  <Globe size={48} className="mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">No hotspot data for this filter</p>
+                  {severityFilter && (
+                    <button
+                      onClick={() => setSeverityFilter('')}
+                      className="mt-2 text-xs text-cyber-accent hover:underline"
+                    >
+                      Clear filter
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
-      {/* Map + sidebar layout */}
-      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
-        {/* Map container */}
-        <div className="flex-1 min-h-[400px] lg:min-h-0 relative">
-          <MapLayer data={data} />
+            {/* Heatmap controls overlay */}
+            {(viewMode === 'heatmap' || viewMode === 'both') && (
+              <div className="absolute top-4 right-4 z-[1000]">
+                <button
+                  onClick={() => setShowControls(!showControls)}
+                  className="bg-cyber-darker/90 backdrop-blur-sm rounded-lg p-2 border border-cyber-border hover:border-cyber-accent transition-all text-cyber-textMuted hover:text-cyber-accent"
+                  title="Heatmap settings"
+                >
+                  <SlidersHorizontal size={16} />
+                </button>
+                {showControls && (
+                  <div className="absolute top-0 right-0 mt-2 bg-cyber-darker/95 backdrop-blur-sm rounded-lg p-4 border border-cyber-border w-56 z-[1001]">
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs text-cyber-textMuted font-mono">Radius</label>
+                          <span className="text-xs text-cyber-accent font-mono">{heatmapRadius}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="50"
+                          max="300"
+                          step="10"
+                          value={heatmapRadius}
+                          onChange={e => setHeatmapRadius(Number(e.target.value))}
+                          className="w-full accent-cyber-accent"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs text-cyber-textMuted font-mono">Intensity</label>
+                          <span className="text-xs text-cyber-accent font-mono">{heatmapIntensity.toFixed(1)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="1.0"
+                          step="0.1"
+                          value={heatmapIntensity}
+                          onChange={e => setHeatmapIntensity(Number(e.target.value))}
+                          className="w-full accent-cyber-accent"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Severity legend overlay */}
+            {(viewMode === 'markers' || viewMode === 'both') && (
+              <div className="absolute bottom-4 left-4 bg-cyber-darker/90 backdrop-blur-sm rounded-lg p-3 border border-cyber-border z-[1000]">
+                <div className="text-xs font-semibold text-cyber-textMuted uppercase tracking-wider mb-2">Severity</div>
+                <div className="space-y-1">
+                  {(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const).map(sev => (
+                    <div key={sev} className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: SEVERITY_COLORS[sev] }} />
+                      <span className="text-xs text-cyber-text">{sev}</span>
+                      <span className="text-xs text-cyber-textMuted font-mono">({severityStats[sev]})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Heatmap density legend overlay */}
+            {(viewMode === 'heatmap' || viewMode === 'both') && (
+              <div className="absolute bottom-4 left-4 bg-cyber-darker/90 backdrop-blur-sm rounded-lg p-3 border border-cyber-border z-[1000]">
+                <div className="text-xs font-semibold text-cyber-textMuted uppercase tracking-wider mb-2">Event Density</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-cyber-textMuted font-mono">Low</span>
+                  <div
+                    className="h-3 w-32 rounded-full"
+                    style={{
+                      background: `linear-gradient(90deg, ${CYBER.accent}, ${CYBER.pink})`,
+                    }}
+                  />
+                  <span className="text-[10px] text-cyber-textMuted font-mono">High</span>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between text-[10px] text-cyber-textMuted font-mono">
+                  <span>Radius: {heatmapRadius}px</span>
+                  <span>Intensity: {heatmapIntensity.toFixed(1)}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Active filter indicator */}
+            {severityFilter && (
+              <div className="absolute top-4 left-4 bg-cyber-darker/90 backdrop-blur-sm rounded-lg px-3 py-2 border border-cyber-accent/30 z-[1000] flex items-center gap-2">
+                <span className="text-xs text-cyber-accent font-medium">Filter: {severityFilter}</span>
+                <button
+                  onClick={() => setSeverityFilter('')}
+                  className="text-cyber-textMuted hover:text-cyber-text"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
+            {/* Active view mode indicator */}
+            {viewMode !== 'markers' && (
+              <div className="absolute top-4 left-4 bg-cyber-darker/90 backdrop-blur-sm rounded-lg px-3 py-2 border border-cyber-accent/30 z-[1000] flex items-center gap-2">
+                <Layers size={14} className="text-cyber-accent" />
+                <span className="text-xs text-cyber-accent font-medium capitalize">{viewMode} view</span>
+                <button
+                  onClick={() => setViewMode('markers')}
+                  className="text-cyber-textMuted hover:text-cyber-text"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="w-full lg:w-72 xl:w-80 shrink-0">
-          <TopSources countries={data.countries} />
-        </div>
+        {/* Sidebar - Details panel */}
+        {showSidebar && (
+          <div className="lg:col-span-1 space-y-4">
+            {/* Severity filter */}
+            <div className="cyber-card p-4 scanlines">
+              <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-3">
+                Filter by Severity
+              </h3>
+              <div className="space-y-1">
+                <button
+                  onClick={() => setSeverityFilter('')}
+                  className={`w-full text-left px-3 py-2 rounded text-xs font-medium transition-all ${
+                    !severityFilter
+                      ? 'bg-cyber-accent/20 text-cyber-accent border border-cyber-accent/30'
+                      : 'text-cyber-textMuted hover:text-cyber-text hover:bg-cyber-panel/50 border border-transparent'
+                  }`}
+                >
+                  All ({hotspots.length})
+                </button>
+                {(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const).map(sev => (
+                  <button
+                    key={sev}
+                    onClick={() => setSeverityFilter(severityFilter === sev ? '' : sev)}
+                    className={`w-full text-left px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-2 ${
+                      severityFilter === sev
+                        ? 'border border-current'
+                        : 'text-cyber-textMuted hover:text-cyber-text hover:bg-cyber-panel/50 border border-transparent'
+                    }`}
+                    style={severityFilter === sev ? { color: SEVERITY_COLORS[sev], borderColor: SEVERITY_COLORS[sev] + '40' } : {}}
+                  >
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: SEVERITY_COLORS[sev] }} />
+                    <span>{sev}</span>
+                    <span className="ml-auto font-mono opacity-60">{severityStats[sev]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Selected hotspot detail */}
+            {selectedHotspot && (
+              <div className="cyber-card p-4 scanlines">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider flex items-center gap-2">
+                    <MapPin size={14} /> Source Detail
+                  </h3>
+                  <button
+                    onClick={() => setSelectedHotspot(null)}
+                    className="text-cyber-textMuted hover:text-cyber-text"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-cyber-textMuted">Source IP</span>
+                    <span className="font-mono text-cyber-text">{selectedHotspot.src_ip}</span>
+                  </div>
+                  {selectedHotspot.dst_ip && (
+                    <div className="flex justify-between">
+                      <span className="text-cyber-textMuted">Top Dest</span>
+                      <span className="font-mono text-cyber-text">{selectedHotspot.dst_ip}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-cyber-textMuted">Country</span>
+                    <span className="text-cyber-text">{countryFlag(selectedHotspot.country)} {selectedHotspot.country_name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-cyber-textMuted">Events</span>
+                    <span className="font-mono text-cyber-text">{selectedHotspot.count.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-cyber-textMuted">Unique Dests</span>
+                    <span className="font-mono text-cyber-text">{selectedHotspot.unique_dst}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-cyber-textMuted">Severity</span>
+                    <span
+                      className="font-medium px-2 py-0.5 rounded"
+                      style={{
+                        color: SEVERITY_COLORS[selectedHotspot.severity],
+                        background: `${SEVERITY_COLORS[selectedHotspot.severity]}18`,
+                        border: `1px solid ${SEVERITY_COLORS[selectedHotspot.severity]}30`,
+                      }}
+                    >
+                      {selectedHotspot.severity}
+                    </span>
+                  </div>
+                  {selectedHotspot.interface && (
+                    <div className="flex justify-between">
+                      <span className="text-cyber-textMuted">Interface</span>
+                      <span className="font-mono text-cyber-text">{selectedHotspot.interface}</span>
+                    </div>
+                  )}
+                  {selectedHotspot.action && (
+                    <div className="flex justify-between">
+                      <span className="text-cyber-textMuted">Action</span>
+                      <span className="font-mono text-cyber-text uppercase">{selectedHotspot.action}</span>
+                    </div>
+                  )}
+                  {selectedHotspot.attack_type && (
+                    <div className="flex justify-between">
+                      <span className="text-cyber-textMuted">Threat</span>
+                      <span className="font-mono text-cyber-orange">{selectedHotspot.attack_type}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-cyber-textMuted">Coords</span>
+                    <span className="font-mono text-cyber-textMuted">{selectedHotspot.lat.toFixed(2)}, {selectedHotspot.lon.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Top sources list */}
+            <div className="cyber-card p-4 scanlines">
+              <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-3 flex items-center gap-2">
+                <AlertTriangle size={14} /> Top Sources
+              </h3>
+              <div className="space-y-2">
+                {filteredHotspots.slice(0, 10).map((h, i) => (
+                  <button
+                    key={h.ip}
+                    onClick={() => setSelectedHotspot(h)}
+                    className={`w-full text-left cyber-card p-2 rounded cursor-pointer transition-all hover:border-cyber-accent/50 ${
+                      selectedHotspot?.ip === h.ip ? 'border-cyber-accent/50' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-cyber-textMuted font-mono w-4">{i + 1}</span>
+                      <span className="text-sm">{countryFlag(h.country)}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-mono truncate text-cyber-text">{h.src_ip}</div>
+                        <div className="text-xs text-cyber-textMuted">{h.count.toLocaleString()} events</div>
+                      </div>
+                      <span
+                        className="text-xs font-medium px-1.5 py-0.5 rounded"
+                        style={{
+                          color: SEVERITY_COLORS[h.severity],
+                          background: `${SEVERITY_COLORS[h.severity]}15`,
+                        }}
+                      >
+                        {h.severity.charAt(0)}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Country breakdown (below map) */}
+      {showSidebar && (
+        <div className="cyber-card p-4 scanlines">
+          <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
+            <Shield size={14} /> Country Breakdown
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {topCountries.map((c) => {
+              const pct = totalEvents > 0 ? (c.count / totalEvents) * 100 : 0;
+              return (
+                <div key={c.country} className="cyber-card p-3" style={{ borderLeft: `3px solid ${c.color}` }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-lg">{FLAG_MAP[c.flag] || countryFlag(c.country) || '🌐'}</span>
+                    <span className="text-xs font-medium">{c.country}</span>
+                  </div>
+                  <div className="text-xs font-mono text-cyber-textMuted mb-1">{c.count.toLocaleString()} events</div>
+                  <div className="cyber-progress-track">
+                    <div
+                      className="cyber-progress-fill"
+                      style={{
+                        width: `${pct}%`,
+                        background: `linear-gradient(90deg, ${c.color}, ${c.color}80)`,
+                        boxShadow: `0 0 8px ${c.color}40`,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

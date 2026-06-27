@@ -251,7 +251,7 @@ export default function HeatmapTab() {
         </div>
       </div>
 
-      <div className="cyber-card p-4 scanlines relative">
+      <div className="cyber-card p-4 relative">
         <canvas
           ref={canvasRef}
           className="w-full h-auto rounded cursor-crosshair"

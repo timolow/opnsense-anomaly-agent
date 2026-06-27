@@ -62,7 +62,7 @@ export default function LogsQueryTab() {
       </div>
 
       {/* Search Form */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
           <div>
             <label className="text-xs text-cyber-textMuted block mb-1">Source IP</label>
@@ -101,7 +101,7 @@ export default function LogsQueryTab() {
       </div>
 
       {/* Results */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="cyber-skeleton w-8 h-8 animate-spin rounded-full border-2 border-cyber-border border-t-cyber-accent" />

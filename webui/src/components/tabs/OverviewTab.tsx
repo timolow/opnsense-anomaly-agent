@@ -96,7 +96,7 @@ function TrafficSummary({ stats, timelineData }: { stats: StatsData; timelineDat
       {/* Top section: large events number + sparkline */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <div className="lg:col-span-1 flex flex-col justify-center">
-          <div className="text-4xl font-bold font-mono text-neon-cyan" style={{ textShadow: '0 0 30px rgba(0,255,213,0.4)' }}>
+          <div className="text-4xl font-bold font-mono text-cyber-accent">
             {(stats.events_24h || 0).toLocaleString()}
           </div>
           <div className="text-sm text-cyber-textMuted mt-1">Total Events (24h)</div>
@@ -129,7 +129,7 @@ function TrafficSummary({ stats, timelineData }: { stats: StatsData; timelineDat
         </div>
         <div className="rounded-lg p-3 text-center" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.2)' }}>
           <Network size={16} className="mx-auto mb-1" style={{ color: '#94a3b8' }} />
-          <div className="text-xl font-bold font-mono text-neon-cyan">{stats.unique_ips?.toLocaleString() || '0'}</div>
+          <div className="text-xl font-bold font-mono text-cyber-accent">{stats.unique_ips?.toLocaleString() || '0'}</div>
           <div className="text-[10px] uppercase tracking-wider text-cyber-textMuted mt-0.5">Unique IPs</div>
           {sparkIps && sparkIps.length > 1 && (
             <Sparkline data={sparkIps} color="#06b6d4" height={28} width="100%" />
@@ -227,9 +227,9 @@ function ThreatSummary({ data }: { data: StatsData }) {
           key={t.label}
           className="cyber-card p-4 cyber-card-hover cursor-pointer group"
           onClick={() => handleClick(t.sev)}
-          style={{ borderLeft: `3px solid ${t.border.replace('text-', 'var(--color-')}` }}
+          style={{ borderLeft: `3px solid var(--color-${t.label.toLowerCase()})` }}
         >
-          <div className={`text-2xl font-bold font-mono ${t.color}`} style={{ textShadow: `0 0 15px ${t.color.includes('red') ? 'rgba(255,23,68,0.5)' : t.color.includes('orange') ? 'rgba(255,120,0,0.5)' : t.color.includes('yellow') ? 'rgba(255,190,11,0.5)' : 'rgba(0,255,136,0.5)'}` }}>
+          <div className={`text-2xl font-bold font-mono ${t.color}`}>
             {t.value}
           </div>
           <div className="text-xs font-semibold uppercase tracking-wider text-cyber-textMuted mt-1">{t.label}</div>
@@ -318,12 +318,12 @@ function BaselineDeviationsPanel({ data }: { data: BaselineDeviationsData }) {
               style={{ borderLeft: `3px solid ${style.border}`, background: style.bg }}
             >
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium truncate max-w-[60%] group-hover:text-neon-cyan transition-colors">
+                <span className="text-sm font-medium truncate max-w-[60%] group-hover:text-cyber-accent transition-colors">
                   {d.rule_name || d.rule}
                 </span>
                 <span
                   className="text-lg font-bold font-mono"
-                  style={{ color: style.color, textShadow: `0 0 12px ${style.glow}` }}
+                  style={{ color: style.color }}
                 >
                   {d.deviation}x
                 </span>
@@ -393,7 +393,7 @@ function WhatChangedPanel({ data, onDismiss }: { data: WhatChangedData; onDismis
   if (!data.first_time && totalItems === 0 && data.new_events === 0 && data.new_blocked === 0) {
     return (
       <div className="cyber-card p-4 relative">
-        <button onClick={onDismiss} className="absolute top-3 right-3 text-cyber-textMuted hover:text-neon-cyan transition-colors">
+        <button onClick={onDismiss} className="absolute top-3 right-3 text-cyber-textMuted hover:text-cyber-accent transition-colors">
           <X size={14} />
         </button>
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-2 flex items-center gap-2">
@@ -414,8 +414,8 @@ function WhatChangedPanel({ data, onDismiss }: { data: WhatChangedData; onDismis
   };
 
   return (
-    <div className="cyber-card p-4 relative" style={{ borderTop: '2px solid var(--color-neon-cyan)' }}>
-      <button onClick={onDismiss} className="absolute top-3 right-3 text-cyber-textMuted hover:text-neon-cyan transition-colors">
+    <div className="cyber-card p-4 relative">
+      <button onClick={onDismiss} className="absolute top-3 right-3 text-cyber-textMuted hover:text-cyber-accent transition-colors">
         <X size={14} />
       </button>
       <button
@@ -445,7 +445,7 @@ function WhatChangedPanel({ data, onDismiss }: { data: WhatChangedData; onDismis
           {/* Summary stats row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div className="bg-cyber-bg/50 rounded-lg p-3 text-center">
-              <div className="text-xl font-bold font-mono text-neon-cyan">{data.new_events.toLocaleString()}</div>
+              <div className="text-xl font-bold font-mono text-cyber-accent">{data.new_events.toLocaleString()}</div>
               <div className="text-xs text-cyber-textMuted">New Events</div>
             </div>
             <div className="bg-cyber-bg/50 rounded-lg p-3 text-center">
@@ -766,7 +766,7 @@ export default function OverviewTab() {
       )}
       {whatChangedVisible && whatChangedLoading && (
         <div className="cyber-card p-4 flex items-center gap-3">
-          <RefreshCw size={16} className="animate-spin text-neon-cyan" />
+          <RefreshCw size={16} className="animate-spin text-cyber-accent" />
           <span className="text-sm font-mono text-cyber-textMuted">Checking what changed...</span>
         </div>
       )}

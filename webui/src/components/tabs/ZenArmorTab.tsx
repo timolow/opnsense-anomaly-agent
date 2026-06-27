@@ -57,7 +57,7 @@ export default function ZenArmorTab() {
             <BarChart3 size={16} className="text-cyber-accent" />
             <span className="cyber-stat-label">Events</span>
           </div>
-          <div className="text-2xl font-bold font-mono text-neon-cyan">{totalEvents.toLocaleString()}</div>
+          <div className="text-2xl font-bold font-mono text-cyber-accent">{totalEvents.toLocaleString()}</div>
         </div>
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="flex items-center gap-2 mb-2">
@@ -83,7 +83,7 @@ export default function ZenArmorTab() {
       </div>
 
       {/* Policies */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">
           Active Policies {policies.length === 0 && '(none detected)'}
         </h3>
@@ -120,7 +120,7 @@ export default function ZenArmorTab() {
       </div>
 
       {/* Anomalies */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Anomalies Detected</h3>
         {anomalies.length === 0 ? (
           <div className="text-center py-6 text-cyber-textMuted text-sm">No ZenArmor anomalies detected</div>

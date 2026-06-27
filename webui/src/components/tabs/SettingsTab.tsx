@@ -4,14 +4,17 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api';
-import { Settings as SettingsIcon, Save, RefreshCw } from 'lucide-react';
+import { Settings as SettingsIcon, Save, RefreshCw, Palette } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useTheme } from '@/utils/useTheme';
+import { THEMES, THEME_LIST, ThemeName } from '@/utils/themes';
 
 import { SettingsSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
 
 export default function SettingsTab() {
   const queryClient = useQueryClient();
+  const { theme, setTheme } = useTheme();
   const [settings, setSettings] = useState<Record<string, string | number>>({});
   const [saved, setSaved] = useState(false);
 
@@ -56,16 +59,82 @@ export default function SettingsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
-            <SettingsIcon size={16} className="text-cyber-accent" />
+          <div className="w-8 h-8 rounded-md" style={{ background: `color-mix(in srgb, var(--theme-accent) 10%, transparent)`, border: `1px solid color-mix(in srgb, var(--theme-accent) 20%, transparent)` }}>
+            <SettingsIcon size={16} style={{ color: 'var(--theme-accent)' }} className="flex items-center justify-center" />
           </div>
           <h2 className="text-lg font-bold">Settings</h2>
         </div>
-        {saved && <span className="text-xs text-cyber-green">✓ Saved successfully</span>}
+        {saved && <span className="text-xs" style={{ color: 'var(--theme-green)' }}>✓ Saved successfully</span>}
+      </div>
+
+      {/* Appearance — Theme Selector */}
+      <div className="cyber-card p-4">
+        <h3 className="text-sm font-semibold uppercase tracking-wider mb-4" style={{ color: 'var(--theme-text-muted)' }}>
+          <span className="flex items-center gap-2">
+            <Palette size={14} /> Appearance
+          </span>
+        </h3>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {THEME_LIST.map((t) => {
+            const isActive = theme === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTheme(t.id)}
+                className={`relative rounded-lg border-2 p-3 text-left transition-all duration-200 ${
+                  isActive ? 'ring-2 ring-offset-1 ring-offset-transparent outline outline-1' : 'hover:border-opacity-60'
+                }`}
+                style={{
+                  background: t.bg,
+                  borderColor: isActive ? t.accent : t.border,
+                  outlineColor: isActive ? t.accent : 'transparent',
+                  boxShadow: isActive ? `0 0 12px ${t.accent}33` : 'none',
+                }}
+              >
+                {/* Swatch bar */}
+                <div className="flex gap-1 mb-2">
+                  {t.swatch.map((c, i) => (
+                    <div
+                      key={i}
+                      className="h-2 flex-1 rounded-full"
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
+
+                {/* Name */}
+                <div className="font-semibold text-sm mb-0.5" style={{ color: t.text }}>
+                  {t.name}
+                  {isActive && (
+                    <span className="ml-1.5 text-xs font-mono" style={{ color: t.accent }}>
+                      ● Active
+                    </span>
+                  )}
+                </div>
+
+                {/* Preview colors row */}
+                <div className="flex gap-1 mt-1.5">
+                  {[t.accent, t.secondary, t.green].map((c, i) => (
+                    <div
+                      key={i}
+                      className="w-4 h-4 rounded-sm border"
+                      style={{
+                        background: c,
+                        borderColor: 'color-mix(in srgb, var(--theme-border) 50%, transparent)',
+                      }}
+                      title={['accent', 'secondary', 'success'][i]}
+                    />
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Detection Tuning */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Detection Tuning</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -119,7 +188,7 @@ export default function SettingsTab() {
       </button>
 
       {/*  Settings */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4"> Integration</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -143,7 +212,7 @@ export default function SettingsTab() {
       </div>
 
       {/* Data Management */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Data Management</h3>
         <div className="flex gap-3">
           <button

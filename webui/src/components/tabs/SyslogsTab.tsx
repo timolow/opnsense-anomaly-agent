@@ -67,7 +67,7 @@ export default function SyslogsTab() {
       </div>
 
       {/* Events Table */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         {filtered.length === 0 ? (
           <div className="text-center py-12 text-cyber-textMuted">
             <Filter size={32} className="mx-auto mb-2 opacity-30" />

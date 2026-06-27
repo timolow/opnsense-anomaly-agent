@@ -43,7 +43,7 @@ export default function IpFlowTab() {
         <h2 className="text-lg font-bold">IP Flow Details</h2>
       </div>
 
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
             <tr>

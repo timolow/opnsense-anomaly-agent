@@ -66,7 +66,7 @@ export default function OpnsenseTab() {
             <Cpu size={14} className="text-cyber-accent" />
             <span className="cyber-stat-label">CPU</span>
           </div>
-          <div className="text-2xl font-bold font-mono text-neon-cyan">
+          <div className="text-2xl font-bold font-mono text-cyber-accent">
             {data.cpu_usage > 0 ? `${data.cpu_usage}%` : data.cpu_usage === 0 ? '0%' : 'N/A'}
           </div>
           {data.cpu_usage < 0 && <div className="text-[10px] text-cyber-textMuted mt-1">Not exposed by OPNsense API</div>}
@@ -131,7 +131,7 @@ export default function OpnsenseTab() {
                 <Activity size={14} className="text-cyber-cyan" />
                 <span className="cyber-stat-label">Services</span>
               </div>
-              <div className="text-2xl font-bold font-mono text-neon-cyan">
+              <div className="text-2xl font-bold font-mono text-cyber-accent">
                 {data.services_running}/{data.services_total}
               </div>
               <div className="text-[10px] text-cyber-textMuted mt-1">running / total</div>
@@ -155,7 +155,7 @@ export default function OpnsenseTab() {
       )}
 
       {/* Interfaces */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Interfaces</h3>
         <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
@@ -197,7 +197,7 @@ export default function OpnsenseTab() {
 
       {/* Gateways */}
       {data.gateways.length > 0 && (
-        <div className="cyber-card p-4 scanlines">
+        <div className="cyber-card p-4">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Gateways</h3>
           <div className="cyber-table-responsive"><table className="cyber-table">
             <thead>
@@ -232,7 +232,7 @@ export default function OpnsenseTab() {
 
       {/* Services */}
       {data.services.length > 0 && (
-        <div className="cyber-card p-4 scanlines">
+        <div className="cyber-card p-4">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Services (top 10)</h3>
           <div className="cyber-table-responsive"><table className="cyber-table">
             <thead>

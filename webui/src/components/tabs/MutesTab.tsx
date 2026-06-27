@@ -119,7 +119,7 @@ export default function MutesTab() {
       </div>
 
       {/* Mutes Table */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         {filtered.length === 0 ? (
           <div className="text-center py-12 text-cyber-textMuted">No active mutes</div>
         ) : (

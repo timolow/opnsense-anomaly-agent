@@ -992,6 +992,29 @@ def query_ip_flow_clusters(expand_cluster: str = None, edge_threshold: int = 0):
     finally:
         close_db(conn)
 
+# Geo region definitions: name, code, emoji flag, center lat/lon, color, bounding box for map zoom
+GEO_REGIONS = {
+    "China":       {"code": "CN", "flag": "🇨🇳", "lat": 35.86, "lon": 104.2, "color": "#ef4444", "zoom": 4, "bbox": [18, 54, 73, 136]},
+    "US":          {"code": "US", "flag": "🇺🇸", "lat": 37.09, "lon": -95.71, "color": "#3b82f6", "zoom": 4, "bbox": [25, 49, -125, -67]},
+    "Europe/Russia": {"code": "EU", "flag": "🇷🇺", "lat": 61.5, "lon": 105.3, "color": "#f59e0b", "zoom": 3, "bbox": [35, 72, -10, 180]},
+    "Japan/Korea": {"code": "JP", "flag": "🇯🇵", "lat": 37.0, "lon": 127.5, "color": "#f43f5e", "zoom": 5, "bbox": [30, 46, 122, 146]},
+    "Other":       {"code": "--", "flag": "🌐", "lat": 0, "lon": 0, "color": "#6b7280", "zoom": 2, "bbox": [-60, 60, -180, 180]},
+}
+
+def _classify_ip_region(first_octet):
+    """Classify an IP's first octet into a region name."""
+    if first_octet is None:
+        return "Other"
+    if 114 <= first_octet <= 125:
+        return "China"
+    if first_octet in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]:
+        return "US"
+    if 5 <= first_octet < 94:
+        return "Europe/Russia"
+    if 14 <= first_octet < 62:
+        return "Japan/Korea"
+    return "Other"
+
 def query_geo():
     conn = get_db()
     if not conn: return _fallback_geo()
@@ -1010,15 +1033,27 @@ def query_geo():
         for row in rows:
             ip, cnt = row["src_ip"], row["cnt"]
             first = _parse_ip_first_octet(ip)
-            if first is None: regions["Other"] += cnt
-            elif 114 <= first <= 125: regions["China"] += cnt
-            elif first in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]: regions["US"] += cnt
-            elif 5 <= first < 94: regions["Europe/Russia"] += cnt
-            elif 14 <= first < 62: regions["Japan/Korea"] += cnt
-            else: regions["Other"] += cnt
-        flag_map = {"China": "China", "US": "US", "Europe/Russia": "Russia", "Japan/Korea": "Japan/Korea", "Other": "Other"}
-        color_map = {"China": "#ef4444", "US": "#3b82f6", "Europe/Russia": "#f59e0b", "Japan/Korea": "#f43f5e", "Other": "#6b7280"}
-        return [{"country": r, "count": c, "color": color_map.get(r, "#6b7280"), "flag": flag_map.get(r, "Other")} for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
+            region_name = _classify_ip_region(first)
+            regions[region_name] += cnt
+        
+        total = sum(regions.values())
+        result = []
+        for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True):
+            info = GEO_REGIONS.get(r, GEO_REGIONS["Other"])
+            pct = (c / total * 100) if total > 0 else 0
+            result.append({
+                "country": r,
+                "code": info["code"],
+                "flag": info["flag"],
+                "count": c,
+                "percentage": round(pct, 1),
+                "color": info["color"],
+                "lat": info["lat"],
+                "lon": info["lon"],
+                "zoom": info["zoom"],
+                "bbox": info["bbox"],
+            })
+        return {"total_events": total, "regions": result}
     except Exception as e:
         print(f"Geo query failed: {e}")
         return _fallback_geo()
@@ -1026,7 +1061,7 @@ def query_geo():
 
 def _fallback_geo():
     state = load_state()
-    if not state: return []
+    if not state: return {"total_events": 0, "regions": []}
     nc = state.get("network_classifier", {})
     ip_data = nc.get("ip_data", {})
     regions = defaultdict(int)
@@ -1035,12 +1070,27 @@ def _fallback_geo():
         cnt = _get_event_count(info)
         if cnt == 0: continue
         first = _parse_ip_first_octet(ip)
-        if first is not None:
-            if 114 <= first <= 125: regions["China"] += cnt
-            elif first in [45, 64, 66, 70, 72, 74, 98, 99, 104, 108]: regions["US"] += cnt
-            else: regions["Other"] += cnt
-        else: regions["Other"] += cnt
-    return [{"country": r, "count": c, "color": "#6b7280", "flag": "Other"} for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True)]
+        region_name = _classify_ip_region(first)
+        regions[region_name] += cnt
+    
+    total = sum(regions.values())
+    result = []
+    for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True):
+        info = GEO_REGIONS.get(r, GEO_REGIONS["Other"])
+        pct = (c / total * 100) if total > 0 else 0
+        result.append({
+            "country": r,
+            "code": info["code"],
+            "flag": info["flag"],
+            "count": c,
+            "percentage": round(pct, 1),
+            "color": info["color"],
+            "lat": info["lat"],
+            "lon": info["lon"],
+            "zoom": info["zoom"],
+            "bbox": info["bbox"],
+        })
+    return {"total_events": total, "regions": result}
 
 def query_events():
     conn = get_db()
