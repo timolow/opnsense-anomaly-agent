@@ -385,6 +385,9 @@ export const NginxTab: React.FC = () => {
     );
   }
 
+  // When nginx is not configured, show only the banner — skip all zero-value cards/charts.
+  const isNotConfigured = s.data_source_status === 'not_configured' || s.data_source_status === 'error';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* Header */}
@@ -407,32 +410,37 @@ export const NginxTab: React.FC = () => {
             Traffic analysis, threat detection, and attack monitoring
           </div>
         </div>
-        <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-          <div style={{
-            background: 'rgba(0, 255, 170, 0.15)',
-            border: '1px solid rgba(0, 255, 170, 0.3)',
-            borderRadius: '16px',
-            padding: '4px 12px',
-            fontSize: '11px',
-            color: CYBER.green,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-          }}>
-            <span style={{
-              width: '6px', height: '6px', borderRadius: '50%',
-              background: CYBER.green,
-              boxShadow: `0 0 8px ${CYBER.green}`,
-              animation: 'pulse 2s ease-in-out infinite',
-            }} />
-            LIVE
+        {!isNotConfigured && (
+          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+            <div style={{
+              background: 'rgba(0, 255, 170, 0.15)',
+              border: '1px solid rgba(0, 255, 170, 0.3)',
+              borderRadius: '16px',
+              padding: '4px 12px',
+              fontSize: '11px',
+              color: CYBER.green,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}>
+              <span style={{
+                width: '6px', height: '6px', borderRadius: '50%',
+                background: CYBER.green,
+                boxShadow: `0 0 8px ${CYBER.green}`,
+                animation: 'pulse 2s ease-in-out infinite',
+              }} />
+              LIVE
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Empty state banner */}
       <EmptyStateBanner status={s.data_source_status} message={s.empty_message} />
 
+      {/* Only render data panels when nginx is actually configured */}
+      {!isNotConfigured && (
+        <>
       {/* Summary Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
         <SummaryCard
@@ -532,6 +540,8 @@ export const NginxTab: React.FC = () => {
 
       {/* Anomalies Table */}
       <AnomaliesTable anomalies={anomalies} />
+        </>
+      )}
 
       {/* Footer */}
       <div style={{
