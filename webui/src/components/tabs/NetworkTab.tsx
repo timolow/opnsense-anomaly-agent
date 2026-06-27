@@ -155,7 +155,7 @@ function NetworkGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
       )}
 
       {/* Force Graph */}
-      <div className="cyber-card p-4 scanlines" style={{ height: '150px' }}>
+      <div className="cyber-card p-4" style={{ height: '150px' }}>
         <ForceGraph2D
           ref={graphRef}
           graphData={graphData}
@@ -363,7 +363,7 @@ function TopSourcesTable({ stats }: { stats: any }) {
                 <td className="py-2 px-3 text-cyber-text">
                   {source.ip || '0.0.0.0'}
                 </td>
-                <td className="py-2 px-3 text-right text-neon-cyan">
+                <td className="py-2 px-3 text-right text-cyber-accent">
                   {(source.count || 0).toLocaleString()}
                 </td>
                 <td className="py-2 px-3">

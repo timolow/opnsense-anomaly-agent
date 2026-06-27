@@ -46,18 +46,7 @@
     @apply relative bg-cyber-panel border border-cyber-border rounded-lg overflow-hidden;
   }
 
-  .cyber-card::before {
-    content: '';
-    @apply absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyber-accent/30 to-transparent;
-  }
 
-  .cyber-card::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(180deg, rgba(0,229,255,0.02) 0%, transparent 50%);
-    pointer-events: none;
-  }
 
   .cyber-card-hover:hover {
     @apply border-cyber-accent/30 shadow-neon-cyan;
@@ -97,32 +86,26 @@
   .cyber-stat-value {
     @apply text-3xl font-bold font-mono;
     color: #00e5ff;
-    text-shadow: 0 0 20px rgba(0,229,255,0.3);
   }
 
   .cyber-stat-value.pink {
     color: #ff006e;
-    text-shadow: 0 0 20px rgba(255,0,110,0.3);
   }
 
   .cyber-stat-value.purple {
     color: #8338ec;
-    text-shadow: 0 0 20px rgba(131,56,236,0.3);
   }
 
   .cyber-stat-value.green {
     color: #00ff88;
-    text-shadow: 0 0 20px rgba(0,255,136,0.3);
   }
 
   .cyber-stat-value.yellow {
     color: #ffbe0b;
-    text-shadow: 0 0 20px rgba(255,190,11,0.3);
   }
 
   .cyber-stat-value.orange {
     color: #ff7800;
-    text-shadow: 0 0 20px rgba(255,120,0,0.3);
   }
 
   .cyber-stat-label {
@@ -250,8 +233,8 @@
     @apply border-cyber-green bg-cyber-green/30;
   }
 
-  /* ── Scanline Overlay ── */
-  .scanlines::after {
+  /* ── Scanline Overlay (disabled — too much visual noise) ── */
+  /* .scanlines::after {
     content: '';
     @apply absolute inset-0 pointer-events-none;
     background: repeating-linear-gradient(
@@ -261,7 +244,7 @@
       rgba(0,229,255,0.015) 2px,
       rgba(0,229,255,0.015) 4px
     );
-  }
+  } */
 
   /* ── Mini Map ── */
   .cyber-mini-map {
@@ -279,35 +262,35 @@
 
 @layer utilities {
   .text-neon {
-    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+    /* text-shadow removed — too much visual noise */
   }
   
   .text-neon-cyan {
-    text-shadow: 0 0 10px rgba(0,229,255,0.5), 0 0 20px rgba(0,229,255,0.3);
+    color: #00e5ff;
   }
 
   .text-neon-green {
-    text-shadow: 0 0 10px rgba(0,255,136,0.5), 0 0 20px rgba(0,255,136,0.3);
+    color: #00ff88;
   }
 
   .text-neon-red {
-    text-shadow: 0 0 10px rgba(255,23,68,0.5), 0 0 20px rgba(255,23,68,0.3);
+    color: #ff1744;
   }
 
   .text-neon-pink {
-    text-shadow: 0 0 10px rgba(255,0,110,0.5), 0 0 20px rgba(255,0,110,0.3);
+    color: #ff006e;
   }
 
   .text-neon-yellow {
-    text-shadow: 0 0 10px rgba(255,190,11,0.5), 0 0 20px rgba(255,190,11,0.3);
+    color: #ffbe0b;
   }
 
   .text-neon-purple {
-    text-shadow: 0 0 10px rgba(131,56,236,0.5), 0 0 20px rgba(131,56,236,0.3);
+    color: #8338ec;
   }
 
   .text-neon-orange {
-    text-shadow: 0 0 10px rgba(255,120,0,0.5), 0 0 20px rgba(255,120,0,0.3);
+    color: #ff7800;
   }
 
   .text-gradient-cyber {

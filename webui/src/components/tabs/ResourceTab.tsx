@@ -32,7 +32,6 @@ function Gauge({ label, value, max, unit, status, icon }: {
       borderRadius: '12px',
       padding: '20px',
       backdropFilter: 'blur(10px)',
-      boxShadow: `0 0 20px ${color.glow}`,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
@@ -74,7 +73,6 @@ function Gauge({ label, value, max, unit, status, icon }: {
         fontWeight: '700',
         color: color.main,
         fontFamily: 'monospace',
-        textShadow: `0 0 10px ${color.glow}`,
       }}>
         {value.toFixed(1)}{unit}
       </div>
@@ -183,7 +181,6 @@ function ThresholdBar({ value, warn, crit, label }: {
           width: `${pct}%`,
           background: barColor,
           borderRadius: '3px',
-          boxShadow: `0 0 8px ${barColor}60`,
           transition: 'width 0.5s ease',
         }} />
       </div>
@@ -299,7 +296,6 @@ export default function ResourceTab() {
           textTransform: 'uppercase',
           letterSpacing: '1px',
           fontSize: '12px',
-          boxShadow: `0 0 12px ${overallColor.glow}`,
         }}>
           {overallStatus === 'ok' ? '● Healthy' : `● ${overallStatus}`}
         </div>
@@ -356,7 +352,6 @@ export default function ResourceTab() {
           borderRadius: '12px',
           padding: '20px',
           backdropFilter: 'blur(10px)',
-          boxShadow: `0 0 20px ${statusColor(db.status).glow}`,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -370,7 +365,6 @@ export default function ResourceTab() {
             fontWeight: '700',
             color: statusColor(db.status).main,
             fontFamily: 'monospace',
-            textShadow: `0 0 10px ${statusColor(db.status).glow}`,
           }}>
             {db.mb > 1024 ? `${(db.mb / 1024).toFixed(1)} GB` : `${db.mb.toFixed(0)} MB`}
           </div>

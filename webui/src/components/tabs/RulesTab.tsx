@@ -121,7 +121,7 @@ export default function RulesTab() {
       {/* Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
         <div className="cyber-card p-3 cyber-card-hover">
-          <div className="text-xl font-bold font-mono text-neon-cyan">{data.summary.total}</div>
+          <div className="text-xl font-bold font-mono text-cyber-accent">{data.summary.total}</div>
           <div className="cyber-stat-label">Total Rules</div>
         </div>
         <div className="cyber-card p-3 cyber-card-hover">
@@ -155,7 +155,7 @@ export default function RulesTab() {
       </div>
 
       {/* Rules Table */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         {selectedRule ? (() => {
           const rule = data.rules.find(r => r.uuid === selectedRule);
           if (!rule) return null;

@@ -65,7 +65,7 @@ export default function SettingsTab() {
       </div>
 
       {/* Detection Tuning */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Detection Tuning</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -119,7 +119,7 @@ export default function SettingsTab() {
       </button>
 
       {/*  Settings */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4"> Integration</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -143,7 +143,7 @@ export default function SettingsTab() {
       </div>
 
       {/* Data Management */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Data Management</h3>
         <div className="flex gap-3">
           <button

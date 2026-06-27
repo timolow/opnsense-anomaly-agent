@@ -139,7 +139,7 @@ export default function ServicesTab() {
 
       {/* Service Alerts */}
       {data.alerts.length > 0 && (
-        <div className="cyber-card p-4 scanlines">
+        <div className="cyber-card p-4">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Service Alerts</h3>
           <div className="space-y-2">
             {data.alerts.map((alert, i) => (

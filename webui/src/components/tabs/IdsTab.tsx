@@ -53,7 +53,7 @@ export default function IdsTab() {
       {/* Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div className="cyber-card p-4 cyber-card-hover">
-          <div className="text-2xl font-bold font-mono text-neon-cyan">{totalEvents.toLocaleString()}</div>
+          <div className="text-2xl font-bold font-mono text-cyber-accent">{totalEvents.toLocaleString()}</div>
           <div className="cyber-stat-label">Total Events</div>
         </div>
         <div className="cyber-card p-4 cyber-card-hover">
@@ -71,7 +71,7 @@ export default function IdsTab() {
       </div>
 
       {/* Top Signatures */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">
           Top Signatures {signatures.length === 0 && '(none detected)'}
         </h3>
@@ -114,7 +114,7 @@ export default function IdsTab() {
       </div>
 
       {/* Anomalies */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">IDS Anomalies</h3>
         {anomalies.length === 0 ? (
           <div className="text-center py-6 text-cyber-textMuted text-sm">No IDS anomalies detected</div>

@@ -62,7 +62,7 @@ export default function WanFlapTab() {
             <RefreshCw size={14} className="text-cyber-accent" />
             <span className="cyber-stat-label">Last Flap</span>
           </div>
-          <div className="text-sm font-bold font-mono text-neon-cyan">{stats.last_flap}</div>
+          <div className="text-sm font-bold font-mono text-cyber-accent">{stats.last_flap}</div>
         </div>
         <div className="cyber-card p-4 cyber-card-hover">
           <div className="flex items-center gap-2 mb-2">
@@ -83,7 +83,7 @@ export default function WanFlapTab() {
       />
 
       {/* Flap Events */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Recent Flap Events</h3>
         {flapData.length === 0 ? (
           <div className="text-center py-8 text-cyber-textMuted">No recent flaps</div>

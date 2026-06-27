@@ -156,10 +156,9 @@ export function EmptyStateBanner({ status, message, icon }: {
     : { accent: 'rgba(255, 255, 100, 1)', bg: 'rgba(255, 255, 100, 0.08)', border: 'rgba(255, 255, 100, 0.25)', label: 'No Data Yet' };
 
   return (
-    <div className="cyber-card p-4 mb-4 scanlines" style={{
+    <div className="cyber-card p-4 mb-4" style={{
       background: colors.bg,
       border: `1px solid ${colors.border}`,
-      boxShadow: `0 0 12px ${colors.border}`,
     }}>
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 w-10 h-10 rounded-md flex items-center justify-center" style={{

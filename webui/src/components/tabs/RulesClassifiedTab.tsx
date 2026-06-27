@@ -95,7 +95,7 @@ export default function RulesClassifiedTab() {
             <Target size={14} className="text-cyber-accent" />
             <span className="cyber-stat-label">Self-Learning</span>
           </div>
-          <div className="text-2xl font-bold font-mono text-neon-cyan">
+          <div className="text-2xl font-bold font-mono text-cyber-accent">
             {data.ml_stats?.self_learning_enabled ? 'ON' : 'OFF'}
           </div>
         </div>
@@ -103,7 +103,7 @@ export default function RulesClassifiedTab() {
 
       {/* ML Stats & Pie Chart */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="cyber-card p-4 scanlines">
+        <div className="cyber-card p-4">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Classification Distribution</h3>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
@@ -136,7 +136,7 @@ export default function RulesClassifiedTab() {
           </div>
         </div>
 
-        <div className="cyber-card p-4 scanlines">
+        <div className="cyber-card p-4">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Model Parameters</h3>
           <div className="space-y-3">
             <div>
@@ -177,7 +177,7 @@ export default function RulesClassifiedTab() {
       </div>
 
       {/* Rules Table */}
-      <div className="cyber-card p-4 scanlines">
+      <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Classified Rules</h3>
         <div className="cyber-table-responsive"><table className="cyber-table">
           <thead>
