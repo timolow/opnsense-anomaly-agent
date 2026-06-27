@@ -8,7 +8,7 @@ import type { IdsData } from '@/types';
 import { Eye, AlertTriangle, Shield } from 'lucide-react';
 
 import { IdsSkeleton } from '../../components/SkeletonLoaders';
-import { TabQueryError } from '../../components/TabShell';
+import { TabQueryError, EmptyStateBanner } from '../../components/TabShell';
 
 export default function IdsTab() {
   const { data: summary, isLoading, isError, error, refetch } = useQuery<IdsData['summary']>({
@@ -46,6 +46,9 @@ export default function IdsTab() {
         <h2 className="text-lg font-bold">IDS - Intrusion Detection</h2>
         <span className="text-xs text-cyber-textMuted font-mono">Suricata/Snort</span>
       </div>
+
+      {/* Empty state banner */}
+      <EmptyStateBanner status={summary.data_source_status} message={summary.empty_message} icon={<Eye size={20} className="text-cyber-yellow" />} />
 
       {/* Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">

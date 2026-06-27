@@ -8,7 +8,7 @@ import { Radio, AlertTriangle, RefreshCw } from 'lucide-react';
 import TimelineChart from '../../components/charts/TimelineChart';
 
 import { WanFlapSkeleton } from '../../components/SkeletonLoaders';
-import { TabQueryError } from '../../components/TabShell';
+import { TabQueryError, EmptyStateBanner } from '../../components/TabShell';
 
 export default function WanFlapTab() {
   const { data, isLoading, isError, error, refetch } = useQuery<any>({
@@ -44,6 +44,9 @@ export default function WanFlapTab() {
         <h2 className="text-lg font-bold">WAN Flap Detection</h2>
         <span className="text-xs text-cyber-textMuted font-mono">Interface stability monitor</span>
       </div>
+
+      {/* Empty state banner */}
+      <EmptyStateBanner status={data?.data_source_status} message={data?.empty_message} icon={<Radio size={20} className="text-cyber-orange" />} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">

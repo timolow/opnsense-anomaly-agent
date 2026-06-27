@@ -180,6 +180,29 @@ def classify_interface(iface):
 
 _db_cache = {}
 
+# Simple TTL cache for endpoint results
+_ttl_cache: Dict[str, Any] = {}
+_ttl_lock = threading_lib.Lock()
+
+
+def _ttl_get(key: str) -> Any | None:
+    """Get from TTL cache if not expired."""
+    with _ttl_lock:
+        entry = _ttl_cache.get(key)
+        if entry is None:
+            return None
+        data, expiry = entry
+        if time.time() > expiry:
+            _ttl_cache.pop(key, None)
+            return None
+        return data
+
+
+def _ttl_set(key: str, value: Any, ttl_seconds: int):
+    """Set a value in the TTL cache."""
+    with _ttl_lock:
+        _ttl_cache[key] = (value, time.time() + ttl_seconds)
+
 def _get_db_once():
     conn_str = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASS}"
     for attempt in range(3):
@@ -1071,6 +1094,14 @@ def _fallback_events():
     return events[:20]
 
 def query_opnsense_status():
+    """Return OPNsense status by querying multiple API endpoints in parallel.
+
+    Optimized: ThreadPoolExecutor for parallel API calls + 30s TTL cache.
+    """
+    cached = _ttl_get("opnsense_status")
+    if cached is not None:
+        return cached
+
     opn_url, opn_key, opn_secret, verify_ssl = _read_opn_config()
     if not opn_url:
         return {"status": "disconnected", "error": "No OPNsense config found"}
@@ -1079,6 +1110,7 @@ def query_opnsense_status():
         import urllib.error
         import ssl
         import base64
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         ssl_context = ssl.create_default_context()
         if not verify_ssl:
@@ -1099,27 +1131,68 @@ def query_opnsense_status():
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
                 return json.loads(resp.read().decode())
 
-        # 1. Firmware/Version info
+        # Fetch all independent API endpoints in parallel
+        api_endpoints = {
+            "firmware": "/api/core/firmware/status",
+            "gateways": "/api/routing/settings/searchGateway",
+            "systemResources": "/api/diagnostics/system/systemResources",
+            "system_information": "/api/diagnostics/system/system_information",
+            "memory": "/api/diagnostics/system/memory",
+            "interfaceStats": "/api/diagnostics/interface/getInterfaceStatistics",
+            "services": "/api/core/service/search",
+            "rules": "/api/firewall/rules/search",
+            "openvpn": "/api/services/openvpn/status",
+            "ntp": "/api/services/ntp/status",
+        }
+
+        api_results: Dict[str, Any] = {}
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_name = {
+                executor.submit(_api_get, path): name
+                for name, path in api_endpoints.items()
+            }
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    api_results[name] = future.result()
+                except Exception as e:
+                    print(f"OPNsense {name} failed: {e}")
+
+        # Also try DNS (dnsmasq first, fall back to unbound) — these are fast, do serially
+        results["dns_status"] = {}
         try:
-            sys_info = _api_get("/api/core/firmware/status")
-            if isinstance(sys_info, dict):
-                product = sys_info.get("product", {})
-                results["opnsense_version"] = product.get("CORE_VERSION", product.get("CORE_SERIES", "unknown"))
-                results["os_version"] = sys_info.get("os_version", "")
-            else:
-                results["opnsense_version"] = "unknown"
-                results["os_version"] = ""
-            results["status"] = "connected"
-        except Exception as e:
-            print(f"OPNsense firmware status failed: {e}")
-            results["opnsense_version"] = "error"
+            dns_data = _api_get("/api/services/dnsmasq/status")
+            if isinstance(dns_data, dict):
+                results["dns_status"] = {
+                    "status": dns_data.get("status", dns_data.get("state", "unknown")),
+                    "type": "dnsmasq",
+                }
+        except Exception:
+            try:
+                dns_data = _api_get("/api/services/unbound/status")
+                if isinstance(dns_data, dict):
+                    results["dns_status"] = {
+                        "status": dns_data.get("status", dns_data.get("state", "unknown")),
+                        "type": "unbound",
+                    }
+            except Exception:
+                pass
+
+        # Process firmware
+        fw_data = api_results.get("firmware")
+        if isinstance(fw_data, dict):
+            product = fw_data.get("product", {})
+            results["opnsense_version"] = product.get("CORE_VERSION", product.get("CORE_SERIES", "unknown"))
+            results["os_version"] = fw_data.get("os_version", "")
+        else:
+            results["opnsense_version"] = "unknown"
             results["os_version"] = ""
 
-        # 2. Gateways — PRIMARY source (works on OPNsense 26.4)
+        # Process gateways
         results["gateways"] = []
         raw_gateways = []
-        try:
-            gw_data = _api_get("/api/routing/settings/searchGateway")
+        gw_data = api_results.get("gateways")
+        if isinstance(gw_data, dict):
             raw_gateways = gw_data.get("rows", gw_data.get("gateways", []))
             for gw in raw_gateways:
                 if gw.get("disabled"):
@@ -1132,7 +1205,6 @@ def query_opnsense_status():
                 ip_protocol = gw.get("ipprotocol", "inet")
                 upstream = gw.get("upstream", False)
                 status = gw.get("status", "unknown")
-                # Parse delay/loss from string format "5.8 ms" / "0.0 %"
                 delay_raw = gw.get("delay", "~")
                 loss_raw = gw.get("loss", "~")
                 try:
@@ -1155,11 +1227,8 @@ def query_opnsense_status():
                     "delay": delay_val,
                     "loss": loss_val,
                 })
-        except Exception as e:
-            print(f"OPNsense gateways failed: {e}")
 
-        # 3. Derive interfaces from gateways (works on all OPNsense versions)
-        # /api/interfaces/assignments returns 404 on OPNsense 26.4
+        # Derive interfaces from gateways
         results["interfaces"] = []
         iface_map = {}
         for gw in raw_gateways:
@@ -1170,13 +1239,11 @@ def query_opnsense_status():
                 continue
             interface = gw.get("interface", "")
             interface_descr = gw.get("interface_descr", "")
-            ip_protocol = gw.get("ipprotocol", "inet")
             gateway_ip = gw.get("gateway", "")
             upstream = gw.get("upstream", False)
             gw_name = gw.get("name", "").upper()
 
             if iface_phys not in iface_map:
-                # Detect type
                 is_vpn = (
                     "VPN" in gw_name or "WG" in gw_name or
                     iface_phys.startswith("ovpn") or iface_phys.startswith("wg") or
@@ -1190,10 +1257,9 @@ def query_opnsense_status():
                     "ipv4": "",
                     "ipv6": "",
                     "mac": "",
-                    "status": "online",  # default — update below
+                    "status": "online",
                 }
 
-            # Collect gateway IPs per interface
             if gateway_ip:
                 if ":" in gateway_ip:
                     if not iface_map[iface_phys]["ipv6"]:
@@ -1202,7 +1268,6 @@ def query_opnsense_status():
                     if not iface_map[iface_phys]["ipv4"]:
                         iface_map[iface_phys]["ipv4"] = gateway_ip
 
-        # Update interface status from gateway status
         for gw in raw_gateways:
             if gw.get("disabled"):
                 continue
@@ -1218,218 +1283,158 @@ def query_opnsense_status():
 
         results["interfaces"] = list(iface_map.values())
 
-        # 4. System Resources — memory, CPU, uptime
-        # OPNsense 26.4 systemResources only returns 'memory' — no loadavg or uptime.
-        results["cpu_usage"] = -1  # -1 means "not available"
+        # System resources
+        results["cpu_usage"] = -1
         results["memory_usage"] = 0
         results["memory_total_gb"] = 0
         results["memory_used_gb"] = 0
         results["uptime"] = ""
         results["uptime_seconds"] = 0
-        try:
-            sys_res = _api_get("/api/diagnostics/system/systemResources")
-            if isinstance(sys_res, dict):
-                # Memory — handle both string and int values
-                mem = sys_res.get("memory", {})
-                total_mem_str = str(mem.get("total", 0))
-                used_mem_str = str(mem.get("used", 0))
+        sys_res = api_results.get("systemResources")
+        if isinstance(sys_res, dict):
+            mem = sys_res.get("memory", {})
+            total_mem_str = str(mem.get("total", 0))
+            used_mem_str = str(mem.get("used", 0))
+            try:
+                total_mem = int(total_mem_str)
+                used_mem = int(used_mem_str)
+            except (ValueError, TypeError):
+                total_mem = 0
+                used_mem = 0
+            if total_mem > 0:
+                results["memory_usage"] = round(used_mem / total_mem * 100, 1)
+                results["memory_total_gb"] = round(total_mem / (1024**3), 1)
+                results["memory_used_gb"] = round(used_mem / (1024**3), 1)
+            load_avg = sys_res.get("loadavg", None)
+            if load_avg and isinstance(load_avg, dict):
                 try:
-                    total_mem = int(total_mem_str)
-                    used_mem = int(used_mem_str)
+                    load1 = float(load_avg.get("loadavg_1m", load_avg.get("1", 0)))
+                    results["cpu_usage"] = round(load1 * 100, 1)
                 except (ValueError, TypeError):
-                    total_mem = 0
-                    used_mem = 0
-                if total_mem > 0:
-                    results["memory_usage"] = round(used_mem / total_mem * 100, 1)
-                    results["memory_total_gb"] = round(total_mem / (1024**3), 1)
-                    results["memory_used_gb"] = round(used_mem / (1024**3), 1)
-                # CPU load — only available on older OPNsense
-                load_avg = sys_res.get("loadavg", None)
-                if load_avg and isinstance(load_avg, dict):
-                    try:
-                        load1 = float(load_avg.get("loadavg_1m", load_avg.get("1", 0)))
-                        results["cpu_usage"] = round(load1 * 100, 1)
-                    except (ValueError, TypeError):
-                        pass
-                # Uptime — only available on older OPNsense
-                uptime_raw = sys_res.get("uptime", None)
-                if isinstance(uptime_raw, dict):
-                    uptime_secs = int(uptime_raw.get("raw", 0))
-                    results["uptime_seconds"] = uptime_secs
-                    days = uptime_secs // 86400
-                    hours = (uptime_secs % 86400) // 3600
-                    mins = (uptime_secs % 3600) // 60
-                    if days > 0:
-                        results["uptime"] = f"{days}d {hours}h"
-                    elif hours > 0:
-                        results["uptime"] = f"{hours}h {mins}m"
-                    else:
-                        results["uptime"] = f"{mins}m"
-        except Exception as e:
-            print(f"OPNsense system resources failed: {e}")
+                    pass
+            uptime_raw = sys_res.get("uptime", None)
+            if isinstance(uptime_raw, dict):
+                uptime_secs = int(uptime_raw.get("raw", 0))
+                results["uptime_seconds"] = uptime_secs
+                days = uptime_secs // 86400
+                hours = (uptime_secs % 86400) // 3600
+                mins = (uptime_secs % 3600) // 60
+                if days > 0:
+                    results["uptime"] = f"{days}d {hours}h"
+                elif hours > 0:
+                    results["uptime"] = f"{hours}h {mins}m"
+                else:
+                    results["uptime"] = f"{mins}m"
 
-        # 4b. Try alternate endpoints for CPU/uptime on OPNsense 26.4
-        # /api/diagnostics/system/system_information has hostname + version
-        try:
-            sys_info = _api_get("/api/diagnostics/system/system_information")
-            if isinstance(sys_info, dict):
-                results["hostname"] = sys_info.get("name", "")
-        except Exception as e:
-            print(f"OPNsense system_information failed: {e}")
+        # Hostname
+        sys_info = api_results.get("system_information")
+        if isinstance(sys_info, dict):
+            results["hostname"] = sys_info.get("name", "")
 
-        # Try /api/diagnostics/system/memory for vmstat (CPU threads as proxy)
-        try:
-            vm_data = _api_get("/api/diagnostics/system/memory")
-            if isinstance(vm_data, dict):
-                vmstat = vm_data.get("vmstat", {})
-                malloc_stats = vmstat.get("malloc-statistics", {}).get("memory", [])
-                # Sum malloc requests as a rough activity indicator
-                total_requests = sum(m.get("requests", 0) for m in malloc_stats)
-                results["malloc_requests"] = total_requests
-        except Exception as e:
-            print(f"OPNsense vmstat failed: {e}")
+        # VMStat
+        vm_data = api_results.get("memory")
+        if isinstance(vm_data, dict):
+            vmstat = vm_data.get("vmstat", {})
+            malloc_stats = vmstat.get("malloc-statistics", {}).get("memory", [])
+            total_requests = sum(m.get("requests", 0) for m in malloc_stats)
+            results["malloc_requests"] = total_requests
 
-        # 5. Interface statistics — bandwidth data
-        # /api/diagnostics/interface/getInterfaceStatistics returns bytes/packets per interface
+        # Interface statistics
         interface_stats = {}
-        try:
-            stats_data = _api_get("/api/diagnostics/interface/getInterfaceStatistics")
-            if isinstance(stats_data, dict):
-                stats = stats_data.get("statistics", {})
-                for key, val in stats.items():
-                    if not isinstance(val, dict):
-                        continue
-                    iface_name = val.get("name", "")
-                    if not iface_name:
-                        continue
-                    if iface_name not in interface_stats:
-                        interface_stats[iface_name] = {
-                            "received_bytes": 0,
-                            "sent_bytes": 0,
-                            "received_packets": 0,
-                            "sent_packets": 0,
-                            "received_errors": 0,
-                            "send_errors": 0,
-                            "dropped_packets": 0,
-                        }
-                    current = interface_stats[iface_name]
-                    # Only count from the link-level entry (Link#N), skip IP-level dupes
-                    if "<Link" in str(val.get("network", "")):
-                        current["received_bytes"] = int(str(val.get("received-bytes", 0)))
-                        current["sent_bytes"] = int(str(val.get("sent-bytes", 0)))
-                        current["received_packets"] = int(str(val.get("received-packets", 0)))
-                        current["sent_packets"] = int(str(val.get("sent-packets", 0)))
-                        current["received_errors"] = int(str(val.get("received-errors", 0)))
-                        current["send_errors"] = int(str(val.get("send-errors", 0)))
-                        current["dropped_packets"] = int(str(val.get("dropped-packets", 0)))
-                    # Collect MAC from the link-level entry
-                    mac = val.get("address", "")
-                    if mac and "<Link" in str(val.get("network", "")):
-                        current["mac"] = mac
-        except Exception as e:
-            print(f"OPNsense interface stats failed: {e}")
+        stats_data = api_results.get("interfaceStats")
+        if isinstance(stats_data, dict):
+            stats = stats_data.get("statistics", {})
+            for key, val in stats.items():
+                if not isinstance(val, dict):
+                    continue
+                iface_name = val.get("name", "")
+                if not iface_name:
+                    continue
+                if iface_name not in interface_stats:
+                    interface_stats[iface_name] = {
+                        "received_bytes": 0, "sent_bytes": 0,
+                        "received_packets": 0, "sent_packets": 0,
+                        "received_errors": 0, "send_errors": 0,
+                        "dropped_packets": 0,
+                    }
+                current = interface_stats[iface_name]
+                if "<Link" in str(val.get("network", "")):
+                    current["received_bytes"] = int(str(val.get("received-bytes", 0)))
+                    current["sent_bytes"] = int(str(val.get("sent-bytes", 0)))
+                    current["received_packets"] = int(str(val.get("received-packets", 0)))
+                    current["sent_packets"] = int(str(val.get("sent-packets", 0)))
+                    current["received_errors"] = int(str(val.get("received-errors", 0)))
+                    current["send_errors"] = int(str(val.get("send-errors", 0)))
+                    current["dropped_packets"] = int(str(val.get("dropped-packets", 0)))
+                mac = val.get("address", "")
+                if mac and "<Link" in str(val.get("network", "")):
+                    current["mac"] = mac
 
-        # Enrich interface data with bandwidth stats
         for iface in results.get("interfaces", []):
             name = iface.get("name", "")
             if name in interface_stats:
                 st = interface_stats[name]
-                iface["received_bytes"] = st.get("received_bytes", 0)
-                iface["sent_bytes"] = st.get("sent_bytes", 0)
-                iface["received_packets"] = st.get("received_packets", 0)
-                iface["sent_packets"] = st.get("sent_packets", 0)
-                iface["received_errors"] = st.get("received_errors", 0)
-                iface["send_errors"] = st.get("send_errors", 0)
-                iface["dropped_packets"] = st.get("dropped_packets", 0)
+                for field in ["received_bytes", "sent_bytes", "received_packets",
+                              "sent_packets", "received_errors", "send_errors", "dropped_packets"]:
+                    iface[field] = st.get(field, 0)
                 mac = st.get("mac", "")
                 if mac and not iface.get("mac"):
                     iface["mac"] = mac
 
-        # 6. Services count
+        # Services
         results["services_total"] = 0
         results["services_running"] = 0
         results["services"] = []
-        try:
-            svc_data = _api_get("/api/core/service/search")
-            if isinstance(svc_data, dict):
-                svc_rows = svc_data.get("rows", [])
-                results["services_total"] = svc_data.get("total", len(svc_rows))
-                running_count = sum(1 for s in svc_rows if s.get("running") == 1)
-                results["services_running"] = running_count
-                # Include top services in response
-                for svc in svc_rows[:10]:
-                    results["services"].append({
-                        "name": svc.get("name", svc.get("id", "")),
-                        "status": "running" if svc.get("running") == 1 else "stopped",
-                        "description": svc.get("description", ""),
-                    })
-        except Exception as e:
-            print(f"OPNsense service search failed: {e}")
+        svc_data = api_results.get("services")
+        if isinstance(svc_data, dict):
+            svc_rows = svc_data.get("rows", [])
+            results["services_total"] = svc_data.get("total", len(svc_rows))
+            running_count = sum(1 for s in svc_rows if s.get("running") == 1)
+            results["services_running"] = running_count
+            for svc in svc_rows[:10]:
+                results["services"].append({
+                    "name": svc.get("name", svc.get("id", "")),
+                    "status": "running" if svc.get("running") == 1 else "stopped",
+                    "description": svc.get("description", ""),
+                })
 
-        # 7. Firewall rules count
+        # Firewall rules count
         results["firewall_rules"] = 0
-        try:
-            rules_data = _api_get("/api/firewall/rules/search")
-            if isinstance(rules_data, dict):
-                results["firewall_rules"] = rules_data.get("total", 0)
-            elif isinstance(rules_data, list):
-                results["firewall_rules"] = len(rules_data)
-        except Exception as e:
-            print(f"OPNsense rules failed: {e}")
+        rules_data = api_results.get("rules")
+        if isinstance(rules_data, dict):
+            results["firewall_rules"] = rules_data.get("total", 0)
+        elif isinstance(rules_data, list):
+            results["firewall_rules"] = len(rules_data)
 
-        # 6. OpenVPN status
+        # OpenVPN
         results["openvpn_tunnels"] = []
-        try:
-            vpn_data = _api_get("/api/services/openvpn/status")
-            if isinstance(vpn_data, dict):
-                for key, status in vpn_data.items():
-                    if isinstance(status, dict):
-                        results["openvpn_tunnels"].append({
-                            "type": "client" if "client" in key.lower() else "server",
-                            "status": status.get("status", status.get("state", "unknown")),
-                            "peer": status.get("peer", status.get("remote_host", "")),
-                            "local": status.get("local", status.get("local_host", "")),
-                            "bytes_in": status.get("bytes_in", 0),
-                            "bytes_out": status.get("bytes_out", 0),
-                            "uptime": status.get("uptime", ""),
-                        })
-        except Exception as e:
-            print(f"OPNsense OpenVPN failed: {e}")
+        vpn_data = api_results.get("openvpn")
+        if isinstance(vpn_data, dict):
+            for key, status in vpn_data.items():
+                if isinstance(status, dict):
+                    results["openvpn_tunnels"].append({
+                        "type": "client" if "client" in key.lower() else "server",
+                        "status": status.get("status", status.get("state", "unknown")),
+                        "peer": status.get("peer", status.get("remote_host", "")),
+                        "local": status.get("local", status.get("local_host", "")),
+                        "bytes_in": status.get("bytes_in", 0),
+                        "bytes_out": status.get("bytes_out", 0),
+                        "uptime": status.get("uptime", ""),
+                    })
 
-        # 7. NTP status
+        # NTP
         results["ntp_status"] = {}
-        try:
-            ntp_data = _api_get("/api/services/ntp/status")
-            if isinstance(ntp_data, dict):
-                results["ntp_status"] = {
-                    "status": ntp_data.get("status", ntp_data.get("state", "unknown")),
-                    "servers": ntp_data.get("servers", ntp_data.get("config", [])),
-                    "last_sync": ntp_data.get("last_sync", ntp_data.get("last_update", "")),
-                }
-        except Exception as e:
-            print(f"OPNsense NTP failed: {e}")
+        ntp_data = api_results.get("ntp")
+        if isinstance(ntp_data, dict):
+            results["ntp_status"] = {
+                "status": ntp_data.get("status", ntp_data.get("state", "unknown")),
+                "servers": ntp_data.get("servers", ntp_data.get("config", [])),
+                "last_sync": ntp_data.get("last_sync", ntp_data.get("last_update", "")),
+            }
 
-        # 8. DNS status (try dnsmasq first, then unbound)
-        results["dns_status"] = {}
-        try:
-            dns_data = _api_get("/api/services/dnsmasq/status")
-            if isinstance(dns_data, dict):
-                results["dns_status"] = {
-                    "status": dns_data.get("status", dns_data.get("state", "unknown")),
-                    "type": "dnsmasq",
-                }
-        except Exception:
-            try:
-                dns_data = _api_get("/api/services/unbound/status")
-                if isinstance(dns_data, dict):
-                    results["dns_status"] = {
-                        "status": dns_data.get("status", dns_data.get("state", "unknown")),
-                        "type": "unbound",
-                    }
-            except Exception:
-                pass
-
-        return results
+        result = results
+        _ttl_set("opnsense_status", result, 30)
+        return result
     except Exception as e:
         return {
             "status": "disconnected", "error": str(e),
@@ -2626,16 +2631,30 @@ def query_zenarmor_anomalies():
 # ──────────────────────────────────────────────────────────────────────
 
 def query_ids_summary():
-    """Return IDS signature summary — from DB + state file."""
+    """Return IDS signature summary — from DB + state file.
+
+    Optimized: single query with conditional aggregation + 120s TTL cache.
+    """
+    cached = _ttl_get("ids_summary")
+    if cached is not None:
+        return cached
+
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM events WHERE log_type = 'ids'")
-        db_total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM events WHERE log_type = 'ids' AND timestamp > NOW() - INTERVAL '24 hours'")
-        db_24h = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(DISTINCT rule_name) FROM events WHERE log_type = 'ids' AND rule_name IS NOT NULL AND rule_name != ''")
-        db_signatures = cur.fetchone()[0]
+        # Single query: get all three counts in one pass
+        cur.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE timestamp > NOW() - INTERVAL '24 hours') as last_24h,
+                COUNT(DISTINCT rule_name) FILTER (WHERE rule_name IS NOT NULL AND rule_name != '') as distinct_sigs
+            FROM events
+            WHERE log_type = 'ids'
+        """)
+        row = cur.fetchone()
+        db_total = row[0]
+        db_24h = row[1]
+        db_signatures = row[2]
         cur.close()
     except Exception:
         db_total = 0
@@ -2651,7 +2670,7 @@ def query_ids_summary():
     result = {
         "total_events": max(db_total, sig_count),
         "signatures": max(db_signatures, sig_count),
-        "anomalies_detected": 0,  # tracked via DB anomalies table
+        "anomalies_detected": 0,
         "events_24h": db_24h,
     }
     if max(db_total, sig_count) == 0:
@@ -2659,6 +2678,8 @@ def query_ids_summary():
         result["empty_message"] = "No IDS events. IDS data requires Suricata/Snort entries in the syslog pipeline."
     else:
         result["data_source_status"] = "configured"
+
+    _ttl_set("ids_summary", result, 120)
     return result
 
 def query_ids_signatures():
@@ -2850,7 +2871,7 @@ def query_nginx_summary():
                 anomalies_by_type[at] = {}
             anomalies_by_type[at][sev] = cnt
         
-        return {
+        result = {
             'total_requests': total_requests,
             'by_method': by_method,
             'by_status': by_status,
@@ -2863,18 +2884,29 @@ def query_nginx_summary():
             'not_found_404': not_found,
             'anomalies_by_type': anomalies_by_type,
         }
+        if total_requests == 0:
+            result['data_source_status'] = 'not_configured'
+            result['empty_message'] = 'No Nginx stub_status endpoint configured. Configure NGINX_STUB_STATUS_URL in .env.'
+        else:
+            result['data_source_status'] = 'configured'
+        return result
     except Exception as e:
         close_db(conn)
-        return {'total_requests': 0, 'error': str(e)}
+        return {'total_requests': 0, 'error': str(e), 'data_source_status': 'error', 'empty_message': f'Error loading nginx data: {e}'}
     finally:
         close_db(conn)
 
 
 def query_nginx_anomalies():
     """Return recent nginx anomalies."""
+    empty_msg = "No Nginx anomaly data. Requires nginx events from stub_status monitoring."
     conn = get_db()
     if not conn:
-        return []
+        return {
+            "items": [],
+            "data_source_status": "not_configured",
+            "empty_message": empty_msg,
+        }
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -2883,10 +2915,21 @@ def query_nginx_anomalies():
             ORDER BY created_at DESC LIMIT 100
         """)
         rows = cur.fetchall()
-        return [dict(r) for r in rows]
+        items = [dict(r) for r in rows]
+        result = {
+            "items": items,
+            "data_source_status": "not_configured" if not items else "configured",
+        }
+        if not items:
+            result["empty_message"] = empty_msg
+        return result
     except Exception as e:
         close_db(conn)
-        return []
+        return {
+            "items": [],
+            "data_source_status": "error",
+            "empty_message": f"Error loading nginx anomalies: {e}",
+        }
     finally:
         close_db(conn)
 
@@ -4690,7 +4733,16 @@ def query__action_distribution(hours=24):
 
 
 def query__timeline(period="7d", granularity="hour", start=None, end=None):
-    """Traffic volume over time (line chart)."""
+    """Traffic volume over time (line chart).
+
+    Optimized: single query with conditional aggregation + 60s TTL cache.
+    """
+    # Build cache key from all parameters
+    cache_key = f"timeline:{period}:{granularity}:{start}:{end}"
+    cached = _ttl_get(cache_key)
+    if cached is not None:
+        return cached
+
     conn = get_db()
     if not conn:
         return {"timeline": [], "blocked_timeline": []}
@@ -4718,54 +4770,25 @@ def query__timeline(period="7d", granularity="hour", start=None, end=None):
         fallback_start = datetime.now(tz=timezone.utc) - timedelta(days=7)
         query_start = min(start_dt, fallback_start)
 
-        # Build WHERE clause with proper timestamp parameters
-        where_clause = "WHERE timestamp >= %s AND timestamp <= %s"
-        query_params = [query_start, end_dt]
-
-        # Total events per time bucket
-        if granularity == "hour":
-            cur.execute("""
-                SELECT date_trunc('hour', timestamp) as bucket, COUNT(*) as event_count
-                FROM events
-                %s
-                GROUP BY bucket
-                ORDER BY bucket
-            """ % where_clause, query_params)
-        else:
-            cur.execute("""
-                SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
-                FROM events
-                %s
-                GROUP BY bucket
-                ORDER BY bucket
-            """ % where_clause, query_params)
+        # Single query: conditional aggregation instead of two separate scans
+        truncate_fn = "date_trunc('hour', timestamp)" if granularity == "hour" else "date_trunc('day', timestamp)"
+        cur.execute(f"""
+            SELECT {truncate_fn} as bucket,
+                   COUNT(*) as total_count,
+                   COUNT(*) FILTER (WHERE action = 'BLOCK') as blocked_count
+            FROM events
+            WHERE timestamp >= %s AND timestamp <= %s
+            GROUP BY bucket
+            ORDER BY bucket
+        """, [query_start, end_dt])
         rows = cur.fetchall()
-        timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in rows]
-
-        # Blocked events per time bucket
-        where_blocked = "WHERE timestamp >= %s AND timestamp <= %s AND action = 'BLOCK'"
-        blocked_params = [query_start, end_dt]
-        if granularity == "hour":
-            cur.execute("""
-                SELECT date_trunc('hour', timestamp) as bucket, COUNT(*) as event_count
-                FROM events
-                %s
-                GROUP BY bucket
-                ORDER BY bucket
-            """ % where_blocked, blocked_params)
-        else:
-            cur.execute("""
-                SELECT date_trunc('day', timestamp) as bucket, COUNT(*) as event_count
-                FROM events
-                %s
-                GROUP BY bucket
-                ORDER BY bucket
-            """ % where_blocked, blocked_params)
-        blocked_rows = cur.fetchall()
-        blocked_timeline = [{"time": str(r["bucket"]), "count": r["event_count"]} for r in blocked_rows]
+        timeline = [{"time": str(r["bucket"]), "count": r["total_count"]} for r in rows]
+        blocked_timeline = [{"time": str(r["bucket"]), "count": r["blocked_count"]} for r in rows]
 
         cur.close()
-        return {"timeline": timeline, "blocked_timeline": blocked_timeline, "period": period}
+        result = {"timeline": timeline, "blocked_timeline": blocked_timeline, "period": period}
+        _ttl_set(cache_key, result, 60)
+        return result
     except Exception as e:
         print(f"Timeline query failed: {e}")
         return {"timeline": [], "blocked_timeline": []}

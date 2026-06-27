@@ -11,7 +11,7 @@ import type {
   TrafficFlow, ProtocolDistribution, ActionDistribution,
   Timeline, BlockedIps, TopPorts, RuleHeatmap,
   DirectionDistribution, RuleActionBreakdown,
-  NginxSummary, NginxAnomaly,
+  NginxSummary, NginxAnomaly, NginxAnomalyList,
   IpFlowClusterData,
   BaselineDeviationsData,
   WhatChangedData,
@@ -348,8 +348,9 @@ export const api = {
     };
   },
   zenarmorPolicies: async (): Promise<ZenArmorData['policies'][]> => {
-    const raw = await json<Array<unknown>>('/zenarmor-policies');
-    return Array.isArray(raw) ? raw.map((p: any) => ({
+    const raw = await json<Record<string, unknown>>('/zenarmor-policies');
+    // Handle both array (legacy) and {items: [...], data_source_status, empty_message} formats
+    if (Array.isArray(raw)) return raw.map((p: any) => ({
       id: p.id || '',
       name: p.name || p.policy_name || '',
       category: p.category || '',
@@ -357,7 +358,17 @@ export const api = {
       action: p.action || '',
       description: p.description || '',
       events: p.events || p.total_events || 0,
-    })) : [];
+    }));
+    const items = (raw.items as Array<unknown>) || [];
+    return items.map((p: any) => ({
+      id: p.id || '',
+      name: p.name || p.policy_name || '',
+      category: p.category || '',
+      status: p.status || 'active',
+      action: p.action || '',
+      description: p.description || '',
+      events: p.events || p.total_events || 0,
+    }));
   },
   zenarmorEvents: (limit = 100, offset = 0) =>
     json<ZenArmorData['events'][]>(`/zenarmor-events?limit=${limit}&offset=${offset}`),
@@ -556,7 +567,7 @@ export const api = {
 
   // ── Nginx web server monitoring ──
   getNginxSummary: () => json<NginxSummary>('/nginx-summary'),
-  getNginxAnomalies: () => json<NginxAnomaly[]>('/nginx-anomalies'),
+  getNginxAnomalies: () => json<NginxAnomalyList>('/nginx-anomalies'),
   getNginxTopPaths: () => json<any[]>('/nginx-top-paths'),
   getNginxTimeline: () => json<any[]>('/nginx-timeline'),
 

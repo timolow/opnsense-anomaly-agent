@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -486,6 +486,25 @@ MIGRATIONS: List[Dict[str, Any]] = [
                 weight REAL,
                 decay_multiplier REAL NOT NULL DEFAULT 1.0
             );
+            """,
+        ],
+    },
+
+    # ------------------------------------------------------------------
+    # V9: Performance indexes for slow endpoints
+    #    - idx_events_log_type: speeds up IDS queries (log_type = 'ids')
+    #    - idx_events_timestamp_action: composite for timeline queries
+    #      (timestamp range + action filter in single scan)
+    # ------------------------------------------------------------------
+    {
+        "version": 9,
+        "description": "Performance indexes: log_type + composite timestamp/action for /api/timeline, /api/ids-summary",
+        "sql": [
+            """
+            CREATE INDEX IF NOT EXISTS idx_events_log_type ON events(log_type);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_events_timestamp_action ON events(timestamp, action);
             """,
         ],
     },

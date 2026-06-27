@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
-import type { NginxSummary, NginxAnomaly } from '../../types';
+import type { NginxSummary, NginxAnomaly, NginxAnomalyList } from '../../types';
 import { CYBER, CHART, severityStyle, METHOD_COLORS } from '../../utils/colors';
 
 // Severity style helper for nginx anomalies
@@ -319,11 +319,11 @@ function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
 
 // ── Main NginxTab Component ──
 import { NginxSkeleton } from '../../components/SkeletonLoaders';
-import { TabQueryError } from '../../components/TabShell';
+import { TabQueryError, EmptyStateBanner } from '../../components/TabShell';
 
 export const NginxTab: React.FC = () => {
   const [summary, setSummary] = useState<NginxSummary | null>(null);
-  const [anomalies, setAnomalies] = useState<NginxAnomaly[]>([]);
+  const [anomalyList, setAnomalyList] = useState<NginxAnomalyList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -335,7 +335,7 @@ export const NginxTab: React.FC = () => {
           api.getNginxAnomalies(),
         ]);
         setSummary(summaryData);
-        setAnomalies(anomalyData);
+        setAnomalyList(anomalyData);
         setLoading(false);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to load nginx data');
@@ -362,6 +362,9 @@ export const NginxTab: React.FC = () => {
   }
 
   const s = summary;
+  const anomalies = anomalyList?.items || [];
+  const anomalyStatus = anomalyList?.data_source_status;
+  const anomalyMsg = anomalyList?.empty_message;
   if (!s) {
     return (
       <div style={{
@@ -375,7 +378,7 @@ export const NginxTab: React.FC = () => {
           🟢 Nginx monitoring initialized
         </div>
         <div style={{ fontSize: '12px', color: CYBER.textMuted, maxWidth: '400px', margin: '0 auto' }}>
-          No nginx events recorded yet. Once OPNsense nginx logs start flowing through the syslog pipeline, 
+          No nginx events recorded yet. Once OPNsense nginx logs start flowing through the syslog pipeline,
           traffic data and anomaly detection will appear here in real-time.
         </div>
       </div>
@@ -426,6 +429,9 @@ export const NginxTab: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Empty state banner */}
+      <EmptyStateBanner status={s.data_source_status} message={s.empty_message} />
 
       {/* Summary Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>

@@ -196,6 +196,8 @@ export interface ZenArmorData {
     policies_count: number;
     anomalies_detected: number;
     events_24h: number;
+    data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+    empty_message?: string;
   };
   policies: Array<{
     id: string;
@@ -206,6 +208,11 @@ export interface ZenArmorData {
     description: string;
     events: number;
   }>;
+  policies_meta?: {
+    items: ZenArmorData['policies'];
+    data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+    empty_message?: string;
+  };
   events: Array<{
     timestamp: string;
     action: string;
@@ -233,6 +240,8 @@ export interface IdsData {
     signatures: number;
     anomalies_detected: number;
     events_24h: number;
+    data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+    empty_message?: string;
   };
   signatures: Array<{
     id: string;
@@ -479,6 +488,14 @@ export interface NginxSummary {
   top_paths: Array<{ path: string; requests: number }>;
   not_found_404: number;
   anomalies_by_type: Record<string, Record<string, number>>;
+  data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+  empty_message?: string;
+}
+
+export interface NginxAnomalyList {
+  items: NginxAnomaly[];
+  data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+  empty_message?: string;
 }
 
 export interface NginxAnomaly {

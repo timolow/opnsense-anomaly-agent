@@ -135,3 +135,50 @@ export function TabQueryError({ error, isError, onRetry, tabName }: {
     </div>
   );
 }
+
+// ── Contextual empty-state banner ──
+// Usage: <EmptyStateBanner status={data?.data_source_status} message={data?.empty_message} icon={<Shield size={24} />} />
+// When status is 'configured' or undefined, renders nothing.
+export function EmptyStateBanner({ status, message, icon }: {
+  status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+  message?: string;
+  icon?: React.ReactNode;
+}) {
+  if (status === 'configured' || !status) return null;
+
+  const isConfigured = status === 'not_configured';
+  const isError = status === 'error';
+
+  const colors = isError
+    ? { accent: 'rgba(255, 60, 60, 1)', bg: 'rgba(255, 60, 60, 0.08)', border: 'rgba(255, 60, 60, 0.25)', label: 'Data Source Error' }
+    : isConfigured
+    ? { accent: 'rgba(255, 165, 0, 1)', bg: 'rgba(255, 165, 0, 0.08)', border: 'rgba(255, 165, 0, 0.25)', label: 'Data Source Not Configured' }
+    : { accent: 'rgba(255, 255, 100, 1)', bg: 'rgba(255, 255, 100, 0.08)', border: 'rgba(255, 255, 100, 0.25)', label: 'No Data Yet' };
+
+  return (
+    <div className="cyber-card p-4 mb-4 scanlines" style={{
+      background: colors.bg,
+      border: `1px solid ${colors.border}`,
+      boxShadow: `0 0 12px ${colors.border}`,
+    }}>
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 w-10 h-10 rounded-md flex items-center justify-center" style={{
+          background: colors.bg,
+          border: `1px solid ${colors.border}`,
+        }}>
+          {icon || <AlertTriangle size={18} style={{ color: colors.accent }} />}
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-semibold mb-1" style={{ color: colors.accent }}>
+            {colors.label}
+          </div>
+          {message && (
+            <div className="text-xs text-cyber-textMuted leading-relaxed">
+              {message}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

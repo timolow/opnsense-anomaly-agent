@@ -8,7 +8,7 @@ import type { ZenArmorData } from '@/types';
 import { Shield, BarChart3, AlertTriangle, Target } from 'lucide-react';
 
 import { ZenArmorSkeleton } from '../../components/SkeletonLoaders';
-import { TabQueryError } from '../../components/TabShell';
+import { TabQueryError, EmptyStateBanner } from '../../components/TabShell';
 
 export default function ZenArmorTab() {
   const { data: summary, isLoading: summaryLoading, isError: summaryIsError, error: summaryError, refetch: summaryRefetch } = useQuery<ZenArmorData['summary'] | null>({
@@ -46,6 +46,9 @@ export default function ZenArmorTab() {
         <h2 className="text-lg font-bold">ZenArmor</h2>
         <span className="text-xs text-cyber-textMuted font-mono">Security Gateway</span>
       </div>
+
+      {/* Empty state banner */}
+      <EmptyStateBanner status={summary.data_source_status} message={summary.empty_message} icon={<Shield size={20} className="text-cyber-yellow" />} />
 
       {/* Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
