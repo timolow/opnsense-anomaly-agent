@@ -116,8 +116,11 @@ export default function App() {
         'threat-alerts': 'alerts',
         'traffic-heatmap': 'heatmap',
         'flow-map': 'flows',
+        'flowmap': 'flows',
         'ip-flow': 'ipflow',
+        'ipflow': 'ipflow',
         'geo': 'geo',
+        'geography': 'geo',
         'opnsense-status': 'opnsense',
         'system-health': 'settings',
       };
