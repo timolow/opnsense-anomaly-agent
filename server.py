@@ -4262,25 +4262,29 @@ def query_opnsense_firewall_rules():
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         auth_header = f"Basic {auth_b64}"
 
-        # Fetch ALL firewall rules via POST /api/firewall/filter/search_rule with empty query
-        # GET search_rule only returns 1 rule (search with no query = limited results)
-        payload = json.dumps({"query": "", "core": "filter"}).encode()
+        # Fetch ALL firewall rules via GET /api/firewall/filter
+        # GET /api/firewall/filter/search_rule only returns search results (1 rule with no query)
         req = urllib.request.Request(
-            f"{opn_url}/api/firewall/filter/search_rule",
-            data=payload,
-            headers={
-                "Authorization": auth_header,
-                "Content-Type": "application/json",
-            },
+            f"{opn_url}/api/firewall/filter",
+            headers={"Authorization": auth_header},
         )
         with urllib.request.urlopen(req, context=ssl_context, timeout=10) as resp:
             rules_data = json.loads(resp.read().decode())
 
-        rules_list = rules_data.get("rows", [])
-        if not rules_list and isinstance(rules_data, dict):
-            rules_list = rules_data.get("rules", {}).get("row", [])
+        # Parse response: OPNsense returns {"rules": {"row": [...]}} or {"row": [...]}
+        rules_list = []
+        if isinstance(rules_data, dict):
+            # Try nested structure first
+            if "rules" in rules_data and isinstance(rules_data["rules"], dict):
+                rules_list = rules_data["rules"].get("row", [])
+            # Fallback: flat row array
             if not rules_list:
                 rules_list = rules_data.get("row", [])
+            # Fallback: rows (search endpoint format)
+            if not rules_list:
+                rules_list = rules_data.get("rows", [])
+        elif isinstance(rules_data, list):
+            rules_list = rules_data
 
         # Index by source_net for easy lookup (human-readable rule names)
         # Also index by UUID for compatibility with existing RUID-based events
