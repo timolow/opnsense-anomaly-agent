@@ -1521,6 +1521,218 @@ def query_anomalies():
         return []
     finally: close_db(conn)
 
+def query_flows():
+    """Return IP flow data aggregated as {flows, total_flows, protocols}.
+
+    UI expects:
+      - flows: list of {src_ip, dst_ip, events, proto, dst_port}
+      - total_flows: int
+      - protocols: {PROTO: count}
+    """
+    conn = get_db()
+    if not conn:
+        return {"flows": [], "total_flows": 0, "protocols": {}}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Top IP pair flows (last 24h)
+        cur.execute("""
+            SELECT src_ip, dst_ip, COUNT(*) AS events,
+                   MODE() WITHIN GROUP (ORDER BY proto) AS proto,
+                   MODE() WITHIN GROUP (ORDER BY dst_port) AS dst_port
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+              AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
+            GROUP BY src_ip, dst_ip
+            ORDER BY events DESC
+            LIMIT 100
+        """)
+        flows = []
+        for row in cur.fetchall():
+            flows.append({
+                "src_ip": row["src_ip"],
+                "dst_ip": row["dst_ip"],
+                "events": row["events"],
+                "proto": row["proto"] or "",
+                "dst_port": row["dst_port"],
+            })
+
+        # Protocol distribution
+        cur.execute("""
+            SELECT proto, COUNT(*) AS cnt
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+              AND proto IS NOT NULL
+            GROUP BY proto
+            ORDER BY cnt DESC
+        """)
+        protocols = {}
+        for row in cur.fetchall():
+            protocols[row["proto"]] = row["cnt"]
+
+        # Total flow count
+        cur.execute("""
+            SELECT COUNT(DISTINCT (src_ip, dst_ip)) AS total_flows
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+              AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
+        """)
+        total_flows = cur.fetchone()["total_flows"]
+
+        return {"flows": flows, "total_flows": total_flows, "protocols": protocols}
+
+    except Exception as e:
+        print(f"Flows query failed: {e}")
+        return {"flows": [], "total_flows": 0, "protocols": {}}
+    finally:
+        close_db(conn)
+
+
+def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
+    """Return raw log entries as {logs: [{timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name}]}.
+
+    Supports optional query params: days, limit, src_ip.
+    """
+    conn = get_db()
+    if not conn:
+        return {"logs": []}
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        query = """
+            SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '%s days'
+        """ % days
+        params: list = []
+
+        if src_ip:
+            query += " AND src_ip = %s"
+            params.append(src_ip)
+
+        query += " ORDER BY timestamp DESC LIMIT %s"
+        params.append(limit)
+
+        cur.execute(query, params)
+        logs = []
+        for row in cur.fetchall():
+            logs.append({
+                "timestamp": str(row["timestamp"]) if row["timestamp"] else "",
+                "src_ip": row["src_ip"] or "",
+                "dst_ip": row["dst_ip"] or "",
+                "dst_port": row["dst_port"],
+                "proto": row["proto"] or "",
+                "action": row["action"] or "",
+                "rule_name": row["rule_name"] or "",
+            })
+        return {"logs": logs}
+
+    except Exception as e:
+        print(f"Logs query failed: {e}")
+        return {"logs": []}
+    finally:
+        close_db(conn)
+
+
+def query_system_logs():
+    """Return system log overview + recent entries.
+
+    UI expects:
+      - services_tracked: int
+      - system_log_events: int
+      - firewall_events: int
+      - total_events_classified: int
+      - services_by_volume: {SERVICE: count}
+      - recent_logs: [{timestamp, log_type, source, interface, message}]
+    """
+    conn = get_db()
+    if not conn:
+        return {
+            "services_tracked": 0,
+            "system_log_events": 0,
+            "firewall_events": 0,
+            "total_events_classified": 0,
+            "services_by_volume": {},
+            "recent_logs": [],
+        }
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Total events classified
+        cur.execute("SELECT COUNT(*) AS cnt FROM events")
+        total_events_classified = cur.fetchone()["cnt"]
+
+        # Firewall vs system log events (based on log_type)
+        cur.execute("""
+            SELECT
+                SUM(CASE WHEN log_type = 'firewall' THEN 1 ELSE 0 END) AS firewall_events,
+                SUM(CASE WHEN log_type != 'firewall' AND log_type != '' THEN 1 ELSE 0 END) AS system_log_events
+            FROM events
+        """)
+        row = cur.fetchone()
+        firewall_events = row["firewall_events"] or 0
+        system_log_events = row["system_log_events"] or 0
+
+        # Services by volume — extract service from rule_name/interface
+        cur.execute("""
+            SELECT
+                COALESCE(rule_name, interface, 'unknown') AS service,
+                COUNT(*) AS cnt
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY service
+            ORDER BY cnt DESC
+            LIMIT 20
+        """)
+        services_by_volume = {}
+        services_tracked = 0
+        for row in cur.fetchall():
+            svc = row["service"] or "unknown"
+            services_by_volume[svc] = row["cnt"]
+            services_tracked += 1
+
+        # Recent log entries (last 24h, limited)
+        cur.execute("""
+            SELECT timestamp, log_type, src_ip AS source, interface,
+                   LEFT(raw_message, 200) AS message
+            FROM events
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+              AND raw_message IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 50
+        """)
+        recent_logs = []
+        for row in cur.fetchall():
+            recent_logs.append({
+                "timestamp": str(row["timestamp"]) if row["timestamp"] else "",
+                "log_type": row["log_type"] or "system",
+                "source": row["source"] or "",
+                "interface": row["interface"] or "",
+                "message": row["message"] or "",
+            })
+
+        return {
+            "services_tracked": services_tracked,
+            "system_log_events": system_log_events,
+            "firewall_events": firewall_events,
+            "total_events_classified": total_events_classified,
+            "services_by_volume": services_by_volume,
+            "recent_logs": recent_logs,
+        }
+
+    except Exception as e:
+        print(f"System logs query failed: {e}")
+        return {
+            "services_tracked": 0,
+            "system_log_events": 0,
+            "firewall_events": 0,
+            "total_events_classified": 0,
+            "services_by_volume": {},
+            "recent_logs": [],
+        }
+    finally:
+        close_db(conn)
+
+
 def query_new_since(since_ts: str):
     """Query what's changed since a given timestamp (epoch seconds or ISO).
     Returns new events count, new anomalies, new unique IPs, new rule matches,
@@ -2841,20 +3053,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         
         return False
 
-    # ─── P2-3: Prometheus metrics ──────────────────────────────────────
-    def _send_prometheus_metrics(self):
-        """Send Prometheus-format metrics."""
-        out = []
+    # ─── P2-3: Metrics endpoint (JSON) ─────────────────────────────────
+    def _send_metrics(self):
+        """Send metrics as JSON."""
+        metrics = {}
         try:
             state = load_state()
             agent_counters = state.get("agent_counters", {}) if state else {}
-            events_processed = agent_counters.get("event_count", 0)
-            anomalies_detected = agent_counters.get("anomaly_count", 0)
-            alerts_sent = agent_counters.get("alert_count", 0)
-            mutes_count = len(load_mutes())
-            baseline_count = 0
-            anomaly_by_type = {}
-            anomaly_by_severity = {}
+            metrics["events_processed"] = agent_counters.get("event_count", 0)
+            metrics["anomalies_detected"] = agent_counters.get("anomaly_count", 0)
+            metrics["alerts_sent"] = agent_counters.get("alert_count", 0)
+            metrics["mute_count"] = len(load_mutes())
+            metrics["baseline_count"] = 0
+            metrics["anomalies_by_type"] = {}
+            metrics["anomalies_by_severity"] = {}
 
             conn = get_db()
             if conn:
@@ -2862,161 +3074,93 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     cur = conn.cursor()
                     cur.execute("SELECT attack_type, COUNT(*) as cnt FROM anomalies GROUP BY attack_type")
                     for row in cur.fetchall():
-                        anomaly_by_type[str(row[0]).lower().replace(" ", "_")] = row[1]
+                        metrics["anomalies_by_type"][str(row[0]).lower().replace(" ", "_")] = row[1]
 
                     cur.execute("SELECT severity, COUNT(*) as cnt FROM anomalies GROUP BY severity")
                     for row in cur.fetchall():
-                        anomaly_by_severity[row[0]] = row[1]
+                        metrics["anomalies_by_severity"][row[0]] = row[1]
 
-                    row = cur.fetchone if False else None
                     cur.execute("SELECT COUNT(*) FROM rule_baselines WHERE baseline_updated = TRUE")
                     row = cur.fetchone()
-                    baseline_count = row[0] if row and row[0] else 0
+                    metrics["baseline_count"] = row[0] if row and row[0] else 0
                     cur.close()
                 except Exception as e:
                     logger.warning("Metrics query failed: %s", e)
                 finally:
                     close_db(conn)
 
-            out.append("# HELP events_processed_total Total events processed by the agent")
-            out.append("# TYPE events_processed_total counter")
-            out.append(f"events_processed_total {events_processed}")
-
-            out.append("# HELP anomalies_detected_total Total anomalies detected by type")
-            out.append("# TYPE anomalies_detected_total counter")
-            out.append(f'anomalies_detected_total{{type="total"}} {anomalies_detected}')
-            for atype, cnt in anomaly_by_type.items():
-                out.append(f'anomalies_detected_total{{type="{atype}"}} {cnt}')
-
-            out.append("# HELP alert_sent_total Total alerts sent by severity")
-            out.append("# TYPE alert_sent_total counter")
-            for sev, cnt in anomaly_by_severity.items():
-                out.append(f'alert_sent_total{{severity="{sev}"}} {cnt}')
-            out.append(f'alert_sent_total{{severity="total"}} {alerts_sent}')
-
-            out.append("# HELP baseline_count Number of baselines currently tracked")
-            out.append("# TYPE baseline_count gauge")
-            out.append(f"baseline_count {baseline_count}")
-
-            out.append("# HELP mute_count Number of active mutes")
-            out.append("# TYPE mute_count gauge")
-            out.append(f"mute_count {mutes_count}")
-
-            out.append("# HELP agent_uptime_seconds Agent uptime in seconds")
-            out.append("# TYPE agent_uptime_seconds gauge")
-            out.append(f"agent_uptime_seconds {_calc_uptime(agent_counters)}")
+            metrics["uptime_seconds"] = _calc_uptime(agent_counters)
 
             # ML model metrics
             try:
-                from rule_classifier import RuleClassifier
                 ml_info = load_ml_model_info()
                 if ml_info:
-                    out.append("# HELP ml_model_trained Whether ML model is trained")
-                    out.append("# TYPE ml_model_trained gauge")
-                    out.append(f"ml_model_trained {1 if ml_info.get('model_trained') else 0}")
-                    out.append("# HELP ml_model_accuracy ML model accuracy")
-                    out.append("# TYPE ml_model_accuracy gauge")
-                    out.append(f"ml_model_accuracy {ml_info.get('metrics', {}).get('cv_accuracy_mean', 0)}")
-                    out.append("# HELP ml_model_precision_macro ML model macro precision")
-                    out.append("# TYPE ml_model_precision_macro gauge")
-                    out.append(f"ml_model_precision_macro {ml_info.get('metrics', {}).get('precision_macro', 0)}")
-                    out.append("# HELP ml_model_recall_macro ML model macro recall")
-                    out.append("# TYPE ml_model_recall_macro gauge")
-                    out.append(f"ml_model_recall_macro {ml_info.get('metrics', {}).get('recall_macro', 0)}")
-                    out.append("# HELP ml_model_f1_macro ML model macro F1 score")
-                    out.append("# TYPE ml_model_f1_macro gauge")
-                    out.append(f"ml_model_f1_macro {ml_info.get('metrics', {}).get('f1_macro', 0)}")
-                    out.append("# HELP ml_model_train_samples Number of training samples")
-                    out.append("# TYPE ml_model_train_samples gauge")
-                    out.append(f"ml_model_train_samples {ml_info.get('metrics', {}).get('train_samples', 0)}")
-                    out.append("# HELP ml_model_samples_since_retrain Samples since last retrain")
-                    out.append("# TYPE ml_model_samples_since_retrain gauge")
-                    out.append(f"ml_model_samples_since_retrain {ml_info.get('samples_since_retrain', 0)}")
+                    metrics["ml"] = {
+                        "model_trained": ml_info.get("model_trained", False),
+                        "cv_accuracy_mean": ml_info.get("metrics", {}).get("cv_accuracy_mean", 0),
+                        "precision_macro": ml_info.get("metrics", {}).get("precision_macro", 0),
+                        "recall_macro": ml_info.get("metrics", {}).get("recall_macro", 0),
+                        "f1_macro": ml_info.get("metrics", {}).get("f1_macro", 0),
+                        "train_samples": ml_info.get("metrics", {}).get("train_samples", 0),
+                        "samples_since_retrain": ml_info.get("samples_since_retrain", 0),
+                    }
             except Exception as ml_err:
                 logger.debug("Could not add ML metrics: %s", ml_err)
 
             # Resource monitoring metrics
+            metrics["system"] = {}
             try:
                 from health_monitor import get_system_metrics
                 res = get_system_metrics(db_size=True, disk=True, redis_memory=True)
 
-                # Memory metrics
                 mem = res.get("memory", {})
                 if "error" not in mem:
-                    out.append("# HELP agent_memory_usage_bytes Agent memory usage in bytes")
-                    out.append("# TYPE agent_memory_usage_bytes gauge")
-                    out.append(f"agent_memory_usage_bytes {int(mem.get('used_mb', 0) * 1024 * 1024)}")
-                    out.append("# HELP agent_memory_total_bytes Agent total memory in bytes")
-                    out.append("# TYPE agent_memory_total_bytes gauge")
-                    out.append(f"agent_memory_total_bytes {int(mem.get('total_mb', 0) * 1024 * 1024)}")
-                    out.append("# HELP agent_memory_usage_pct Agent memory usage percentage")
-                    out.append("# TYPE agent_memory_usage_pct gauge")
-                    out.append(f"agent_memory_usage_pct {mem.get('pct_used', 0)}")
+                    metrics["system"]["memory"] = {
+                        "used_bytes": int(mem.get("used_mb", 0) * 1024 * 1024),
+                        "total_bytes": int(mem.get("total_mb", 0) * 1024 * 1024),
+                        "pct_used": mem.get("pct_used", 0),
+                    }
 
-                # CPU metrics
                 cpu = res.get("cpu", {})
                 if "error" not in cpu:
-                    out.append("# HELP agent_cpu_usage_pct Agent CPU usage percentage")
-                    out.append("# TYPE agent_cpu_usage_pct gauge")
-                    out.append(f"agent_cpu_usage_pct {cpu.get('usage_pct', 0)}")
+                    metrics["system"]["cpu_usage_pct"] = cpu.get("usage_pct", 0)
 
-                # Load average metrics
                 load = res.get("load_avg", {})
                 if "error" not in load:
-                    out.append("# HELP agent_load_avg_1m Agent 1-minute load average")
-                    out.append("# TYPE agent_load_avg_1m gauge")
-                    out.append(f"agent_load_avg_1m {load.get('1m', 0)}")
-                    out.append("# HELP agent_load_avg_5m Agent 5-minute load average")
-                    out.append("# TYPE agent_load_avg_5m gauge")
-                    out.append(f"agent_load_avg_5m {load.get('5m', 0)}")
-                    out.append("# HELP agent_load_avg_15m Agent 15-minute load average")
-                    out.append("# TYPE agent_load_avg_15m gauge")
-                    out.append(f"agent_load_avg_15m {load.get('15m', 0)}")
+                    metrics["system"]["load_avg"] = {
+                        "1m": load.get("1m", 0),
+                        "5m": load.get("5m", 0),
+                        "15m": load.get("15m", 0),
+                    }
 
-                # DB size metrics
                 db = res.get("db_size", {})
                 if "error" not in db:
-                    out.append("# HELP agent_db_size_bytes Agent database size in bytes")
-                    out.append("# TYPE agent_db_size_bytes gauge")
-                    out.append(f"agent_db_size_bytes {db.get('bytes', 0)}")
+                    metrics["system"]["db_size_bytes"] = db.get("bytes", 0)
 
-                # Disk metrics
                 disk = res.get("disk", {})
                 if "error" not in disk:
-                    out.append("# HELP agent_disk_usage_pct Agent disk usage percentage")
-                    out.append("# TYPE agent_disk_usage_pct gauge")
-                    out.append(f"agent_disk_usage_pct {disk.get('pct_used', 0)}")
-                    out.append("# HELP agent_disk_free_bytes Agent disk free space in bytes")
-                    out.append("# TYPE agent_disk_free_bytes gauge")
-                    out.append(f"agent_disk_free_bytes {int(disk.get('free_mb', 0) * 1024 * 1024)}")
+                    metrics["system"]["disk"] = {
+                        "pct_used": disk.get("pct_used", 0),
+                        "free_bytes": int(disk.get("free_mb", 0) * 1024 * 1024),
+                    }
 
-                # Redis memory metrics
                 rinfo = res.get("redis", {})
                 if "error" not in rinfo and rinfo.get("status") != "unavailable":
-                    out.append("# HELP agent_redis_memory_used_bytes Redis RSS memory in bytes")
-                    out.append("# TYPE agent_redis_memory_used_bytes gauge")
-                    out.append(f"agent_redis_memory_used_bytes {int(rinfo.get('used_mb', 0) * 1024 * 1024)}")
-                    out.append("# HELP agent_redis_memory_peak_bytes Redis peak RSS memory in bytes")
-                    out.append("# TYPE agent_redis_memory_peak_bytes gauge")
-                    out.append(f"agent_redis_memory_peak_bytes {int(rinfo.get('peak_mb', 0) * 1024 * 1024)}")
-                    out.append("# HELP agent_redis_connected_clients Redis connected clients")
-                    out.append("# TYPE agent_redis_connected_clients gauge")
-                    out.append(f"agent_redis_connected_clients {rinfo.get('connected_clients', 0)}")
+                    metrics["system"]["redis"] = {
+                        "memory_used_bytes": int(rinfo.get("used_mb", 0) * 1024 * 1024),
+                        "memory_peak_bytes": int(rinfo.get("peak_mb", 0) * 1024 * 1024),
+                        "connected_clients": rinfo.get("connected_clients", 0),
+                    }
                     if rinfo.get("max_mb", 0) > 0:
-                        out.append("# HELP agent_redis_memory_usage_pct Redis memory usage percentage of maxmemory")
-                        out.append("# TYPE agent_redis_memory_usage_pct gauge")
-                        out.append(f"agent_redis_memory_usage_pct {rinfo.get('pct_of_max', 0)}")
+                        metrics["system"]["redis"]["pct_of_max"] = rinfo.get("pct_of_max", 0)
             except Exception as res_err:
                 logger.debug("Could not add resource metrics: %s", res_err)
 
         except Exception as e:
-            logger.error("Prometheus metrics generation failed: %s", e)
-            out = [f"# ERROR: {e}"]
+            logger.error("Metrics generation failed: %s", e)
+            return self._send_json({"error": str(e)}, 500)
 
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(("\n".join(out) + "\n").encode())
+        self._send_json(metrics)
 
     # ─── P2-6: SSE handler ─────────────────────────────────────────────
     def _handle_sse(self):
@@ -3210,7 +3354,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/flows":
                 self._send_json(query_flows())
             elif path == "/api/logs":
-                self._send_json(query_logs())
+                log_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                days = int(log_query.get("days", ["1"])[0] or "1")
+                limit = int(log_query.get("limit", ["50"])[0] or "50")
+                src_ip = log_query.get("src_ip", [None])[0]
+                self._send_json(query_logs(days=days, limit=limit, src_ip=src_ip))
             elif path == "/api/system_logs":
                 self._send_json(query_system_logs())
             elif path == "/api/opnsense":
@@ -3223,10 +3371,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(data)
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
-            # P2-3: Prometheus metrics endpoint
+            # P2-3: Metrics endpoint (JSON)
             elif path == "/api/metrics":
                 try:
-                    self._send_prometheus_metrics()
+                    self._send_metrics()
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
             # ML model endpoints
@@ -3261,7 +3409,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json({'error': str(e)}, 500)
             elif path == "/api/active-learning-queue":
                 try:
-                    data = api_active_learning_queue_status()
+                    data = api_active_learning_queue()
                     self._send_json(data)
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
