@@ -4219,9 +4219,14 @@ def query_opnsense_firewall_rules():
                 "protocol": rule.get("protocol", ""),
             }
             
-            # Index by full UUID
+            # Index by full UUID (hyphenated form from OPNsense)
             if rule_uuid:
                 rules_by_uuid[rule_uuid] = rule_meta
+            
+            # Index by full hex UUID (no hyphens) — matches what events store as rule_name
+            if rule_uuid:
+                full_hex = rule_uuid.replace("-", "")
+                rules_by_uuid[full_hex] = rule_meta
             
             # Index by short UUID (first part before hyphen)
             if rule_short_id:
@@ -4439,8 +4444,12 @@ def query_rules_classified():
     try:
         from rule_classify import RuleClassifierML
 
-        # Fetch OPNsense rule metadata for human-readable names
-        opnsense_rules = query_opnsense_firewall_rules()
+        # Fetch OPNsense rule metadata for human-readable names (use cache)
+        opnsense_rules = get_cached_opnsense_rules()
+        if not opnsense_rules:
+            # Cache empty — try a fresh fetch as fallback
+            print("[RulesClassified] Cache empty, fetching fresh from OPNsense...")
+            opnsense_rules = query_opnsense_firewall_rules()
 
         conn = get_db()
         cur = conn.cursor()
@@ -4486,10 +4495,14 @@ def query_rules_classified():
         # Enrich each classified rule with OPNsense metadata for human readability
         for rule in classified_rules:
             rname = rule.get('rule_name', '')
-            # Try to match by full rule_name, then by short UUID (first 8 chars)
-            short_id = rname[:8] if rname else ''
+            # Try to match by full rule_name (handles source_net names like __qfeeds_malware_ip)
             meta = opnsense_rules.get(rname, {})
-            if not meta and short_id:
+            # Try full hex UUID match (32 chars, no hyphens — what events store)
+            if not meta and len(rname) == 32:
+                meta = opnsense_rules.get(rname, {})
+            # Try short UUID prefix (first 8 chars)
+            if not meta:
+                short_id = rname[:8]
                 meta = opnsense_rules.get(short_id, {})
             if meta:
                 desc = meta.get('description', '')
@@ -4500,7 +4513,7 @@ def query_rules_classified():
                 if not desc:
                     desc = rname[:12]
                 rule['human_readable_name'] = desc
-                rule['rule_description'] = desc
+                rule['rule_description'] = meta.get('description', desc)
                 rule['rule_action'] = meta.get('action', '')
                 rule['rule_protocol'] = meta.get('protocol', '')
                 rule['rule_interface'] = meta.get('interface', '')
@@ -4515,9 +4528,13 @@ def query_rules_classified():
                 # No metadata found — generate fallback name from event attributes
                 fallback = generate_rule_name(rule) or ''
                 if not fallback:
-                    fallback = rname[:12]
+                    # If rule_name looks like a UUID, show a readable fallback
+                    if len(rname) == 32 and all(c in '0123456789abcdef' for c in rname.lower()):
+                        fallback = f"Rule {rname[:8]}"
+                    else:
+                        fallback = rname[:12] if rname else 'Unknown'
                 rule['human_readable_name'] = fallback
-                rule['rule_description'] = ''
+                rule['rule_description'] = fallback
                 rule['rule_action'] = rule.get('action', '')
                 rule['rule_protocol'] = ''
                 rule['rule_interface'] = ''
