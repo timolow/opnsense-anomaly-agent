@@ -4575,8 +4575,8 @@ def query_rules_classified():
         classified_rules = classifier.get_classified_rules()
         
         # Enrich each classified rule with OPNsense metadata for human readability
-        conn2 = get_db()
-        cur2 = conn2.cursor()
+        # Reuse existing conn (cur2 is a separate cursor on the same connection)
+        cur2 = conn.cursor()
         for rule in classified_rules:
             rname = rule.get('rule_name', '')
             # Try to match by full rule_name (handles source_net names like __qfeeds_malware_ip)
@@ -4656,7 +4656,6 @@ def query_rules_classified():
                 rule['rule_log'] = False
                 rule['rule_uuid'] = ''
         cur2.close()
-        conn2.close()
         
         # Save state
         classifier.save_state()
