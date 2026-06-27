@@ -231,17 +231,30 @@ export const api = {
     return { events, total: raw.length };
   },
   geo: async (): Promise<GeoData> => {
-    const raw = await json<Array<unknown>>('/geo');
-    return {
-      countries: raw.map((c: any) => ({
-        country: c.country || c.label || 'Unknown',
-        count: c.count || 0,
-        color: c.color || CYBER.textMuted,
-        flag: c.flag || '',
-        x: c.x || 0,
-        y: c.y || 0,
-      })),
-    };
+    const raw = await json<Record<string, unknown>>('/geo');
+    // Backend now returns {total_events, regions: [...]}
+    // Convert to {countries: [...], hotspots: [...]}
+    const regions = (raw.regions as any[]) || (Array.isArray(raw) ? raw : []);
+    const countries = regions.map((r: any) => ({
+      country: r.country || r.label || 'Unknown',
+      count: r.count || 0,
+      color: r.color || CYBER.textMuted,
+      flag: r.flag || r.code || '',
+      x: r.lon || 0,
+      y: r.lat || 0,
+    }));
+    // Derive hotspots from regions (each region → one hotspot marker)
+    const hotspots: GeoHotspot[] = regions.map((r: any) => ({
+      ip: r.country || 'region',
+      src_ip: r.country || 'region',
+      lat: r.lat ?? 0,
+      lon: r.lon ?? 0,
+      count: r.count || 0,
+      severity: r.count > 100000 ? 'CRITICAL' : r.count > 50000 ? 'HIGH' : r.count > 10000 ? 'MEDIUM' : 'LOW',
+      country: r.code || r.country || '--',
+      country_name: r.country || 'Unknown',
+    }));
+    return { countries, hotspots };
   },
   alerts: async (): Promise<AlertsData> => {
       // Merge volume-based alerts from events with ML-detected anomalies
@@ -489,6 +502,7 @@ export const api = {
         uuid: r.rule_name || '',
         short_id: (r.rule_name || '').substring(0, 8),
         name: r.human_readable_name || r.rule_name || '',
+        description: r.rule_description || r.human_readable_name || r.rule_name || '',
         source_net: r.source_address || r.source_net || '',
         destination_net: r.destination_address || r.destination_net || '',
         action: r.rule_action || r.action || '',

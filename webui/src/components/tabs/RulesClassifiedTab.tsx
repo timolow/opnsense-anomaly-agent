@@ -193,7 +193,7 @@ export default function RulesClassifiedTab() {
           <tbody>
             {data.rules.slice(0, 30).map((rule) => (
               <tr key={rule.uuid} className="hover:bg-cyber-panel/30">
-                <td className="font-semibold max-w-[150px] truncate">{rule.name}</td>
+                <td className="font-semibold max-w-[150px] truncate">{rule.description || rule.name}</td>
                 <td className="font-mono text-xs">{rule.source_net}</td>
                 <td className="font-mono">{(rule.events_24h || 0).toLocaleString()}</td>
                 <td><span className={`cyber-badge ${classificationColor(rule.classification)}`}>{rule.classification}</span></td>
