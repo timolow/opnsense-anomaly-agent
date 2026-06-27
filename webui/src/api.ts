@@ -15,6 +15,7 @@ import type {
   IpFlowClusterData,
   BaselineDeviationsData,
   WhatChangedData,
+  DnsQueryData,
 } from './types';
 
 const BASE = '/api';
@@ -191,14 +192,18 @@ export const api = {
       value: rows.map((r: any) => typeof r === 'number' ? r : (r.value || 0)),
     };
   },
-  ipFlow: async (): Promise<IpFlowData> => {
-    const raw = await json<Record<string, unknown>>('/ip-flow');
+  ipFlow: async (ip_version?: string): Promise<IpFlowData> => {
+    const qs = ip_version ? `?ip_version=${ip_version}` : '';
+    const raw = await json<Record<string, unknown>>(`/ip-flow${qs}`);
     const nodes = raw.nodes || [];
     const links = raw.links || [];
     return {
       nodes: nodes as any[],
       edges: links as any[],
     };
+  },
+  dnsQueries: async (): Promise<DnsQueryData> => {
+    return json<DnsQueryData>('/dns-queries');
   },
   ipFlowClusters: async (params?: { expand?: string; threshold?: number }): Promise<IpFlowClusterData> => {
     const qs = new URLSearchParams();

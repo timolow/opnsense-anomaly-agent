@@ -698,17 +698,25 @@ def _fallback_heatmap():
     matrix = [[ip_hour[ip].get(h, 0) for h in range(24)] for ip in sorted_ips]
     return {"labels_x": [f"{h:02d}:00" for h in range(24)], "labels_y": sorted_ips, "data": matrix, "total_events": sum(sum(row) for row in matrix)}
 
-def query_ip_flow():
+def query_ip_flow(ip_version: str = None):
     conn = get_db()
     if not conn: return _fallback_flow()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Build IP version filter
+        ip_filter = ""
+        if ip_version == "ipv4":
+            ip_filter = " AND (src_ip LIKE '%.%.%.%' AND src_ip NOT LIKE '%:%') AND (dst_ip LIKE '%.%.%.%' AND dst_ip NOT LIKE '%:%')"
+        elif ip_version == "ipv6":
+            ip_filter = " AND (src_ip LIKE '%:%' OR (src_ip NOT LIKE '%.%.%.%' AND src_ip != ''))"
+
         cur.execute("""
             SELECT src_ip, dst_ip, COUNT(*) as connection_count,
                    ARRAY_AGG(DISTINCT dst_port) as ports,
                    ARRAY_AGG(DISTINCT interface) as interfaces
             FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
+            """ + ip_filter + """
             GROUP BY src_ip, dst_ip
             HAVING COUNT(*) > 1
             ORDER BY connection_count DESC
@@ -719,6 +727,7 @@ def query_ip_flow():
             SELECT src_ip, interface
             FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL
+            """ + ip_filter.replace(" AND (dst_ip", "") + """
             GROUP BY src_ip, interface
         """)
         iface_rows = cur.fetchall()
@@ -2950,6 +2959,71 @@ def query_nginx_summary():
         close_db(conn)
 
 
+def query_dns_queries():
+    """Return DNS query data. Currently returns empty state since DNS logging
+    requires OPNsense Unbound config changes.
+    UI expects: {queries: [], total: 0, top_domains: [], top_clients: [],
+                 data_source_status: 'not_configured', empty_message: ...}
+    """
+    conn = get_db()
+    # Check if dns_queries table exists (future-proof)
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_name = 'dns_queries'
+            """)
+            table_exists = cur.fetchone()[0] > 0
+            if table_exists:
+                cur.execute("""
+                    SELECT domain, client_ip, query_type, response_code, timestamp
+                    FROM dns_queries
+                    WHERE timestamp > NOW() - INTERVAL '24 hours'
+                    ORDER BY timestamp DESC LIMIT 200
+                """)
+                rows = cur.fetchall()
+                queries = [{
+                    'domain': r[0], 'client_ip': r[1],
+                    'query_type': r[2], 'response_code': r[3],
+                    'timestamp': str(r[4])
+                } for r in rows]
+                # Top domains
+                cur.execute("""
+                    SELECT domain, COUNT(*) as cnt FROM dns_queries
+                    WHERE timestamp > NOW() - INTERVAL '24 hours'
+                    GROUP BY domain ORDER BY cnt DESC LIMIT 20
+                """)
+                top_domains = [{'domain': r[0], 'count': r[1]} for r in cur.fetchall()]
+                # Top clients
+                cur.execute("""
+                    SELECT client_ip, COUNT(*) as cnt FROM dns_queries
+                    WHERE timestamp > NOW() - INTERVAL '24 hours'
+                    GROUP BY client_ip ORDER BY cnt DESC LIMIT 20
+                """)
+                top_clients = [{'client_ip': r[0], 'count': r[1]} for r in cur.fetchall()]
+                return {
+                    'queries': queries,
+                    'total': len(queries),
+                    'top_domains': top_domains,
+                    'top_clients': top_clients,
+                    'data_source_status': 'configured' if queries else 'no_data',
+                }
+        except Exception:
+            pass
+        finally:
+            close_db(conn)
+
+    return {
+        'queries': [],
+        'total': 0,
+        'top_domains': [],
+        'top_clients': [],
+        'data_source_status': 'not_configured',
+        'empty_message': 'DNS query monitoring requires Unbound DNS logging enabled on OPNsense. To enable: go to Services > Unbound DNS > General > check "DNS log" in Advanced settings. After enabling, restart Unbound and this tab will show live DNS query data.',
+    }
+
+
 def query_nginx_anomalies():
     """Return recent nginx anomalies."""
     empty_msg = "No Nginx anomaly data. Requires nginx events from stub_status monitoring."
@@ -3440,7 +3514,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/heatmap":
                 self._send_json(query_heatmap())
             elif path == "/api/ip-flow":
-                self._send_json(query_ip_flow())
+                ip_flow_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                ip_version = ip_flow_query.get("ip_version", [None])[0]
+                self._send_json(query_ip_flow(ip_version=ip_version))
             elif path == "/api/ip-flow-clusters":
                 cluster_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 expand = cluster_query.get("expand", [None])[0]
@@ -3625,6 +3701,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(query_nginx_top_paths())
             elif path == "/api/nginx-timeline":
                 self._send_json(query_nginx_timeline())
+            # ═══════════════════════════════════════════════
+            # DNS query monitoring
+            # ═══════════════════════════════════════════════
+            elif path == "/api/dns-queries":
+                self._send_json(query_dns_queries())
             elif path == "/api/wan-flap":
                 self._send_json(query_wan_flaps())
             elif path == "/api/wan-flap-status":
