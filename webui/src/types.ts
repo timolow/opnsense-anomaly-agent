@@ -114,6 +114,22 @@ export interface MutesData {
   expires: string;
 }
 
+export interface GeoHotspot {
+  ip: string;
+  src_ip: string;
+  lat: number;
+  lon: number;
+  count: number;
+  severity: string;
+  country: string;
+  country_name?: string;
+  dst_ip?: string;
+  unique_dst?: number;
+  interface?: string;
+  action?: string;
+  attack_type?: string;
+}
+
 export interface GeoData {
   countries: Array<{
     country: string;
@@ -123,6 +139,7 @@ export interface GeoData {
     x: number;
     y: number;
   }>;
+  hotspots: GeoHotspot[];
 }
 
 export interface HealthData {
