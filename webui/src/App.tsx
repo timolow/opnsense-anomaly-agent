@@ -24,11 +24,12 @@ import RulesTab from './components/tabs/RulesTab';
 import SyslogsTab from './components/tabs/SyslogsTab';
 import ServicesTab from './components/tabs/ServicesTab';
 import SettingsTab from './components/tabs/SettingsTab';
-import LogsQueryTab from './components/tabs/LogsQueryTab';
+import DnsQueriesTab from './components/tabs/DnsQueriesTab';
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
 import NginxTab from './components/tabs/NginxTab';
+import LogsQueryTab from './components/tabs/LogsQueryTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Overview',
@@ -45,11 +46,12 @@ const TAB_TITLE: Record<string, string> = {
   syslogs: 'Syslogs',
   services: 'Services',
   settings: 'Settings',
-  logs: 'Query Logs',
+  logs: 'DNS Queries',
   network: 'Network Topology',
   'wan-flap': 'WAN Flap Detection',
   'rules-classified': 'Rules ML',
   nginx: 'Nginx Monitor',
+  'query-logs': 'Query Logs',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -72,12 +74,13 @@ function TabContent({ tab }: { tab: string }) {
           case 'syslogs': return <SyslogsTab />;
           case 'services': return <ServicesTab />;
           case 'settings': return <SettingsTab />;
-          case 'logs': return <LogsQueryTab />;
+          case 'logs': return <DnsQueriesTab />;
           case 'network': return <NetworkTab />;
           case 'wan-flap': return <WanFlapTab />;
           case 'rules-classified': return <RulesClassifiedTab />;
           case '': return <OverviewTab />;
           case 'nginx': return <NginxTab />;
+          case 'query-logs': return <LogsQueryTab />;
           default: return <OverviewTab />;
         }
       })()}
@@ -109,7 +112,7 @@ export default function App() {
         'firerules': 'rules',
         'rules-ml': 'rules-classified',
         'rulesml': 'rules-classified',
-        'querylogs': 'logs',
+        'querylogs': 'query-logs',
         'wanflap': 'wan-flap',
         'wan-flap': 'wan-flap',
         'network-topology': 'network',

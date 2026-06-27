@@ -574,3 +574,22 @@ export interface WhatChangedData {
   new_baseline_breaches: Array<{ rule_name: string; current_rate: number; baseline_rate: number; deviation: number }>;
   first_time: boolean;
 }
+
+// ═══════════════════════════════════════════════════
+// DNS Query monitoring types
+// ═══════════════════════════════════════════════════
+
+export interface DnsQueryData {
+  queries: Array<{
+    domain: string;
+    client_ip: string;
+    query_type: string;
+    response_code: string;
+    timestamp: string;
+  }>;
+  total: number;
+  top_domains: Array<{ domain: string; count: number }>;
+  top_clients: Array<{ client_ip: string; count: number }>;
+  data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+  empty_message?: string;
+}

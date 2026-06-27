@@ -71,7 +71,8 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <FileText size={16} />,
     items: [
       { id: 'syslogs', label: 'Syslogs', icon: <FileText size={14} /> },
-      { id: 'logs', label: 'Query Logs', icon: <Database size={14} /> },
+      { id: 'logs', label: 'DNS Queries', icon: <Database size={14} /> },
+      { id: 'query-logs', label: 'Query Logs', icon: <Search size={14} /> },
     ],
   },
   {

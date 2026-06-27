@@ -353,6 +353,16 @@ export function NginxSkeleton() {
   );
 }
 
+export function DnsQueriesSkeleton() {
+  return (
+    <div className="space-y-4">
+      <TabHeaderSkeleton />
+      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
+      <TableSkeleton rows={8} />
+    </div>
+  );
+}
+
 // ── Skeleton dispatch by tab key ──
 const SKELETON_MAP: Record<string, React.ComponentType> = {
   overview: OverviewSkeleton,
@@ -370,7 +380,7 @@ const SKELETON_MAP: Record<string, React.ComponentType> = {
   syslogs: SyslogsSkeleton,
   services: ServicesSkeleton,
   settings: SettingsSkeleton,
-  logs: LogsQuerySkeleton,
+  logs: DnsQueriesSkeleton,
   network: NetworkSkeleton,
   'wan-flap': WanFlapSkeleton,
   nginx: NginxSkeleton,

@@ -1,17 +1,26 @@
 // ═══════════════════════════════════════════════════
-// Logs Query Tab - Query logs
+// Logs Query Tab - Query logs via GET /api/logs
 // ═══════════════════════════════════════════════════
 
 import { useState } from 'react';
 import { Database, Search, Filter } from 'lucide-react';
-import type { Event } from '@/types';
 
-import { LogsQuerySkeleton } from '../../components/SkeletonLoaders';
+import { LogsQuerySkeleton } from '../SkeletonLoaders';
+
+interface LogEntry {
+  timestamp: string;
+  src_ip: string;
+  dst_ip: string;
+  dst_port: number | null;
+  proto: string;
+  action: string;
+  rule_name: string;
+}
 
 export default function LogsQueryTab() {
   const [srcIp, setSrcIp] = useState('');
   const [days, setDays] = useState('7');
-  const [results, setResults] = useState<Event[]>([]);
+  const [results, setResults] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -21,30 +30,16 @@ export default function LogsQueryTab() {
     setLoading(true);
     setError('');
     setResults([]);
-    
+
     try {
-      const res = await fetch('/api//events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: {
-            bool: {
-              should: [
-                { term: { 'source.ip': srcIp } },
-                { term: { 'destination.ip': srcIp } },
-              ],
-              minimum_should_match: 1,
-            },
-          },
-          size: 100,
-          sort: [{ '@timestamp': { order: 'desc' } }],
-          _source: true,
-        }),
-      });
-      
+      const params = new URLSearchParams({ days, limit: '100' });
+      if (srcIp) params.set('src_ip', srcIp);
+
+      const res = await fetch(`/api/logs?${params.toString()}`);
+
       if (!res.ok) throw new Error(`Search failed: ${res.status}`);
       const data = await res.json();
-      setResults(data.hits || []);
+      setResults(data.logs || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed');
     } finally {
@@ -91,7 +86,7 @@ export default function LogsQueryTab() {
           <div className="flex items-end">
             <button
               onClick={handleSearch}
-              disabled={loading || !srcIp}
+              disabled={loading}
               className="cyber-btn w-full flex items-center justify-center gap-2"
             >
               <Search size={14} /> Search
@@ -111,7 +106,7 @@ export default function LogsQueryTab() {
         ) : results.length === 0 ? (
           <div className="text-center py-12 text-cyber-textMuted">
             <Filter size={32} className="mx-auto mb-2 opacity-30" />
-            No results found
+            No results found. Enter a source IP and click Search, or leave blank to fetch recent logs.
           </div>
         ) : (
           <>
@@ -125,28 +120,26 @@ export default function LogsQueryTab() {
                     <th>Timestamp</th>
                     <th>Action</th>
                     <th>Protocol</th>
-                    <th>Source</th>
-                    <th>Destination</th>
-                    <th>Port</th>
-                    <th>Interface</th>
-                    <th>Rule</th>
+                    <th>Source IP</th>
+                    <th>Dest IP</th>
+                    <th>Dest Port</th>
+                    <th>Rule Name</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {results.map((event, i) => (
+                  {results.map((log, i) => (
                     <tr key={i} className="hover:bg-cyber-panel/30">
-                      <td className="text-cyber-textMuted">{new Date(event['@timestamp']).toLocaleString()}</td>
+                      <td className="text-cyber-textMuted">{new Date(log.timestamp).toLocaleString()}</td>
                       <td>
-                        <span className={`cyber-badge ${event.event.action === 'pass' ? 'cyber-badge-pass' : 'cyber-badge-block'}`}>
-                          {event.event.action}
+                        <span className={`cyber-badge ${log.action === 'pass' ? 'cyber-badge-pass' : 'cyber-badge-block'}`}>
+                          {log.action}
                         </span>
                       </td>
-                      <td className="font-mono">{event.network.protocol?.toUpperCase()}</td>
-                      <td className="font-mono">{event.source.ip}</td>
-                      <td className="font-mono">{event.destination.ip}</td>
-                      <td className="font-mono">{event.destination.port}</td>
-                      <td className="font-mono text-xs">{event.interface.name}</td>
-                      <td className="font-mono text-xs">{event.rule.id}</td>
+                      <td className="font-mono">{log.proto?.toUpperCase()}</td>
+                      <td className="font-mono">{log.src_ip}</td>
+                      <td className="font-mono">{log.dst_ip}</td>
+                      <td className="font-mono">{log.dst_port ?? '-'}</td>
+                      <td className="font-mono text-xs">{log.rule_name || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
