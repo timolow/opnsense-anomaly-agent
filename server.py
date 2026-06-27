@@ -4262,29 +4262,19 @@ def query_opnsense_firewall_rules():
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         auth_header = f"Basic {auth_b64}"
 
-        # Fetch ALL firewall rules via GET /api/firewall/filter
-        # GET /api/firewall/filter/search_rule only returns search results (1 rule with no query)
+        # Use OPNsense search_rule API (only endpoint that returns firewall rules)
         req = urllib.request.Request(
-            f"{opn_url}/api/firewall/filter",
+            f"{opn_url}/api/firewall/filter/search_rule",
             headers={"Authorization": auth_header},
         )
         with urllib.request.urlopen(req, context=ssl_context, timeout=10) as resp:
             rules_data = json.loads(resp.read().decode())
 
-        # Parse response: OPNsense returns {"rules": {"row": [...]}} or {"row": [...]}
-        rules_list = []
-        if isinstance(rules_data, dict):
-            # Try nested structure first
-            if "rules" in rules_data and isinstance(rules_data["rules"], dict):
-                rules_list = rules_data["rules"].get("row", [])
-            # Fallback: flat row array
+        rules_list = rules_data.get("rows", [])
+        if not rules_list and isinstance(rules_data, dict):
+            rules_list = rules_data.get("rules", {}).get("row", [])
             if not rules_list:
                 rules_list = rules_data.get("row", [])
-            # Fallback: rows (search endpoint format)
-            if not rules_list:
-                rules_list = rules_data.get("rows", [])
-        elif isinstance(rules_data, list):
-            rules_list = rules_data
 
         # Index by source_net for easy lookup (human-readable rule names)
         # Also index by UUID for compatibility with existing RUID-based events
@@ -4585,6 +4575,8 @@ def query_rules_classified():
         classified_rules = classifier.get_classified_rules()
         
         # Enrich each classified rule with OPNsense metadata for human readability
+        conn2 = get_db()
+        cur2 = conn2.cursor()
         for rule in classified_rules:
             rname = rule.get('rule_name', '')
             # Try to match by full rule_name (handles source_net names like __qfeeds_malware_ip)
@@ -4617,17 +4609,43 @@ def query_rules_classified():
                 rule['rule_log'] = meta.get('log', False)
                 rule['rule_uuid'] = meta.get('uuid', '')
             else:
-                # No metadata found — generate fallback name from event attributes
-                fallback = generate_rule_name(rule) or ''
+                # No OPNsense metadata found (legacy/deleted rule) — query DB for event patterns
+                cur2.execute("""
+                    SELECT action, proto, dst_port, interface,
+                           COUNT(*) as cnt
+                    FROM events
+                    WHERE rule_name = %s
+                      AND action IN ('PASS', 'BLOCK')
+                    GROUP BY action, proto, dst_port, interface
+                    ORDER BY cnt DESC
+                    LIMIT 1
+                """, (rname,))
+                row = cur2.fetchone()
+                fallback = ''
+                if row:
+                    parts = []
+                    action = (row[0] or '').upper()
+                    proto = (row[1] or '').upper()
+                    dst_port = row[2]
+                    iface = row[3]
+                    if action:
+                        parts.append(action)
+                    if proto:
+                        parts.append(proto)
+                    if dst_port:
+                        parts.append(f"port:{dst_port}")
+                    if iface:
+                        parts.append(f"[{iface}]")
+                    fallback = ' '.join(parts) if parts else action
                 if not fallback:
                     # If rule_name looks like a UUID, show a readable fallback
                     if len(rname) == 32 and all(c in '0123456789abcdef' for c in rname.lower()):
-                        fallback = f"Rule {rname[:8]}"
+                        fallback = f"Legacy rule {rname[:8]}"
                     else:
                         fallback = rname[:12] if rname else 'Unknown'
                 rule['human_readable_name'] = fallback
                 rule['rule_description'] = fallback
-                rule['rule_action'] = rule.get('action', '')
+                rule['rule_action'] = ''
                 rule['rule_protocol'] = ''
                 rule['rule_interface'] = ''
                 rule['source_address'] = ''
@@ -4637,6 +4655,8 @@ def query_rules_classified():
                 rule['rule_disabled'] = False
                 rule['rule_log'] = False
                 rule['rule_uuid'] = ''
+        cur2.close()
+        conn2.close()
         
         # Save state
         classifier.save_state()

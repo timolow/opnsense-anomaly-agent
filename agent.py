@@ -260,6 +260,7 @@ class OPNsenseClient:
     def fetch_rules(self) -> Dict[str, Dict[str, Any]]:
         """Fetch all firewall rules from OPNsense API and index by UUID."""
         try:
+            # Use OPNsense search_rule API (only endpoint that returns firewall rules)
             resp = requests.get(
                 f"{self.base_url}/api/firewall/filter/search_rule",
                 headers=self._auth_headers(),
@@ -272,6 +273,7 @@ class OPNsenseClient:
             
             data = resp.json()
             rules_list = data.get("rows", [])
+            
             rules_by_uuid: Dict[str, Dict[str, Any]] = {}
             
             for rule in rules_list:
