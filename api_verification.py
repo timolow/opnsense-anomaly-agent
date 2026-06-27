@@ -136,7 +136,8 @@ def _define_endpoints() -> List[EndpointSpec]:
         ),
         EndpointSpec(
             path="/api/metrics",
-            description="Prometheus-style metrics",
+            description="Agent metrics (JSON)",
+            required_keys=["events_processed"],
             empty_is_ok=False,
         ),
 

@@ -162,7 +162,7 @@ All endpoints served on port 8766. HTTP Basic Auth via `DASHBOARD_API_USER`/`DAS
 | `GET /api/ml-model` | Model info and training status |
 | `GET /api/ml-classifications` | Per-rule classification details |
 | `GET /api/drift` | Concept drift detection status |
-| `GET /api/metrics` | Prometheus-format metrics for Grafana |
+| `GET /api/metrics` | Agent metrics (JSON format) |
 | `GET /api/sse` | Server-Sent Events stream for real-time dashboard updates |
 
 ## Zero-Downtime Deployment

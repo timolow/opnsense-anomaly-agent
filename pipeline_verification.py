@@ -270,7 +270,12 @@ def check_parser(report: PipelineReport, base: str, verbose: bool = False, timeo
         })
         return
 
-    events = body.get("events", body if isinstance(body, list) else [])
+    if isinstance(body, dict):
+        events = body.get("events", [])
+    elif isinstance(body, list):
+        events = body
+    else:
+        events = []
     if not events:
         report.findings.append({
             "stage": stage, "check_name": "events_data",
@@ -464,11 +469,16 @@ def check_database(report: PipelineReport, base: str, verbose: bool = False, tim
     if status == 200 and isinstance(body, dict):
         current_version = body.get("current_version", body.get("version", 0))
         target_version = body.get("target_version", body.get("current_schema_version", 8))
-        if current_version >= target_version:
+        try:
+            cv = int(current_version)
+            tv = int(target_version)
+        except (ValueError, TypeError):
+            cv, tv = 0, 8
+        if cv >= tv:
             report.findings.append({
                 "stage": stage, "check_name": "schema_version",
                 "severity": "PASS",
-                "message": f"Schema v{current_version} (target v{target_version}) — up to date",
+                "message": f"Schema v{cv} (target v{tv}) — up to date",
                 "details": body,
                 "timestamp_ms": (time.time() - t0) * 1000,
             })
@@ -476,7 +486,7 @@ def check_database(report: PipelineReport, base: str, verbose: bool = False, tim
             report.findings.append({
                 "stage": stage, "check_name": "schema_version",
                 "severity": "WARN",
-                "message": f"Schema v{current_version} / target v{target_version} — pending migrations",
+                "message": f"Schema v{cv} / target v{tv} — pending migrations",
                 "details": body,
                 "timestamp_ms": (time.time() - t0) * 1000,
             })
@@ -484,7 +494,12 @@ def check_database(report: PipelineReport, base: str, verbose: bool = False, tim
     # 4b: Verify events table has data with correct field structure
     status, body, ms = http_get(base, "/api/events", {"limit": "3"}, timeout=timeout)
     if status == 200:
-        events = body.get("events", body if isinstance(body, list) else [])
+        if isinstance(body, dict):
+            events = body.get("events", [])
+        elif isinstance(body, list):
+            events = body
+        else:
+            events = []
         if events:
             # Check that events have IDs (persisted to DB)
             has_ids = all("id" in ev for ev in events if isinstance(ev, dict))
@@ -526,7 +541,12 @@ def check_database(report: PipelineReport, base: str, verbose: bool = False, tim
     # 4c: Check anomalies table
     status, body, ms = http_get(base, "/api/anomalies", {"limit": "5"}, timeout=timeout)
     if status == 200:
-        anomalies = body.get("anomalies", body if isinstance(body, list) else [])
+        if isinstance(body, dict):
+            anomalies = body.get("anomalies", [])
+        elif isinstance(body, list):
+            anomalies = body
+        else:
+            anomalies = []
         report.findings.append({
             "stage": stage, "check_name": "anomalies_stored",
             "severity": "PASS" if anomalies else "WARN",
@@ -560,7 +580,12 @@ def check_database(report: PipelineReport, base: str, verbose: bool = False, tim
     # 4d: Check alerts (superset of anomalies with alert state)
     status, body, ms = http_get(base, "/api/alerts", {"limit": "5"}, timeout=timeout)
     if status == 200:
-        alerts = body.get("alerts", body if isinstance(body, list) else [])
+        if isinstance(body, dict):
+            alerts = body.get("alerts", [])
+        elif isinstance(body, list):
+            alerts = body
+        else:
+            alerts = []
         report.findings.append({
             "stage": stage, "check_name": "alerts_stored",
             "severity": "INFO",

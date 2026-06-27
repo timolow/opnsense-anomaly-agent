@@ -2254,9 +2254,15 @@ def query_resources():
         status = "critical"
         warnings.append(f"Redis memory critical at {redis.get('pct_of_max', 'N/A')}% of max")
 
+    # Extract cpu_percent at top level for E2E API verification
+    cpu_percent = 0
+    if "error" not in metrics.get("cpu", {}):
+        cpu_percent = metrics["cpu"].get("usage_pct", 0)
+
     return {
         "status": status,
         "warnings": warnings,
+        "cpu_percent": cpu_percent,
         "resources": metrics,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -4389,6 +4395,7 @@ def query_rules_classified():
         return {
             'summary': summary,
             'classified_rules': classified_rules,
+            'rules': classified_rules,
             'events_fetched': len(events),
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
