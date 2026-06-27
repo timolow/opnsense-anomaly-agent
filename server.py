@@ -4262,10 +4262,16 @@ def query_opnsense_firewall_rules():
         auth_b64 = base64.b64encode(auth_string.encode()).decode()
         auth_header = f"Basic {auth_b64}"
 
-        # Use the correct OPNsense API endpoint for firewall rules
+        # Fetch ALL firewall rules via POST /api/firewall/filter/search_rule with empty query
+        # GET search_rule only returns 1 rule (search with no query = limited results)
+        payload = json.dumps({"query": "", "core": "filter"}).encode()
         req = urllib.request.Request(
             f"{opn_url}/api/firewall/filter/search_rule",
-            headers={"Authorization": auth_header},
+            data=payload,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+            },
         )
         with urllib.request.urlopen(req, context=ssl_context, timeout=10) as resp:
             rules_data = json.loads(resp.read().decode())
