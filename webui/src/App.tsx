@@ -106,7 +106,7 @@ export default function App() {
   useEffect(() => {
     // Normalize URL hash to match tab IDs
     const urlToTab = (url: string) => {
-      const hash = window.location.hash.slice(1);
+      const hash = window.location.hash.slice(1).replace(/^\//, '');
       const map: Record<string, string> = {
         'firewall-rules': 'rules',
         'firerules': 'rules',
