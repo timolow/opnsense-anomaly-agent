@@ -4595,7 +4595,7 @@ def query_rules_classified():
                 if not desc:
                     desc = rname[:12]
                 rule['human_readable_name'] = desc
-                rule['rule_description'] = meta.get('description', '') or desc
+                rule['rule_description'] = desc
                 rule['rule_action'] = meta.get('action', '')
                 rule['rule_protocol'] = meta.get('protocol', '')
                 rule['rule_interface'] = meta.get('interface', '')
