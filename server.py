@@ -1122,39 +1122,41 @@ def query_opnsense_status():
 
         results = {"status": "connected"}
 
-        def _api_get(path):
+        def _api_get(path, timeout=3):
             """Helper to GET an OPNsense API endpoint."""
             req = urllib.request.Request(
                 f"{opn_url}{path}",
                 headers={"Authorization": auth_header},
             )
-            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as resp:
+            with urllib.request.urlopen(req, context=ssl_context, timeout=timeout) as resp:
                 return json.loads(resp.read().decode())
 
-        # Fetch all independent API endpoints in parallel
-        api_endpoints = {
-            "firmware": "/api/core/firmware/status",
-            "gateways": "/api/routing/settings/searchGateway",
-            "systemResources": "/api/diagnostics/system/systemResources",
-            "system_information": "/api/diagnostics/system/system_information",
-            "memory": "/api/diagnostics/system/memory",
-            "interfaceStats": "/api/diagnostics/interface/getInterfaceStatistics",
-            "services": "/api/core/service/search",
-            "rules": "/api/firewall/rules/search",
-            "openvpn": "/api/services/openvpn/status",
-            "ntp": "/api/services/ntp/status",
-        }
+        # Fetch all independent API endpoints in parallel with timeout-aware fetching
+        # Core endpoints (firmware, gateways, systemResources) get 3s timeout
+        # Optional endpoints get 2s timeout to avoid blocking the response
+        api_endpoints = [
+            ("firmware", "/api/core/firmware/status", 3),
+            ("gateways", "/api/routing/settings/searchGateway", 3),
+            ("systemResources", "/api/diagnostics/system/systemResources", 3),
+            ("system_information", "/api/diagnostics/system/system_information", 2),
+            ("memory", "/api/diagnostics/system/memory", 2),
+            ("interfaceStats", "/api/diagnostics/interface/getInterfaceStatistics", 2),
+            ("services", "/api/core/service/search", 2),
+            ("rules", "/api/firewall/rules/search", 2),
+            ("openvpn", "/api/services/openvpn/status", 2),
+            ("ntp", "/api/services/ntp/status", 2),
+        ]
 
         api_results: Dict[str, Any] = {}
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_name = {
-                executor.submit(_api_get, path): name
-                for name, path in api_endpoints.items()
+                executor.submit(_api_get, path, timeout): name
+                for name, path, timeout in api_endpoints
             }
-            for future in as_completed(future_to_name):
+            for future in as_completed(future_to_name, timeout=5):
                 name = future_to_name[future]
                 try:
-                    api_results[name] = future.result()
+                    api_results[name] = future.result(timeout=1)
                 except Exception as e:
                     print(f"OPNsense {name} failed: {e}")
 
