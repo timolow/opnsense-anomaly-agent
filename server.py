@@ -558,7 +558,8 @@ def query_stats():
         elif "classifications" in nc:
             rules_classified = len(nc["classifications"])
     geo_data = query_geo()
-    top_countries = [g["country"] for g in geo_data]
+    geo_regions = geo_data.get("regions", []) if isinstance(geo_data, dict) else geo_data
+    top_countries = [g["country"] for g in geo_regions]
     
     # Hourly sparkline data (last 24h) — single efficient query
     sparklines = {
