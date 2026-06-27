@@ -347,7 +347,7 @@ export const api = {
       events_24h: (raw.events_24h as number) || (raw.total_events as number) || 0,
     };
   },
-  zenarmorPolicies: async (): Promise<ZenArmorData['policies'][]> => {
+  zenarmorPolicies: async (): Promise<ZenArmorData['policies']> => {
     const raw = await json<Record<string, unknown>>('/zenarmor-policies');
     // Handle both array (legacy) and {items: [...], data_source_status, empty_message} formats
     if (Array.isArray(raw)) return raw.map((p: any) => ({
