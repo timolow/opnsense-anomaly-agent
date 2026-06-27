@@ -3,6 +3,122 @@
 @tailwind utilities;
 
 /* ═══════════════════════════════════════════════════
+   Theme System — CSS custom properties driven by
+   [data-theme] on <html>.  Default = cyberpunk.
+   ═══════════════════════════════════════════════════ */
+
+:root,
+[data-theme="cyberpunk"] {
+  --theme-bg:           #0a0e17;
+  --theme-bg-darker:    #060a12;
+  --theme-panel:        #111827;
+  --theme-panel-hover:  #1a2332;
+  --theme-border:       #1e293b;
+  --theme-border-light: #2d3a4e;
+  --theme-text:         #e2e8f0;
+  --theme-text-muted:   #64748b;
+  --theme-text-dim:     #3b4a5c;
+  --theme-accent:       #00e5ff;
+  --theme-accent-hover: #00b8d4;
+  --theme-secondary:    #ff006e;
+  --theme-green:        #00ff88;
+  --theme-yellow:       #ffbe0b;
+  --theme-orange:       #ff7800;
+  --theme-red:          #ff1744;
+  --theme-scrollbar-track:      #0d1117;
+  --theme-scrollbar-thumb:      #1e293b;
+  --theme-scrollbar-thumb-hover:#2d3a4e;
+}
+
+[data-theme="ocean"] {
+  --theme-bg:           #0c2461;
+  --theme-bg-darker:    #081845;
+  --theme-panel:        #102a6e;
+  --theme-panel-hover:  #163078;
+  --theme-border:       #1a3a7a;
+  --theme-border-light: #244a8a;
+  --theme-text:         #ffffff;
+  --theme-text-muted:   #88a4c8;
+  --theme-text-dim:     #5577a0;
+  --theme-accent:       #0abde3;
+  --theme-accent-hover: #0897b5;
+  --theme-secondary:    #48dbfb;
+  --theme-green:        #00d2d3;
+  --theme-yellow:       #feca57;
+  --theme-orange:       #ff9f43;
+  --theme-red:          #ff6b6b;
+  --theme-scrollbar-track:      #081845;
+  --theme-scrollbar-thumb:      #1a3a7a;
+  --theme-scrollbar-thumb-hover:#244a8a;
+}
+
+[data-theme="sunset"] {
+  --theme-bg:           #2c003e;
+  --theme-bg-darker:    #1e0028;
+  --theme-panel:        #3d0a52;
+  --theme-panel-hover:  #4a0e60;
+  --theme-border:       #5a1870;
+  --theme-border-light: #6a2080;
+  --theme-text:         #f8e8ff;
+  --theme-text-muted:   #b088c8;
+  --theme-text-dim:     #7a55a0;
+  --theme-accent:       #ff9f43;
+  --theme-accent-hover: #e88a30;
+  --theme-secondary:    #feca57;
+  --theme-green:        #55efc4;
+  --theme-yellow:       #feca57;
+  --theme-orange:       #ff9f43;
+  --theme-red:          #ff6348;
+  --theme-scrollbar-track:      #1e0028;
+  --theme-scrollbar-thumb:      #5a1870;
+  --theme-scrollbar-thumb-hover:#6a2080;
+}
+
+[data-theme="matrix"] {
+  --theme-bg:           #0a0a0a;
+  --theme-bg-darker:    #050505;
+  --theme-panel:        #0f1a0f;
+  --theme-panel-hover:  #142014;
+  --theme-border:       #1a3b1a;
+  --theme-border-light: #245024;
+  --theme-text:         #00ff41;
+  --theme-text-muted:   #008830;
+  --theme-text-dim:     #002000;
+  --theme-accent:       #00ff41;
+  --theme-accent-hover: #00cc33;
+  --theme-secondary:    #00cc33;
+  --theme-green:        #00ff41;
+  --theme-yellow:       #aaff00;
+  --theme-orange:       #ffaa00;
+  --theme-red:          #ff3333;
+  --theme-scrollbar-track:      #050505;
+  --theme-scrollbar-thumb:      #1a3b1a;
+  --theme-scrollbar-thumb-hover:#245024;
+}
+
+[data-theme="arctic"] {
+  --theme-bg:           #1e272e;
+  --theme-bg-darker:    #161d22;
+  --theme-panel:        #253039;
+  --theme-panel-hover:  #2d3a44;
+  --theme-border:       #354450;
+  --theme-border-light: #445666;
+  --theme-text:         #dfe6e9;
+  --theme-text-muted:   #8899a6;
+  --theme-text-dim:     #556677;
+  --theme-accent:       #74b9ff;
+  --theme-accent-hover: #5a9ae0;
+  --theme-secondary:    #a4c8ff;
+  --theme-green:        #55efc4;
+  --theme-yellow:       #ffeaa7;
+  --theme-orange:       #fab1a0;
+  --theme-red:          #ff7675;
+  --theme-scrollbar-track:      #161d22;
+  --theme-scrollbar-thumb:      #354450;
+  --theme-scrollbar-thumb-hover:#445666;
+}
+
+/* ═══════════════════════════════════════════════════
    Cyberpunk/SOC Ops Center Theme
    Dark theme with neon accents, glassmorphism, scanlines
    ═══════════════════════════════════════════════════ */
@@ -11,14 +127,17 @@
   html {
     font-size: 14px;
     scroll-behavior: smooth;
+    /* Smooth theme transitions */
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
   
   body {
-    background: #0a0e17;
-    color: #e2e8f0;
+    background: var(--theme-bg);
+    color: var(--theme-text);
     overflow: hidden;
     height: 100vh;
     width: 100vw;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   ::-webkit-scrollbar {
@@ -27,89 +146,124 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: #0d1117;
+    background: var(--theme-scrollbar-track);
+    transition: background 0.3s ease;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #1e293b;
+    background: var(--theme-scrollbar-thumb);
     border-radius: 3px;
+    transition: background 0.3s ease;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #2d3a4e;
+    background: var(--theme-scrollbar-thumb-hover);
   }
 }
 
 @layer components {
   /* ── Cyber Cards ── */
   .cyber-card {
-    @apply relative bg-cyber-panel border border-cyber-border rounded-lg overflow-hidden;
+    @apply relative border rounded-lg overflow-hidden;
+    background: var(--theme-panel);
+    border-color: var(--theme-border);
+    transition: background-color 0.3s ease, border-color 0.3s ease;
   }
 
-
-
   .cyber-card-hover:hover {
-    @apply border-cyber-accent/30 shadow-neon-cyan;
+    border-color: color-mix(in srgb, var(--theme-accent) 30%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-accent) 30%, transparent),
+                0 0 20px color-mix(in srgb, var(--theme-accent) 15%, transparent);
     transition: all 0.2s ease;
   }
 
   /* ── Neon Buttons ── */
   .cyber-btn {
-    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200
-           border border-cyber-accent/30 bg-cyber-accent/5 text-cyber-accent
-           hover:bg-cyber-accent/15 hover:shadow-neon-cyan hover:border-cyber-accent/60;
+    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200 border;
+    color: var(--theme-accent);
+    border-color: color-mix(in srgb, var(--theme-accent) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-accent) 5%, transparent);
+  }
+  .cyber-btn:hover {
+    background: color-mix(in srgb, var(--theme-accent) 15%, transparent);
+    border-color: color-mix(in srgb, var(--theme-accent) 60%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-accent) 30%, transparent),
+                0 0 20px color-mix(in srgb, var(--theme-accent) 15%, transparent);
   }
 
   .cyber-btn-danger {
-    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200
-           border border-cyber-red/30 bg-cyber-red/5 text-cyber-red
-           hover:bg-cyber-red/15 hover:shadow-[0_0_10px_rgba(255,23,68,0.3)];
+    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200 border;
+    color: var(--theme-red);
+    border-color: color-mix(in srgb, var(--theme-red) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-red) 5%, transparent);
+  }
+  .cyber-btn-danger:hover {
+    background: color-mix(in srgb, var(--theme-red) 15%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-red) 30%, transparent);
   }
 
   .cyber-btn-success {
-    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200
-           border border-cyber-green/30 bg-cyber-green/5 text-cyber-green
-           hover:bg-cyber-green/15 hover:shadow-neon-green;
+    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200 border;
+    color: var(--theme-green);
+    border-color: color-mix(in srgb, var(--theme-green) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-green) 5%, transparent);
+  }
+  .cyber-btn-success:hover {
+    background: color-mix(in srgb, var(--theme-green) 15%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-green) 30%, transparent),
+                0 0 20px color-mix(in srgb, var(--theme-green) 15%, transparent);
   }
 
   .cyber-btn-purple {
-    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200
-           border border-cyber-purple/30 bg-cyber-purple/5 text-cyber-purple
-           hover:bg-cyber-purple/15 hover:shadow-neon-purple;
+    @apply px-4 py-2 rounded-md font-mono text-sm font-medium transition-all duration-200 border;
+    color: var(--theme-secondary);
+    border-color: color-mix(in srgb, var(--theme-secondary) 30%, transparent);
+    background: color-mix(in srgb, var(--theme-secondary) 5%, transparent);
+  }
+  .cyber-btn-purple:hover {
+    background: color-mix(in srgb, var(--theme-secondary) 15%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-secondary) 30%, transparent),
+                0 0 20px color-mix(in srgb, var(--theme-secondary) 15%, transparent);
   }
 
   /* ── Stat Boxes ── */
   .cyber-stat {
-    @apply flex flex-col items-start gap-1 p-4 rounded-lg border border-cyber-border bg-cyber-panel;
+    @apply flex flex-col items-start gap-1 p-4 rounded-lg border;
+    background: var(--theme-panel);
+    border-color: var(--theme-border);
+    transition: background-color 0.3s ease, border-color 0.3s ease;
   }
 
   .cyber-stat-value {
     @apply text-3xl font-bold font-mono;
-    color: #00e5ff;
+    color: var(--theme-accent);
+    transition: color 0.3s ease;
   }
 
   .cyber-stat-value.pink {
-    color: #ff006e;
+    color: var(--theme-secondary);
   }
 
   .cyber-stat-value.purple {
-    color: #8338ec;
+    color: color-mix(in srgb, var(--theme-accent) 60%, var(--theme-secondary));
   }
 
   .cyber-stat-value.green {
-    color: #00ff88;
+    color: var(--theme-green);
   }
 
   .cyber-stat-value.yellow {
-    color: #ffbe0b;
+    color: var(--theme-yellow);
   }
 
   .cyber-stat-value.orange {
-    color: #ff7800;
+    color: var(--theme-orange);
   }
 
   .cyber-stat-label {
-    @apply text-xs font-medium text-cyber-textMuted uppercase tracking-wider;
+    @apply text-xs font-medium uppercase tracking-wider;
+    color: var(--theme-text-muted);
+    transition: color 0.3s ease;
   }
 
   /* ── Tables ── */
@@ -118,16 +272,21 @@
   }
 
   .cyber-table th {
-    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider
-           text-cyber-textMuted border-b border-cyber-border;
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider border-b;
+    color: var(--theme-text-muted);
+    border-color: var(--theme-border);
+    transition: color 0.3s ease, border-color 0.3s ease;
   }
 
   .cyber-table td {
-    @apply px-4 py-3 border-b border-cyber-border/50 text-cyber-text font-mono text-xs;
+    @apply px-4 py-3 border-b font-mono text-xs;
+    color: var(--theme-text);
+    border-color: color-mix(in srgb, var(--theme-border) 50%, transparent);
+    transition: color 0.3s ease, border-color 0.3s ease;
   }
 
   .cyber-table tr:hover td {
-    @apply bg-cyber-panel/50;
+    background: color-mix(in srgb, var(--theme-panel) 50%, transparent);
   }
 
   /* ── Badges ── */
@@ -136,37 +295,59 @@
   }
 
   .cyber-badge-pass {
-    @apply bg-cyber-green/10 text-cyber-green border border-cyber-green/20;
+    color: var(--theme-green);
+    background: color-mix(in srgb, var(--theme-green) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-green) 20%, transparent);
   }
 
   .cyber-badge-block {
-    @apply bg-cyber-red/10 text-cyber-red border border-cyber-red/20;
+    color: var(--theme-red);
+    background: color-mix(in srgb, var(--theme-red) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-red) 20%, transparent);
   }
 
   .cyber-badge-warning {
-    @apply bg-cyber-yellow/10 text-cyber-yellow border border-cyber-yellow/20;
+    color: var(--theme-yellow);
+    background: color-mix(in srgb, var(--theme-yellow) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-yellow) 20%, transparent);
   }
 
   .cyber-badge-info {
-    @apply bg-cyber-accent/10 text-cyber-accent border border-cyber-accent/20;
+    color: var(--theme-accent);
+    background: color-mix(in srgb, var(--theme-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-accent) 20%, transparent);
   }
 
   /* ── Input Fields ── */
   .cyber-input {
-    @apply w-full px-3 py-2 rounded-md bg-cyber-darker border border-cyber-border
-           text-cyber-text font-mono text-sm
-           focus:outline-none focus:border-cyber-accent/50 focus:ring-1 focus:ring-cyber-accent/20;
+    @apply w-full px-3 py-2 rounded-md font-mono text-sm focus:outline-none;
+    background: var(--theme-bg-darker);
+    border: 1px solid var(--theme-border);
+    color: var(--theme-text);
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+  }
+  .cyber-input:focus {
+    border-color: color-mix(in srgb, var(--theme-accent) 50%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent) 20%, transparent);
   }
 
   .cyber-select {
-    @apply w-full px-3 py-2 rounded-md bg-cyber-darker border border-cyber-border
-           text-cyber-text font-mono text-sm
-           focus:outline-none focus:border-cyber-accent/50 focus:ring-1 focus:ring-cyber-accent/20;
+    @apply w-full px-3 py-2 rounded-md font-mono text-sm focus:outline-none;
+    background: var(--theme-bg-darker);
+    border: 1px solid var(--theme-border);
+    color: var(--theme-text);
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+  }
+  .cyber-select:focus {
+    border-color: color-mix(in srgb, var(--theme-accent) 50%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-accent) 20%, transparent);
   }
 
   /* ── Progress Bars ── */
   .cyber-progress-track {
-    @apply w-full h-2 rounded-full bg-cyber-darker overflow-hidden;
+    @apply w-full h-2 rounded-full overflow-hidden;
+    background: var(--theme-bg-darker);
+    transition: background-color 0.3s ease;
   }
 
   .cyber-progress-fill {
@@ -175,31 +356,44 @@
 
   /* ── Tabs ── */
   .cyber-tab {
-    @apply px-4 py-2 text-sm font-medium text-cyber-textMuted
-           hover:text-cyber-text hover:bg-cyber-panel/50 transition-colors;
+    @apply px-4 py-2 text-sm font-medium transition-colors;
+    color: var(--theme-text-muted);
+  }
+  .cyber-tab:hover {
+    color: var(--theme-text);
+    background: color-mix(in srgb, var(--theme-panel) 50%, transparent);
   }
 
   .cyber-tab-active {
-    @apply text-cyber-accent border-b-2 border-cyber-accent;
+    color: var(--theme-accent);
+    border-bottom: 2px solid var(--theme-accent);
   }
 
   /* ── Loading Skeleton ── */
   .cyber-skeleton {
-    @apply animate-pulse bg-cyber-panel rounded;
+    @apply animate-pulse rounded;
+    background: var(--theme-panel);
+    transition: background-color 0.3s ease;
   }
 
   /* ── Glass Panel ── */
   .cyber-glass {
-    @apply bg-cyber-panel/80 backdrop-blur-cyber border border-cyber-border/50 rounded-lg;
+    background: color-mix(in srgb, var(--theme-panel) 80%, transparent);
+    backdrop-filter: blur(20px);
+    border: 1px solid color-mix(in srgb, var(--theme-border) 50%, transparent);
+    @apply rounded-lg;
+    transition: background-color 0.3s ease, border-color 0.3s ease;
   }
 
   /* ── Glow Effects ── */
   .cyber-glow-cyan {
-    @apply shadow-neon-cyan;
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-accent) 30%, transparent),
+                0 0 20px color-mix(in srgb, var(--theme-accent) 15%, transparent);
   }
 
   .cyber-glow-pink {
-    @apply shadow-neon-pink;
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-secondary) 30%, transparent),
+                0 0 20px color-mix(in srgb, var(--theme-secondary) 15%, transparent);
   }
 
   /* ── Timeline ── */
@@ -209,46 +403,44 @@
 
   .cyber-timeline::before {
     content: '';
-    @apply absolute left-2 top-0 bottom-0 w-px bg-cyber-border;
+    @apply absolute left-2 top-0 bottom-0 w-px;
+    background: var(--theme-border);
+    transition: background 0.3s ease;
   }
 
   .cyber-timeline-item::before {
     content: '';
-    @apply absolute left-[-18px] top-1.5 w-3 h-3 rounded-full border-2 border-cyber-accent bg-cyber-darker;
+    @apply absolute left-[-18px] top-1.5 w-3 h-3 rounded-full border-2;
+    border-color: var(--theme-accent);
+    background: var(--theme-bg-darker);
+    transition: border-color 0.3s ease, background 0.3s ease;
   }
 
   .cyber-timeline-item.critical::before {
-    @apply border-cyber-red bg-cyber-red/30;
+    border-color: var(--theme-red);
+    background: color-mix(in srgb, var(--theme-red) 30%, transparent);
   }
 
   .cyber-timeline-item.high::before {
-    @apply border-cyber-orange bg-cyber-orange/30;
+    border-color: var(--theme-orange);
+    background: color-mix(in srgb, var(--theme-orange) 30%, transparent);
   }
 
   .cyber-timeline-item.medium::before {
-    @apply border-cyber-yellow bg-cyber-yellow/30;
+    border-color: var(--theme-yellow);
+    background: color-mix(in srgb, var(--theme-yellow) 30%, transparent);
   }
 
   .cyber-timeline-item.low::before {
-    @apply border-cyber-green bg-cyber-green/30;
+    border-color: var(--theme-green);
+    background: color-mix(in srgb, var(--theme-green) 30%, transparent);
   }
-
-  /* ── Scanline Overlay (disabled — too much visual noise) ── */
-  /* .scanlines::after {
-    content: '';
-    @apply absolute inset-0 pointer-events-none;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,229,255,0.015) 2px,
-      rgba(0,229,255,0.015) 4px
-    );
-  } */
 
   /* ── Mini Map ── */
   .cyber-mini-map {
-    @apply grid gap-px p-1 rounded bg-cyber-darker;
+    @apply grid gap-px p-1 rounded;
+    background: var(--theme-bg-darker);
+    transition: background-color 0.3s ease;
   }
 
   .cyber-mini-map-cell {
@@ -266,35 +458,36 @@
   }
   
   .text-neon-cyan {
-    color: #00e5ff;
+    color: var(--theme-accent);
   }
 
   .text-neon-green {
-    color: #00ff88;
+    color: var(--theme-green);
   }
 
   .text-neon-red {
-    color: #ff1744;
+    color: var(--theme-red);
   }
 
   .text-neon-pink {
-    color: #ff006e;
+    color: var(--theme-secondary);
   }
 
   .text-neon-yellow {
-    color: #ffbe0b;
+    color: var(--theme-yellow);
   }
 
   .text-neon-purple {
-    color: #8338ec;
+    color: color-mix(in srgb, var(--theme-accent) 60%, var(--theme-secondary));
   }
 
   .text-neon-orange {
-    color: #ff7800;
+    color: var(--theme-orange);
   }
 
   .text-gradient-cyber {
-    @apply bg-gradient-to-r from-cyber-accent via-cyber-purple to-cyber-pink bg-clip-text text-transparent;
+    @apply bg-clip-text text-transparent;
+    background: linear-gradient(to right, var(--theme-accent), color-mix(in srgb, var(--theme-accent) 60%, var(--theme-secondary)), var(--theme-secondary));
   }
   
   /* ── Mobile Responsive Utilities ── */
@@ -316,7 +509,7 @@
     background: transparent;
   }
   .cyber-table-responsive::-webkit-scrollbar-thumb {
-    background: #1e293b;
+    background: var(--theme-scrollbar-thumb);
     border-radius: 2px;
   }
   .cyber-table-responsive table {
@@ -353,7 +546,22 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #1e293b;
+    background: var(--theme-scrollbar-thumb);
     border-radius: 2px;
   }
+}
+
+/* Global transition for theme switching — make all colored elements smooth */
+*,
+*::before,
+*::after {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 0.3s;
+  transition-timing-function: ease;
+}
+
+/* Disable transitions for layout-only properties */
+.cyber-mini-map-cell,
+.cyber-card-hover {
+  transition-property: background-color, border-color, color, box-shadow, transform, border-color;
 }
