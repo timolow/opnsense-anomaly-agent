@@ -489,6 +489,7 @@ export const api = {
         uuid: r.rule_name || '',
         short_id: (r.rule_name || '').substring(0, 8),
         name: r.human_readable_name || r.rule_name || '',
+        description: r.rule_description || r.human_readable_name || r.rule_name || '',
         source_net: r.source_address || r.source_net || '',
         destination_net: r.destination_address || r.destination_net || '',
         action: r.rule_action || r.action || '',

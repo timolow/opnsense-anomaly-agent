@@ -54,6 +54,7 @@ export default function RulesTab() {
 
   const filtered = data.rules.filter((r) =>
     r.name.toLowerCase().includes(filter.toLowerCase()) ||
+    r.description.toLowerCase().includes(filter.toLowerCase()) ||
     r.source_net.toLowerCase().includes(filter.toLowerCase()) ||
     r.destination_net.toLowerCase().includes(filter.toLowerCase())
   );
@@ -162,7 +163,7 @@ export default function RulesTab() {
           return (
             <div className="mb-4 p-4 rounded-lg bg-cyber-panelHover border border-cyber-border">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-bold text-cyber-accent">{rule.name}</h4>
+                <h4 className="font-bold text-cyber-accent">{rule.description || rule.name}</h4>
                 <button onClick={() => setSelectedRule(null)} className="text-cyber-textMuted hover:text-cyber-text">✕</button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -228,7 +229,7 @@ export default function RulesTab() {
                   } ${isFlashing ? (flash.label === 'GOOD' ? 'bg-neon-green/10' : 'bg-neon-red/10') : ''}`}
                   onClick={() => setSelectedRule(rule.uuid === selectedRule ? null : rule.uuid)}
                 >
-                  <td className="font-semibold">{rule.name}</td>
+                  <td className="font-semibold">{rule.description || rule.name}</td>
                   <td className="font-mono text-xs">{rule.source_net}</td>
                   <td className="font-mono text-xs">{rule.destination_net}</td>
                   <td className="font-mono">{(rule.events_24h || 0).toLocaleString()}</td>

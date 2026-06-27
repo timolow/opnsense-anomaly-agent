@@ -339,6 +339,7 @@ export interface RulesClassifiedData {
     uuid: string;
     short_id: string;
     name: string;
+    description: string;
     source_net: string;
     destination_net: string;
     action: string;

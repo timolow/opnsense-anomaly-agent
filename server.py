@@ -4394,7 +4394,13 @@ def query_rule_detail(rule_name):
             short_id = rule_name[:8] if rule_name else ''
             meta = opnsense_rules.get(short_id, {})
         
-        display_name = meta.get('description', rule_name) if meta else rule_name
+        display_name = meta.get('description', '') if meta else ''
+        # If description is empty, try generating from rule attributes
+        if not display_name and meta:
+            display_name = generate_rule_name(meta) or ''
+        # Last resort: use rule_name itself
+        if not display_name:
+            display_name = rule_name
         
         response = {
             "rule_name": rule_name,
@@ -4414,8 +4420,8 @@ def query_rule_detail(rule_name):
             "recent_events": recent_events,
             "unique_src_ips": unique_src,
             "unique_dst_ips": unique_dst,
-            "human_readable_name": meta.get("description", ""),
-            "rule_description": meta.get("description", ""),
+            "human_readable_name": display_name,
+            "rule_description": display_name,
             "rule_action": meta.get("action", ""),
             "rule_protocol": meta.get("protocol", ""),
             "rule_interface": meta.get("interface", ""),
@@ -4480,15 +4486,21 @@ def query_rules_classified():
         # Enrich each classified rule with OPNsense metadata for human readability
         for rule in classified_rules:
             rname = rule.get('rule_name', '')
-            # Try to match by UUID (first 8 chars of rule_name match first part of UUID)
+            # Try to match by full rule_name, then by short UUID (first 8 chars)
             short_id = rname[:8] if rname else ''
             meta = opnsense_rules.get(rname, {})
             if not meta and short_id:
                 meta = opnsense_rules.get(short_id, {})
             if meta:
-                desc = meta.get('description', '') or meta.get('description', '') or rname[:12]
+                desc = meta.get('description', '')
+                # If description is empty, generate a human-readable name from rule attributes
+                if not desc:
+                    desc = generate_rule_name(meta) or ''
+                # Last resort: use short rule_name
+                if not desc:
+                    desc = rname[:12]
                 rule['human_readable_name'] = desc
-                rule['rule_description'] = meta.get('description', '')
+                rule['rule_description'] = desc
                 rule['rule_action'] = meta.get('action', '')
                 rule['rule_protocol'] = meta.get('protocol', '')
                 rule['rule_interface'] = meta.get('interface', '')
@@ -4500,7 +4512,11 @@ def query_rules_classified():
                 rule['rule_log'] = meta.get('log', False)
                 rule['rule_uuid'] = meta.get('uuid', '')
             else:
-                rule['human_readable_name'] = rname[:12]
+                # No metadata found — generate fallback name from event attributes
+                fallback = generate_rule_name(rule) or ''
+                if not fallback:
+                    fallback = rname[:12]
+                rule['human_readable_name'] = fallback
                 rule['rule_description'] = ''
                 rule['rule_action'] = rule.get('action', '')
                 rule['rule_protocol'] = ''
