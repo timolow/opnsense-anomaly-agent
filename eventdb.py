@@ -725,7 +725,7 @@ class EventDatabase:
                 logger.info("Baselines saved to database: %s metrics", len(baselines_data))
             finally:
                 cur.close()
-                conn.close()
+                self.putconn(conn)
         except Exception as e:
             logger.warning("Failed to save baselines: %s", e)
     
@@ -898,7 +898,7 @@ class EventDatabase:
             logger.warning(f"Failed to update rule baselines: {e}")
         finally:
             cur.close()
-            conn.close()
+            self.putconn(conn)
     
     # ── Week 3: Temporal Pattern Methods ────────────────────────────────
     
@@ -969,7 +969,7 @@ class EventDatabase:
             logger.warning(f"Failed to update temporal patterns: {e}")
         finally:
             cur.close()
-            conn.close()
+            self.putconn(conn)
     
     # ── Nginx Monitoring Methods ─────────────────────────────────────────
 
@@ -1166,7 +1166,7 @@ class EventDatabase:
             return [dict(zip(['hour', 'path', 'count'], r)) for r in cur.fetchall()]
         finally:
             cur.close()
-            conn.close()
+            self.putconn(conn)
 
     # ── Utility Methods ─────────────────────────────────────────────────
     
@@ -1209,7 +1209,7 @@ class EventDatabase:
             }
         finally:
             cur.close()
-            conn.close()
+            self.putconn(conn)
 
     # ── P2-4: Active Learning Queue Methods ─────────────────────────────
 

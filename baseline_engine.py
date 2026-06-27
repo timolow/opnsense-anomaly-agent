@@ -102,6 +102,7 @@ class BaselineEngine:
                     last_updated=row[15] if row[15] else None
                 )
             cur.close()
+            self.db.putconn(conn)
         except Exception as e:
             logger.error(f"Failed to load baselines: {e}")
     
@@ -377,6 +378,7 @@ class BaselineEngine:
                     logger.error(f"Failed to save baseline for {baseline.rule}: {e}")
 
             cur.close()
+            self.db.putconn(conn)
             logger.info(f"Saved {len(self._baselines)} baselines to database")
         except Exception as e:
             logger.error(f"Failed to save baselines: {e}")

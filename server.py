@@ -2520,42 +2520,57 @@ def _get_ids_state():
 def query_zenarmor_summary():
     """Return ZenArmor policy summary matching frontend types."""
     state = _get_zenarmor_state()
+    empty_msg = "No ZenArmor events. ZenArmor data requires ZenArmor syslog entries in the pipeline."
     if not state:
         return {
             "total_events": 0,
             "policies_count": 0,
             "anomalies_detected": 0,
             "events_24h": 0,
+            "data_source_status": "no_data",
+            "empty_message": empty_msg,
         }
     policies_count = len(state.get("policies", {}))
     total_events = state.get("total_events", 0)
-    return {
+    result = {
         "total_events": total_events,
         "policies_count": policies_count,
         "anomalies_detected": 0,  # tracked via DB anomalies table
         "events_24h": total_events,  # fallback: same as total
     }
+    if total_events == 0:
+        result["data_source_status"] = "no_data"
+        result["empty_message"] = empty_msg
+    else:
+        result["data_source_status"] = "configured"
+    return result
 
 def query_zenarmor_policies():
     """Return all known ZenArmor policies matching frontend types."""
     state = _get_zenarmor_state()
-    if not state:
-        return []
     policies = []
-    for name, data in state.get("policies", {}).items():
-        total_events = data.get("total_events", 0)
-        actions = data.get("actions", {})
-        action = "block" if actions.get("BLOCK", 0) > actions.get("PASS", 0) else "pass"
-        policies.append({
-            "id": name[:8],
-            "name": name,
-            "category": "general",
-            "status": "active",
-            "action": action,
-            "description": "",
-            "events": total_events,
-        })
-    return sorted(policies, key=lambda x: -x["events"])
+    if state:
+        for name, data in state.get("policies", {}).items():
+            total_events = data.get("total_events", 0)
+            actions = data.get("actions", {})
+            action = "block" if actions.get("BLOCK", 0) > actions.get("PASS", 0) else "pass"
+            policies.append({
+                "id": name[:8],
+                "name": name,
+                "category": "general",
+                "status": "active",
+                "action": action,
+                "description": "",
+                "events": total_events,
+            })
+    policies = sorted(policies, key=lambda x: -x["events"])
+    result = {
+        "items": policies,
+        "data_source_status": "no_data" if not policies else "configured",
+    }
+    if not policies:
+        result["empty_message"] = "No ZenArmor policies detected. Requires ZenArmor syslog data."
+    return result
 
 def query_zenarmor_events(limit=100, offset=0):
     """Return recent ZenArmor events from the database."""
@@ -2633,12 +2648,18 @@ def query_ids_summary():
     state = _get_ids_state()
     sig_count = len(state.get("signatures", {})) if state else 0
 
-    return {
+    result = {
         "total_events": max(db_total, sig_count),
         "signatures": max(db_signatures, sig_count),
         "anomalies_detected": 0,  # tracked via DB anomalies table
         "events_24h": db_24h,
     }
+    if max(db_total, sig_count) == 0:
+        result["data_source_status"] = "no_data"
+        result["empty_message"] = "No IDS events. IDS data requires Suricata/Snort entries in the syslog pipeline."
+    else:
+        result["data_source_status"] = "configured"
+    return result
 
 def query_ids_signatures():
     """Return all known IDS signatures — from DB + state file."""
@@ -2755,6 +2776,8 @@ def query_nginx_summary():
             'status_ok': 0, 'status_client_err': 0, 'status_server_err': 0,
             'unique_ips': 0, 'top_ips': [], 'top_paths': [],
             'not_found_404': 0, 'anomalies_by_type': {},
+            'data_source_status': 'not_configured',
+            'empty_message': 'No Nginx stub_status endpoint configured. Configure NGINX_STUB_STATUS_URL in .env.',
         }
     try:
         cur = conn.cursor()
@@ -4026,7 +4049,7 @@ def query_wan_flaps():
     last_flap = flaps[0].get("time", "N/A") if flaps else "N/A"
     avg_duration = sum(f.get("duration", 0) for f in flaps) / total_flaps if total_flaps > 0 else 0
     
-    return {
+    result = {
         "flaps": flaps,
         "stats": {
             "total_flaps": total_flaps,
@@ -4034,6 +4057,12 @@ def query_wan_flaps():
             "avg_duration": round(avg_duration, 1),
         }
     }
+    if total_flaps == 0:
+        result["data_source_status"] = "no_data"
+        result["empty_message"] = "No WAN flaps detected. Monitoring requires interface status events in syslog."
+    else:
+        result["data_source_status"] = "configured"
+    return result
 
 
 def query_opnsense_firewall_rules():
@@ -4414,10 +4443,7 @@ def api_save_feedback(rule_name, label, reason=None, user_id=None):
     """Save user feedback for a rule classification (Week 1)."""
     try:
         db = EventDatabase()
-        db.connect()
         db.save_feedback(rule_name, label, reason or "", user_id or "")
-        if db._connection:
-            db._connection.close()
         return {'success': True}
     except Exception as e:
         logger.error("save_feedback failed: %s", e)
@@ -4428,14 +4454,11 @@ def api_ml_summary():
     """Get ML summary statistics (Weeks 1-5)."""
     try:
         db = EventDatabase()
-        db.connect()
         ml_stats = db.get_ml_summary_stats()
-        if db._connection:
-            db._connection.close()
-        
+
         # Get rules classification summary
         summary = query_rules_classified()
-        
+
         return {
             'ml_stats': ml_stats,
             'classification_summary': summary.get('summary', {}),
@@ -4518,20 +4541,17 @@ def api_active_learning_queue():
     """Get active learning queue (Week 4)."""
     try:
         from ml_learning import SelfLearningClassifier
-        
+
         db = EventDatabase()
-        db.connect()
-        
+
         # Load classifier state
         classifier = SelfLearningClassifier(db)
         if not classifier.load_state():
-            if db._connection:
-                db._connection.close()
             return {'queue': [], 'message': 'No classification state available'}
-        
+
         # Get active learning queue
         queue = classifier.get_active_learning_queue()
-        
+
         result = {
             'queue': [
                 {
@@ -4544,9 +4564,7 @@ def api_active_learning_queue():
             ],
             'count': len(queue),
         }
-        
-        if db._connection:
-            db._connection.close()
+
         return result
     except Exception as e:
         logger.error("active_learning_queue failed: %s", e)
