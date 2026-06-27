@@ -237,14 +237,21 @@ export const api = {
   },
   geo: async (): Promise<GeoData> => {
     const raw = await json<Record<string, unknown>>('/geo');
-    // Backend now returns {total_events, regions: [...]}
-    // Convert to {countries: [...], hotspots: [...]}
+    // Backend returns {total_events, regions: [...]}
+    // Convert to {countries: [...], hotspots: [...], total_events}
     const regions = (raw.regions as any[]) || (Array.isArray(raw) ? raw : []);
+    const total_events = (raw.total_events as number) || regions.reduce((s: number, r: any) => s + (r.count || 0), 0);
     const countries = regions.map((r: any) => ({
       country: r.country || r.label || 'Unknown',
+      code: r.code || '',
       count: r.count || 0,
+      percentage: r.percentage ?? 0,
       color: r.color || CYBER.textMuted,
-      flag: r.flag || r.code || '',
+      flag: r.flag || '',
+      lat: r.lat ?? 0,
+      lon: r.lon ?? 0,
+      zoom: r.zoom ?? 4,
+      bbox: r?.bbox ?? [0, 0, 100, 100],
       x: r.lon || 0,
       y: r.lat || 0,
     }));
@@ -259,7 +266,7 @@ export const api = {
       country: r.code || r.country || '--',
       country_name: r.country || 'Unknown',
     }));
-    return { countries, hotspots };
+    return { countries, hotspots, total_events };
   },
   alerts: async (): Promise<AlertsData> => {
       // Merge volume-based alerts from events with ML-detected anomalies

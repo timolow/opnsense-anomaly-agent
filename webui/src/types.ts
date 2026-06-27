@@ -130,16 +130,25 @@ export interface GeoHotspot {
   attack_type?: string;
 }
 
+export interface GeoCountry {
+  country: string;
+  code: string;
+  count: number;
+  percentage: number;
+  color: string;
+  flag: string;
+  lat: number;
+  lon: number;
+  zoom: number;
+  bbox: [number, number, number, number];
+  x: number;
+  y: number;
+}
+
 export interface GeoData {
-  countries: Array<{
-    country: string;
-    count: number;
-    color: string;
-    flag: string;
-    x: number;
-    y: number;
-  }>;
+  countries: GeoCountry[];
   hotspots: GeoHotspot[];
+  total_events: number;
 }
 
 export interface HealthData {

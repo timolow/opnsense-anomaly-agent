@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { GeoData, GeoHotspot } from '@/types';
 import { useStore, timeRanges, type TimeRange } from '@/store';
-import { Globe, MapPin, AlertTriangle, Shield, ExternalLink, X, SlidersHorizontal, Map as MapIcon, Layers } from 'lucide-react';
+import { Globe, MapPin, AlertTriangle, ExternalLink, X, SlidersHorizontal, Map as MapIcon, Layers } from 'lucide-react';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { SEVERITY, CYBER } from '@/utils/colors';
@@ -22,6 +22,7 @@ const FLAG_MAP: Record<string, string> = {
 
 import { GeoSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
+import { GeoDataPanel } from './GeoDataPanel';
 
 // Fix default marker icons in React
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -200,18 +201,21 @@ type GeoViewMode = 'markers' | 'heatmap' | 'both';
 // ─────────────────────────────────────────────
 // GeoMap component — Leaflet map + markers + heatmap layer
 // ─────────────────────────────────────────────
+// Expose: zoomTo(latLng, zoom), flyToBbox(bbox, zoom)
 function GeoMap({
   hotspots,
   onHotspotClick,
   viewMode,
   heatmapRadius,
   heatmapIntensity,
+  onRef,
 }: {
   hotspots: GeoHotspot[];
   onHotspotClick: (h: GeoHotspot) => void;
   viewMode: GeoViewMode;
   heatmapRadius: number;
   heatmapIntensity: number;
+  onRef?: (map: L.Map | null) => void;
 }) {
   const containersRef = useRef<HTMLDivElement>(null);
   const circlesRef = useRef<L.CircleMarker[]>([]);
@@ -242,10 +246,12 @@ function GeoMap({
     }).addTo(map);
 
     mapInstanceRef.current = map;
+    onRef?.(map);
 
     return () => {
       map.remove();
       mapInstanceRef.current = null;
+      onRef?.(null);
     };
   }, []);
 
@@ -429,9 +435,9 @@ export default function GeoTab() {
   const timeRange = useStore(s => s.timeRange);
   const hours = timeRanges[timeRange as TimeRange]?.hours ?? 24;
 
-  const { data, isLoading, isError, error, refetch } = useQuery<GeoData>({
+const { data, isLoading, isError, error, refetch } = useQuery<GeoData>({
     queryKey: ['geo', hours],
-    queryFn: () => api.geo(hours),
+    queryFn: () => api.geo(),
     refetchInterval: 60000,
   });
 
@@ -446,9 +452,15 @@ export default function GeoTab() {
   const [heatmapIntensity, setHeatmapIntensity] = useState(0.6);
   const [showControls, setShowControls] = useState(false);
 
+  // Map ref — shared with GeoDataPanel for zoom-to-country
+  const mapRef = useRef<L.Map | null>(null);
+  const handleMapRef = useCallback((m: L.Map | null) => {
+    mapRef.current = m;
+  }, []);
+
   const hotspots = data?.hotspots || [];
-  const topCountries = data?.countries?.slice(0, 20) || [];
-  const totalEvents = topCountries.reduce((s, c) => s + c.count, 0);
+  const countries = data?.countries || [];
+  const totalEvents = data?.total_events ?? countries.reduce((s, c) => s + c.count, 0);
 
   // Filtered hotspots
   const filteredHotspots = useMemo(() => {
@@ -526,6 +538,7 @@ export default function GeoTab() {
                 viewMode={viewMode}
                 heatmapRadius={heatmapRadius}
                 heatmapIntensity={heatmapIntensity}
+                onRef={handleMapRef}
               />
             ) : (
               <div className="flex items-center justify-center h-full text-cyber-textMuted">
@@ -812,38 +825,12 @@ export default function GeoTab() {
         )}
       </div>
 
-      {/* Country breakdown (below map) */}
-      {showSidebar && (
-        <div className="cyber-card p-4 scanlines">
-          <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-            <Shield size={14} /> Country Breakdown
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {topCountries.map((c) => {
-              const pct = totalEvents > 0 ? (c.count / totalEvents) * 100 : 0;
-              return (
-                <div key={c.country} className="cyber-card p-3" style={{ borderLeft: `3px solid ${c.color}` }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-lg">{FLAG_MAP[c.flag] || countryFlag(c.country) || '🌐'}</span>
-                    <span className="text-xs font-medium">{c.country}</span>
-                  </div>
-                  <div className="text-xs font-mono text-cyber-textMuted mb-1">{c.count.toLocaleString()} events</div>
-                  <div className="cyber-progress-track">
-                    <div
-                      className="cyber-progress-fill"
-                      style={{
-                        width: `${pct}%`,
-                        background: `linear-gradient(90deg, ${c.color}, ${c.color}80)`,
-                        boxShadow: `0 0 8px ${c.color}40`,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Geographic data panel with bar chart */}
+      <GeoDataPanel
+        countries={countries}
+        totalEvents={totalEvents}
+        map={mapRef.current}
+      />
     </div>
   );
 }
