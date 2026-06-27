@@ -120,7 +120,7 @@ export const THEMES: Record<ThemeName, ThemeDef> = {
     border: '#1a3b1a',
     borderLight: '#245024',
     text: '#00ff41',
-    textMuted: '#003b00',
+    textMuted: '#008830',
     textDim: '#002000',
     accent: '#00ff41',
     accentHover: '#00cc33',

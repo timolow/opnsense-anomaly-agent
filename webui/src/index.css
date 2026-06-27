@@ -551,17 +551,5 @@
   }
 }
 
-/* Global transition for theme switching — make all colored elements smooth */
-*,
-*::before,
-*::after {
-  transition-property: background-color, border-color, color, box-shadow;
-  transition-duration: 0.3s;
-  transition-timing-function: ease;
-}
-
-/* Disable transitions for layout-only properties */
-.cyber-mini-map-cell,
-.cyber-card-hover {
-  transition-property: background-color, border-color, color, box-shadow, transform, border-color;
-}
+/* Per-component transitions already defined above handle theme switching.
+   Avoid global * transitions — they cause jank on 500+ DOM nodes. */
