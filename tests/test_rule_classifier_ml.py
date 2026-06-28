@@ -11,6 +11,7 @@ import pytest
 # rule_classifier imports sklearn; skip all ML tests when not installed
 numpy = pytest.importorskip("numpy")
 np = numpy
+sklearn = pytest.importorskip("sklearn")
 
 from datetime import datetime, timezone, timedelta
 from collections import Counter

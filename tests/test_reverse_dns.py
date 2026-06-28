@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 # dnspython not in base env — skip gracefully
 dns = pytest.importorskip("dns")
+import dns.resolver
 
 
 class TestReverseDNSResolver:

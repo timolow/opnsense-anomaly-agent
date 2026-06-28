@@ -12,8 +12,12 @@ import json
 import sys
 import os
 import unittest
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# server.py imports eventdb which imports psycopg2 — skip if unavailable
+psycopg2 = pytest.importorskip("psycopg2", reason="psycopg2 not installed")
 
 
 class TestAlertsEndpoint(unittest.TestCase):

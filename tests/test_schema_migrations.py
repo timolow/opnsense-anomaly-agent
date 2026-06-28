@@ -246,7 +246,7 @@ class TestRunMigrations:
         skipped = [r for r in results if r["status"] == "skipped"]
         applied = [r for r in results if r["status"] == "applied"]
         assert len(skipped) == 5  # v1-v5 skipped
-        assert len(applied) == 3  # v6, v7, v8 applied
+        assert len(applied) == CURRENT_SCHEMA_VERSION - 5  # remaining versions applied
 
     def test_returns_already_current_when_up_to_date(self):
         db, conn, cur = self._make_mock_db(current_version=CURRENT_SCHEMA_VERSION)
