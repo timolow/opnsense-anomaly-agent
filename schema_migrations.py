@@ -618,8 +618,8 @@ MIGRATIONS: List[Dict[str, Any]] = [
             -- Covers: WHERE dst_port IN (80, 443, 53) AND timestamp > ...
             CREATE INDEX IF NOT EXISTS idx_events_dstport_ts
                 ON events (dst_port, timestamp)
-                WHERE dst_port IS NOT NULL
-                INCLUDE (src_ip, dst_ip, action, proto);
+                INCLUDE (src_ip, dst_ip, action, proto)
+                WHERE dst_port IS NOT NULL;
             """,
             """
             -- Refresh planner statistics on all key tables (critical after index additions)
