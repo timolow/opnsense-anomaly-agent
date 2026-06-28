@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -555,6 +555,40 @@ MIGRATIONS: List[Dict[str, Any]] = [
             CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_created_at ON nginx_anomalies(created_at);
             CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_attack_type ON nginx_anomalies(attack_type);
             CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_src_ip ON nginx_anomalies(src_ip) WHERE src_ip IS NOT NULL;
+            """,
+        ],
+    },
+    # ------------------------------------------------------------------
+    # V11: Performance indexes for rules-classified endpoint
+    # ------------------------------------------------------------------
+    {
+        "version": 11,
+        "description": "Add composite covering indexes for rules-classified optimization",
+        "sql": [
+            """
+            -- Covering index for the main rules-classified query:
+            -- SELECT ... FROM events WHERE action IN (...) AND rule_name IS NOT NULL ...
+            -- This replaces full table scans on 3M+ rows with index-only scans
+            CREATE INDEX IF NOT EXISTS idx_events_rules_classified
+                ON events (rule_name, action)
+                INCLUDE (timestamp, src_ip, dst_ip, dst_port, src_port, proto, interface, direction)
+                WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
+            """,
+            """
+            -- Composite index for the fallback enrichment query:
+            -- SELECT rule_name, action, proto, dst_port, interface, COUNT(*)
+            -- FROM events WHERE rule_name IN (...) GROUP BY ...
+            CREATE INDEX IF NOT EXISTS idx_events_rule_agg
+                ON events (rule_name, action, proto, dst_port, interface)
+                WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
+            """,
+            """
+            -- Index for pre-aggregated rule stats query:
+            -- Aggregates per rule_name in one pass
+            CREATE INDEX IF NOT EXISTS idx_events_rule_stats
+                ON events (rule_name)
+                INCLUDE (action, proto, src_ip, dst_ip, dst_port)
+                WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
             """,
         ],
     },
