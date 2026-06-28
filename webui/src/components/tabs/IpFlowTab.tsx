@@ -39,13 +39,6 @@ export default function IpFlowTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-md bg-cyber-accent/10 border border-cyber-accent/20 flex items-center justify-center">
-          <Network size={16} className="text-cyber-accent" />
-        </div>
-        <h2 className="text-lg font-bold">IP Flow Details</h2>
-      </div>
-
       {/* IP version filter toggle */}
       <div className="cyber-card p-3 flex items-center gap-3">
         <Filter size={14} className="text-cyber-textMuted flex-shrink-0" />

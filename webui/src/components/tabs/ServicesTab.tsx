@@ -27,13 +27,6 @@ export default function ServicesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-md bg-cyber-green/10 border border-cyber-green/20 flex items-center justify-center">
-          <Cpu size={16} className="text-cyber-green" />
-        </div>
-        <h2 className="text-lg font-bold">Services</h2>
-      </div>
-
       {/* Service Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {data.dhcp && (

@@ -36,7 +36,7 @@ const STORAGE_SIDEBAR_COLLAPSED = 'soc:sidebar:collapsed';
 const STORAGE_SIDEBAR_GROUPS = 'soc:sidebar:groups';
 
 // Nav group names (matches Sidebar.tsx NAV_GROUPS)
-const NAV_GROUP_NAMES = ['Overview', 'Analytics', 'Threats', 'Systems', 'Rules', 'Logs', 'Config'];
+const NAV_GROUP_NAMES = ['Overview', 'Analytics', 'Threats', 'Rules', 'Network', 'Logs', 'Services', 'Config'];
 
 // Load persisted sidebar state from localStorage
 function loadSidebarState() {
@@ -104,9 +104,8 @@ interface AppState {
 }
 
 const DEFAULT_TABS = [
-  'overview', 'heatmap', 'flows', 'ipflow', 'alerts', 'mutes',
-  'zenarmor', 'ids', 'geo', 'opnsense', 'rules', 'syslogs',
-  'services', 'settings', 'logs', 'network', 'wan-flap', 'rules-classified',
+  'overview', 'heatmap', 'traffic', 'alerts', 'rules-classified',
+  'network', 'wan-flap', 'logs', 'services', 'settings',
 ];
 
 const persistedSidebar = loadSidebarState();

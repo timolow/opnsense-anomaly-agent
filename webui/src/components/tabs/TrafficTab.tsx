@@ -4,7 +4,10 @@
 // ═══════════════════════════════════════════════════
 
 import { useState } from 'react';
-import { GitMerge, Network } from 'lucide-react';
+import { GitMerge, Network, Activity, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/api';
+import type { IpFlowData } from '@/types';
 import FlowsTab from './FlowsTab';
 import IpFlowTab from './IpFlowTab';
 
@@ -44,6 +47,24 @@ function SubTabBar({ active, onChange }: { active: TrafficSubTab; onChange: (t: 
 export default function TrafficTab() {
   const [subTab, setSubTab] = useState<TrafficSubTab>('flow-map');
 
+  // Fetch flow data once for the metrics row
+  const { data: flowData } = useQuery<IpFlowData>({
+    queryKey: ['ip-flow-metrics'],
+    queryFn: api.ipFlow,
+    refetchInterval: 30000,
+  });
+
+  // Compute metrics from flow data
+  const metrics = flowData ? (() => {
+    const nodes = flowData.nodes || [];
+    const edges = flowData.edges || [];
+    const totalEvents = edges.reduce((sum, e) => sum + (e.value || 0), 0);
+    const uniqueSrc = new Set(edges.map(e => e.source)).size;
+    const uniqueDst = new Set(edges.map(e => e.target)).size;
+    const categories = new Set(nodes.map(n => n.category)).size;
+    return { nodes: nodes.length, edges: edges.length, totalEvents, uniqueSrc, uniqueDst, categories };
+  })() : null;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -53,6 +74,54 @@ export default function TrafficTab() {
         </div>
         <h2 className="text-lg font-bold">Traffic</h2>
       </div>
+
+      {/* Metric cards */}
+      {metrics && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="cyber-card p-3 cyber-card-hover">
+            <div className="flex items-center gap-2 mb-1">
+              <Activity size={14} className="text-cyber-accent" />
+              <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Events</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-cyber-accent">{metrics.totalEvents.toLocaleString()}</div>
+          </div>
+          <div className="cyber-card p-3 cyber-card-hover">
+            <div className="flex items-center gap-2 mb-1">
+              <ArrowUpRight size={14} className="text-neon-pink" />
+              <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Unique Sources</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-neon-pink">{metrics.uniqueSrc}</div>
+          </div>
+          <div className="cyber-card p-3 cyber-card-hover">
+            <div className="flex items-center gap-2 mb-1">
+              <ArrowDownLeft size={14} className="text-neon-green" />
+              <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Unique Destinations</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-neon-green">{metrics.uniqueDst}</div>
+          </div>
+          <div className="cyber-card p-3 cyber-card-hover">
+            <div className="flex items-center gap-2 mb-1">
+              <GitMerge size={14} className="text-neon-purple" />
+              <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Flows</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-neon-purple">{metrics.edges}</div>
+          </div>
+          <div className="cyber-card p-3 cyber-card-hover">
+            <div className="flex items-center gap-2 mb-1">
+              <Network size={14} className="text-cyber-green" />
+              <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Nodes</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-cyber-green">{metrics.nodes}</div>
+          </div>
+          <div className="cyber-card p-3 cyber-card-hover">
+            <div className="flex items-center gap-2 mb-1">
+              <Activity size={14} className="text-cyber-yellow" />
+              <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Categories</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-cyber-yellow">{metrics.categories}</div>
+          </div>
+        </div>
+      )}
 
       {/* Sub-tab navigation */}
       <SubTabBar active={subTab} onChange={setSubTab} />

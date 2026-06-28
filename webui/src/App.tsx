@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════
 // Main App - React entry with sidebar and content area
+// 10 focused tabs (consolidated from 19)
 // ═══════════════════════════════════════════════════
 
 import { Suspense, useEffect } from 'react';
@@ -9,49 +10,29 @@ import TimeRangePicker from './components/TimeRangePicker';
 import { Menu } from 'lucide-react';
 import { TabShell } from './components/TabShell';
 
-// ── Tab Components ──
+// ── Tab Components (10 focused views) ──
 import OverviewTab from './components/tabs/OverviewTab';
 import HeatmapTab from './components/tabs/HeatmapTab';
-import FlowsTab from './components/tabs/FlowsTab';
-import IpFlowTab from './components/tabs/IpFlowTab';
+import TrafficTab from './components/tabs/TrafficTab';
 import AlertsTab from './components/tabs/AlertsTab';
-import MutesTab from './components/tabs/MutesTab';
-import ZenArmorTab from './components/tabs/ZenArmorTab';
-import IdsTab from './components/tabs/IdsTab';
-import GeoTab from './components/tabs/GeoTab';
-import OpnsenseTab from './components/tabs/OpnsenseTab';
-import RulesTab from './components/tabs/RulesTab';
-import SyslogsTab from './components/tabs/SyslogsTab';
-import ServicesTab from './components/tabs/ServicesTab';
-import SettingsTab from './components/tabs/SettingsTab';
-import DnsQueriesTab from './components/tabs/DnsQueriesTab';
+import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
-import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
-import NginxTab from './components/tabs/NginxTab';
-import LogsQueryTab from './components/tabs/LogsQueryTab';
+import LogsTab from './components/tabs/LogsTab';
+import ServicesViewTab from './components/tabs/ServicesViewTab';
+import SettingsTab from './components/tabs/SettingsTab';
 
 const TAB_TITLE: Record<string, string> = {
-  overview: 'Overview',
-  heatmap: 'Traffic Heatmap',
-  flows: 'Flow Map',
-  ipflow: 'IP Flow',
-  alerts: 'Threat Alerts',
-  mutes: 'Mutes',
-  zenarmor: 'ZenArmor',
-  ids: 'IDS',
-  geo: 'Geography',
-  opnsense: 'OPNsense Status',
-  rules: 'Firewall Rules',
-  syslogs: 'Syslogs',
+  overview: 'Dashboard',
+  heatmap: 'Heatmap',
+  traffic: 'Traffic',
+  alerts: 'Alerts',
+  'rules-classified': 'Rules ML',
+  network: 'Network',
+  'wan-flap': 'WAN Flap',
+  logs: 'Logs',
   services: 'Services',
   settings: 'Settings',
-  logs: 'DNS Queries',
-  network: 'Network Topology',
-  'wan-flap': 'WAN Flap Detection',
-  'rules-classified': 'Rules ML',
-  nginx: 'Nginx Monitor',
-  'query-logs': 'Query Logs',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -62,26 +43,15 @@ function TabContent({ tab }: { tab: string }) {
         switch (tab) {
           case 'overview': return <OverviewTab />;
           case 'heatmap': return <HeatmapTab />;
-          case 'flows': return <FlowsTab />;
-          case 'ipflow': return <IpFlowTab />;
+          case 'traffic': return <TrafficTab />;
           case 'alerts': return <AlertsTab />;
-          case 'mutes': return <MutesTab />;
-          case 'zenarmor': return <ZenArmorTab />;
-          case 'ids': return <IdsTab />;
-          case 'geo': return <GeoTab />;
-          case 'opnsense': return <OpnsenseTab />;
-          case 'rules': return <RulesTab />;
-          case 'syslogs': return <SyslogsTab />;
-          case 'services': return <ServicesTab />;
-          case 'settings': return <SettingsTab />;
-          case 'dns-queries': return <DnsQueriesTab />;
-          case 'logs': return <DnsQueriesTab />;
+          case 'rules-classified': return <RulesClassifiedTab />;
           case 'network': return <NetworkTab />;
           case 'wan-flap': return <WanFlapTab />;
-          case 'rules-classified': return <RulesClassifiedTab />;
+          case 'logs': return <LogsTab />;
+          case 'services': return <ServicesViewTab />;
+          case 'settings': return <SettingsTab />;
           case '': return <OverviewTab />;
-          case 'nginx': return <NginxTab />;
-          case 'query-logs': return <LogsQueryTab />;
           default: return <OverviewTab />;
         }
       })()}
@@ -105,31 +75,38 @@ export default function App() {
   const { activeTab, sidebarCollapsed, mobileMenuOpen, setActiveTab, toggleMobileMenu, setMobileMenuOpen } = useStore();
   
   useEffect(() => {
-    // Normalize URL hash to match tab IDs
+    // Normalize URL hash to match tab IDs (legacy redirects)
     const urlToTab = (url: string) => {
       const hash = window.location.hash.slice(1).replace(/^\//, '');
       const map: Record<string, string> = {
-        'firewall-rules': 'rules',
-        'firerules': 'rules',
+        // Legacy redirects to new merged tabs
+        'firewall-rules': 'rules-classified',
+        'firerules': 'rules-classified',
         'rules-ml': 'rules-classified',
         'rulesml': 'rules-classified',
-        'querylogs': 'query-logs',
-        'query-logs': 'query-logs',
+        'rules': 'rules-classified',
+        'flow-map': 'traffic',
+        'flowmap': 'traffic',
+        'flows': 'traffic',
+        'ip-flow': 'traffic',
+        'ipflow': 'traffic',
+        'syslogs': 'logs',
+        'dns-queries': 'logs',
+        'dns': 'logs',
+        'query-logs': 'logs',
+        'nginx': 'services',
+        'opnsense': 'services',
         'wanflap': 'wan-flap',
         'wan-flap': 'wan-flap',
         'network-topology': 'network',
         'threat-alerts': 'alerts',
+        'mutes': 'alerts',
+        'zenarmor': 'alerts',
+        'ids': 'alerts',
         'traffic-heatmap': 'heatmap',
-        'flow-map': 'flows',
-        'flowmap': 'flows',
-        'ip-flow': 'ipflow',
-        'ipflow': 'ipflow',
-        'geo': 'geo',
-        'geography': 'geo',
-        'opnsense-status': 'opnsense',
+        'geo': 'heatmap',
+        'geography': 'heatmap',
         'system-health': 'settings',
-        'dns-queries': 'dns-queries',
-        'dns': 'dns-queries',
       };
       return map[hash] || hash;
     };
@@ -153,7 +130,6 @@ export default function App() {
   // Sync store with URL hash (update URL when activeTab changes)
   useEffect(() => {
     const currentHash = window.location.hash.slice(1);
-    // Only update if different from activeTab (avoid loop)
     if (currentHash !== activeTab && activeTab) {
       window.history.replaceState(null, '', '#' + activeTab);
     }

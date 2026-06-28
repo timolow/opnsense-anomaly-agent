@@ -1,6 +1,6 @@
 {
-    "timestamp": "2026-06-27T23:15:40Z",
-    "commit_sha": "c2335a4",
-    "current_image": "opnsense-anomaly-agent:c2335a4",
-    "previous_image": "opnsense-anomaly-agent:c2335a4"
+    "timestamp": "2026-06-28T02:36:43Z",
+    "commit_sha": "7bdce4b",
+    "current_image": "opnsense-anomaly-agent:7bdce4b",
+    "previous_image": "opnsense-anomaly-agent:c2335a4-v2"
 }

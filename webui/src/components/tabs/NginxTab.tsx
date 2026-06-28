@@ -385,50 +385,6 @@ export const NginxTab: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* Header */}
-      <div style={{
-        background: 'rgba(10, 15, 30, 0.7)',
-        border: '1px solid rgba(0, 255, 170, 0.15)',
-        borderRadius: '8px',
-        padding: '20px',
-        backdropFilter: 'blur(10px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-      }}>
-        <div style={{ fontSize: '32px' }}>🌐</div>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '20px', color: CYBER.green }}>
-            Nginx Web Server Monitor
-          </h1>
-          <div style={{ fontSize: '12px', color: CYBER.textMuted, marginTop: '4px' }}>
-            Traffic analysis, threat detection, and attack monitoring
-          </div>
-        </div>
-        {!isNotConfigured && (
-          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-            <div style={{
-              background: 'rgba(0, 255, 170, 0.15)',
-              border: '1px solid rgba(0, 255, 170, 0.3)',
-              borderRadius: '16px',
-              padding: '4px 12px',
-              fontSize: '11px',
-              color: CYBER.green,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}>
-              <span style={{
-                width: '6px', height: '6px', borderRadius: '50%',
-                background: CYBER.green,
-                animation: 'pulse 2s ease-in-out infinite',
-              }} />
-              LIVE
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Empty state banner */}
       <EmptyStateBanner status={s.data_source_status} message={s.empty_message} />
 

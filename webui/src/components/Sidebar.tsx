@@ -1,16 +1,15 @@
 // ═══════════════════════════════════════════════════
 // Sidebar Component - Cyberpunk navigation
+// 10 focused tabs (consolidated from 19)
 // ═══════════════════════════════════════════════════
 
 import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { api } from '../api';
 import {
-  LayoutDashboard, Map, GitMerge, Network, ShieldAlert,
-  Ban, Shield, Eye, Globe, Settings, Server, FileText, Search,
-  Activity, Cpu, Radio, Layers, TrendingUp, Database,
+  LayoutDashboard, Flame, ShieldAlert, TrendingUp, Network, Radio,
+  FileText, Cpu, Settings, Activity,
   Menu, X, ChevronDown, ChevronRight,
-  Flame, Wifi,
 } from 'lucide-react';
 
 interface NavGroup {
@@ -32,9 +31,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Flame size={16} />,
     items: [
       { id: 'heatmap', label: 'Heatmap', icon: <Flame size={14} /> },
-      { id: 'flows', label: 'Flow Map', icon: <GitMerge size={14} /> },
-      { id: 'ipflow', label: 'IP Flow', icon: <Network size={14} /> },
-      { id: 'geo', label: 'Geography', icon: <Globe size={14} /> },
+      { id: 'traffic', label: 'Traffic', icon: <Network size={14} /> },
     ],
   },
   {
@@ -42,37 +39,35 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <ShieldAlert size={16} />,
     items: [
       { id: 'alerts', label: 'Alerts', icon: <ShieldAlert size={14} /> },
-      { id: 'mutes', label: 'Mutes', icon: <Ban size={14} /> },
-      { id: 'zenarmor', label: 'ZenArmor', icon: <Shield size={14} /> },
-      { id: 'ids', label: 'IDS', icon: <Eye size={14} /> },
-    ],
-  },
-  {
-    name: 'Systems',
-    icon: <Server size={16} />,
-    items: [
-      { id: 'opnsense', label: 'OPNsense', icon: <Server size={14} /> },
-      { id: 'services', label: 'Services', icon: <Cpu size={14} /> },
-      { id: 'nginx', label: 'Nginx', icon: <Wifi size={14} /> },
-      { id: 'network', label: 'Network', icon: <Network size={14} /> },
-      { id: 'wan-flap', label: 'WAN Flap', icon: <Radio size={14} /> },
     ],
   },
   {
     name: 'Rules',
-    icon: <Layers size={16} />,
+    icon: <TrendingUp size={16} />,
     items: [
-      { id: 'rules', label: 'Firewall Rules', icon: <Layers size={14} /> },
       { id: 'rules-classified', label: 'Rules ML', icon: <TrendingUp size={14} /> },
+    ],
+  },
+  {
+    name: 'Network',
+    icon: <Network size={16} />,
+    items: [
+      { id: 'network', label: 'Network', icon: <Network size={14} /> },
+      { id: 'wan-flap', label: 'WAN Flap', icon: <Radio size={14} /> },
     ],
   },
   {
     name: 'Logs',
     icon: <FileText size={16} />,
     items: [
-      { id: 'syslogs', label: 'Syslogs', icon: <FileText size={14} /> },
-      { id: 'logs', label: 'DNS Queries', icon: <Database size={14} /> },
-      { id: 'query-logs', label: 'Query Logs', icon: <Search size={14} /> },
+      { id: 'logs', label: 'Logs', icon: <FileText size={14} /> },
+    ],
+  },
+  {
+    name: 'Services',
+    icon: <Cpu size={16} />,
+    items: [
+      { id: 'services', label: 'Services', icon: <Cpu size={14} /> },
     ],
   },
   {
@@ -91,22 +86,13 @@ export default function Sidebar() {
   const tabToGroup: Record<string, string> = {
     overview: 'Overview',
     heatmap: 'Analytics',
-    flows: 'Analytics',
-    ipflow: 'Analytics',
-    geo: 'Analytics',
+    traffic: 'Analytics',
     alerts: 'Threats',
-    mutes: 'Threats',
-    zenarmor: 'Threats',
-    ids: 'Threats',
-    opnsense: 'Systems',
-    services: 'Systems',
-    nginx: 'Systems',
-    network: 'Systems',
-    'wan-flap': 'Systems',
-    rules: 'Rules',
     'rules-classified': 'Rules',
-    syslogs: 'Logs',
+    network: 'Network',
+    'wan-flap': 'Network',
     logs: 'Logs',
+    services: 'Services',
     settings: 'Config',
   };
 
@@ -202,7 +188,6 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
-
 
     </aside>
   );

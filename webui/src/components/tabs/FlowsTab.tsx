@@ -404,15 +404,9 @@ export default function FlowsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Header with toggle */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-md bg-cyber-purple/10 border border-cyber-purple/20 flex items-center justify-center">
-          <GitMerge size={16} className="text-cyber-purple" />
-        </div>
-        <h2 className="text-lg font-bold">IP Flow Map</h2>
-
-        {/* View mode toggle */}
-        <div className="flex items-center ml-auto bg-cyber-panel/80 border border-cyber-border rounded-lg overflow-hidden">
+      {/* View mode toggle */}
+      <div className="flex items-center justify-end">
+        <div className="flex items-center bg-cyber-panel/80 border border-cyber-border rounded-lg overflow-hidden">
           <button
             onClick={() => { setViewMode('by-network'); setExpandCluster(null); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -539,13 +533,8 @@ export default function FlowsTab() {
           <Globe2 size={12} />
           <span>
             For a detailed matrix view of source &rarr; destination flows, see the{' '}
-            <button
-              onClick={() => { window.location.hash = '#ipflow'; }}
-              className="text-cyber-purple hover:underline"
-            >
-              IP Flow
-            </button>{' '}
-            tab.
+            <span className="text-cyber-purple">IP Flow</span>{' '}
+            sub-tab above.
           </span>
         </div>
       </div>
