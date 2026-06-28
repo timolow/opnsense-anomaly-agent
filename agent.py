@@ -83,6 +83,7 @@ from baseline_engine import BaselineEngine
 from anomaly_detector import AnomalyDetector
 from threshold_tuner import ThresholdTuner
 from concept_drift import ConceptDriftDetector, DriftEvent
+from ip_behavior_model import BehaviorProfiler
 
 # P2-6: SSE queue access (imported from server module)
 _sse_publish_fn = None
@@ -622,6 +623,14 @@ class OPNsenseAgent:
         self.last_drift_retrain = time.time()
         logger.info("Concept drift detector initialized")
 
+        # IP behavior profiler — per-IP behavioral profiling with EMA baselines
+        try:
+            self.behavior_profiler = BehaviorProfiler(self.db)
+            logger.info("IP behavior profiler initialized")
+        except Exception as e:
+            logger.warning("Failed to initialize behavior profiler: %s", e)
+            self.behavior_profiler = None
+
         # Shutdown
         self._shutdown = Event()
         
@@ -898,6 +907,10 @@ class OPNsenseAgent:
         # Threat engine — batch ingest firewall events
         if self.threat_engine and fw_events:
             self.threat_engine.ingest_firewall_events(fw_events)
+
+        # Behavior profiler — ingest all events for behavioral profiling
+        if self.behavior_profiler:
+            self.behavior_profiler.ingest_batch(events)
 
         # ── Phase 5: Batch attack detection ──────────────────────────
         attacks = self.attack_detector.check_events_batch(events)

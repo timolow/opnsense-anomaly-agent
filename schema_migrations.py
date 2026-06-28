@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -651,6 +651,66 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
             """
             ANALYZE events;
+            """,
+        ],
+    },
+    # ------------------------------------------------------------------
+    # V14: IP behavior profiling tables
+    #      Core behavioral profiling engine: per-IP profiles + signal stream
+    #      GIN indexes on JSONB columns, B-tree on ip+timestamp
+    # ------------------------------------------------------------------
+    {
+        "version": 14,
+        "description": "Create ip_behavior_profiles and ip_behavior_signals for behavioral profiling",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS ip_behavior_profiles (
+                id SERIAL PRIMARY KEY,
+                ip TEXT NOT NULL UNIQUE,
+                first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                profile_data JSONB NOT NULL DEFAULT '{}',
+                baseline_data JSONB NOT NULL DEFAULT '{}',
+                threat_level TEXT NOT NULL DEFAULT 'low',
+                total_events INTEGER NOT NULL DEFAULT 0,
+                behavior_score REAL NOT NULL DEFAULT 0,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_profiles_ip ON ip_behavior_profiles(ip);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_profiles_threat_level ON ip_behavior_profiles(threat_level);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_profiles_behavior_score ON ip_behavior_profiles(behavior_score DESC);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_profiles_updated ON ip_behavior_profiles(updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_profiles_profile_data
+                ON ip_behavior_profiles USING GIN (profile_data);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_profiles_baseline_data
+                ON ip_behavior_profiles USING GIN (baseline_data);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ip_behavior_signals (
+                id SERIAL PRIMARY KEY,
+                ip TEXT NOT NULL,
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                source TEXT NOT NULL DEFAULT 'firewall',
+                signal_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                metadata JSONB NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_signals_ip ON ip_behavior_signals(ip);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_signals_timestamp ON ip_behavior_signals(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_signals_ip_ts ON ip_behavior_signals(ip, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_signals_severity ON ip_behavior_signals(severity);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_signals_signal_type ON ip_behavior_signals(signal_type);
+            CREATE INDEX IF NOT EXISTS idx_ip_behavior_signals_metadata
+                ON ip_behavior_signals USING GIN (metadata);
+            """,
+            """
+            ANALYZE ip_behavior_profiles;
+            ANALYZE ip_behavior_signals;
             """,
         ],
     },
