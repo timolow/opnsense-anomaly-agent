@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all source files (excluded items in .dockerignore)
 COPY . .
 
-# Copy built webui from build stage
+# Copy built webui from build stage (clean old dist first)
+RUN rm -rf webui/dist
 COPY --from=webui-build /build/dist webui/dist
 
 # Create data directory
