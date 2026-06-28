@@ -13,11 +13,12 @@ import {
   RadioTower, Network, ShieldCheck, Bell, FileText, Volume2,
   RefreshCw, X, Globe, Lock,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
-import { useStore } from '../../store';
-import { CYBER, SEVERITY, RECHARTS_TOOLTIP } from '@/utils/colors';
+import CanvasBarChart from '../../components/charts/CanvasBarChart';
 import TimelineChart from '../../components/charts/TimelineChart';
 import Sparkline from '../../components/charts/Sparkline';
+import CanvasAreaChart from '../../components/charts/CanvasAreaChart';
+import { useStore } from '../../store';
+import { CYBER, SEVERITY, RECHARTS_TOOLTIP } from '@/utils/colors';
 import { OverviewSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
 
@@ -28,28 +29,7 @@ function MiniSparkline({ data }: { data: { time: number; value: number }[] }) {
     return <div className="h-[64px] flex items-center justify-center text-xs text-cyber-textMuted">No timeline data</div>;
   }
   const chartData = data.map((d, i) => ({ x: i, value: d.value }));
-  return (
-    <ResponsiveContainer width="100%" height={64}>
-      <AreaChart data={chartData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
-        <defs>
-          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#00ffd5" stopOpacity={0.35} />
-            <stop offset="95%" stopColor="#00ffd5" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <XAxis dataKey="x" domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
-        <YAxis domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
-        <Area
-          type="monotone"
-          dataKey="value"
-          stroke="#00ffd5"
-          strokeWidth={1.5}
-          fill="url(#sparkGrad)"
-          connectNulls
-        />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
+  return <CanvasAreaChart data={chartData} height={64} color="#00ffd5" />;
 }
 
 function PassBlockBar({ passed, blocked }: { passed: number; blocked: number }) {
@@ -252,21 +232,7 @@ function SeverityChart({ data }: { data: StatsData }) {
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
         <TrendingUp size={14} /> Severity Distribution
       </h3>
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={chartData} margin={{ left: 0, right: 30, top: 10, bottom: 0 }}>
-          <XAxis dataKey="name" tick={{ fill: CYBER.textMuted, fontSize: 11, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-          <YAxis domain={[0, 'auto']} tick={false} axisLine={false} tickLine={false} />
-          <Tooltip
-            contentStyle={RECHARTS_TOOLTIP}
-            itemStyle={{ fontFamily: 'monospace' }}
-          />
-          <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24}>
-            {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+      <CanvasBarChart data={chartData} height={200} barSize={24} />
     </div>
   );
 }

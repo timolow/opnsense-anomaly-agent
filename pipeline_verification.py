@@ -781,7 +781,7 @@ def check_baseline(report: PipelineReport, base: str, verbose: bool = False, tim
 
 # ─── Stage 7: API ──────────────────────────────────────────────────
 
-def check_api(report: PipelineReport, base: str, verbose: bool = False):
+def check_api(report: PipelineReport, base: str, verbose: bool = False, timeout: int = REQUEST_TIMEOUT):
     """Verify all API endpoints respond correctly with valid structure."""
     stage = Stage.API.value
     t0 = time.time()
@@ -900,7 +900,7 @@ def check_api(report: PipelineReport, base: str, verbose: bool = False):
 
 # ─── Stage 8: UI_DATA ──────────────────────────────────────────────
 
-def check_ui_data(report: PipelineReport, base: str, verbose: bool = False):
+def check_ui_data(report: PipelineReport, base: str, verbose: bool = False, timeout: int = REQUEST_TIMEOUT):
     """Verify frontend data contracts: API responses match UI expectations."""
     stage = Stage.UI_DATA.value
     t0 = time.time()

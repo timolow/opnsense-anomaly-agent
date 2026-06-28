@@ -7,8 +7,8 @@ import { api } from '@/api';
 import type { RulesClassifiedData } from '@/types';
 import { TrendingUp, Brain, Target, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
-import { CLASSIFICATION, RECHARTS_TOOLTIP, CYBER } from '@/utils/colors';
+import CanvasPieChart from '../../components/charts/CanvasPieChart';
+import { CLASSIFICATION, CYBER } from '@/utils/colors';
 
 import { RulesClassifiedSkeleton } from '../../components/SkeletonLoaders';
 import { TabQueryError } from '../../components/TabShell';
@@ -105,27 +105,7 @@ export default function RulesClassifiedTab() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="cyber-card p-4">
           <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Classification Distribution</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <PieChart>
-              <Pie
-                data={pieData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                innerRadius={50}
-                strokeWidth={2}
-              >
-                {pieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} style={{ filter: `drop-shadow(0 0 6px ${entry.color}60)` }} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={RECHARTS_TOOLTIP}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+          <CanvasPieChart data={pieData} height={250} outerRadius={80} innerRadius={50} />
           <div className="flex justify-center gap-4 mt-2">
             {pieData.map((d) => (
               <div key={d.name} className="flex items-center gap-1.5">

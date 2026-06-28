@@ -1195,10 +1195,14 @@ class EventDatabase:
             row = cur.fetchone()
             baselines_updated = row[0] or 0 if row else 0
             
-            # Temporal patterns count
-            cur.execute("SELECT COUNT(*) FROM rule_temporal_patterns WHERE total_samples > 0")
-            row = cur.fetchone()
-            temporal_patterns = row[0] or 0 if row else 0
+            # Temporal patterns count (may not exist on older schemas)
+            temporal_patterns = 0
+            try:
+                cur.execute("SELECT COUNT(*) FROM rule_temporal_patterns WHERE total_samples > 0")
+                row = cur.fetchone()
+                temporal_patterns = row[0] or 0 if row else 0
+            except Exception:
+                pass
             
             return {
                 'feedback_total': feedback_total,

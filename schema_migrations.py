@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -508,6 +508,56 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+
+    # ------------------------------------------------------------------
+    # V10: Nginx monitoring tables
+    # ------------------------------------------------------------------
+    {
+        "version": 10,
+        "description": "Create nginx_events and nginx_anomalies tables for web traffic monitoring",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS nginx_events (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ NOT NULL,
+                src_ip TEXT,
+                method TEXT,
+                path TEXT,
+                status_code INTEGER,
+                response_size INTEGER,
+                user_agent TEXT,
+                request_time DOUBLE PRECISION,
+                interface TEXT,
+                ingested_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_nginx_events_timestamp ON nginx_events(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_nginx_events_src_ip ON nginx_events(src_ip) WHERE src_ip IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_nginx_events_status_code ON nginx_events(status_code) WHERE status_code IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_nginx_events_path ON nginx_events(path) WHERE path IS NOT NULL;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS nginx_anomalies (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ NOT NULL,
+                attack_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                src_ip TEXT,
+                path TEXT,
+                status_code INTEGER,
+                description TEXT,
+                detail JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_created_at ON nginx_anomalies(created_at);
+            CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_attack_type ON nginx_anomalies(attack_type);
+            CREATE INDEX IF NOT EXISTS idx_nginx_anomalies_src_ip ON nginx_anomalies(src_ip) WHERE src_ip IS NOT NULL;
+            """,
+        ],
+    },
 ]
 
 
@@ -680,19 +730,28 @@ def run_migrations(db: Any) -> List[dict]:
 
 def get_schema_version(db: Any) -> int:
     """Get the current schema version without running migrations."""
-    conn = db.connect()
+    # Handle both raw psycopg2 connections and EventDatabase instances
+    if hasattr(db, 'connect'):
+        conn = db.connect()
+    else:
+        conn = db
     try:
         return _get_current_version(conn)
     finally:
-        try:
-            db.putconn(conn)
-        except Exception:
-            pass
+        if hasattr(db, 'putconn'):
+            try:
+                db.putconn(conn)
+            except Exception:
+                pass
 
 
 def get_migration_status(db: Any) -> dict:
     """Get a summary of migration status for debugging."""
-    conn = db.connect()
+    # Handle both raw psycopg2 connections and EventDatabase instances
+    if hasattr(db, 'connect'):
+        conn = db.connect()
+    else:
+        conn = db
     try:
         current = _get_current_version(conn)
         cur = conn.cursor()
@@ -721,7 +780,8 @@ def get_migration_status(db: Any) -> dict:
             "pending": pending,
         }
     finally:
-        try:
-            db.putconn(conn)
-        except Exception:
-            pass
+        if hasattr(db, 'putconn'):
+            try:
+                db.putconn(conn)
+            except Exception:
+                pass
