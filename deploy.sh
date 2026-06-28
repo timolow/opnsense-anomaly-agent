@@ -273,8 +273,75 @@ main() {
         exit 1
     fi
 
-    # Step 9: Save deploy state and clean up
-    log_info "Step 9: Saving deploy state and cleaning up..."
+    # ── E2E Verification Gate ──────────────────────────────────────────
+    log_info "Step 9: Running E2E verification gate..."
+    local e2e_failed=0
+
+    # Run each E2E verification module inside the container against localhost:8766
+    local e2e_scripts=("api_verification.py" "empty_state_verification.py" "pipeline_verification.py")
+    local e2e_results=()
+
+    for script in "${e2e_scripts[@]}"; do
+        log_info "  Running $script..."
+        local script_start
+        script_start=$(date +%s)
+
+        if docker exec "$CONTAINER_NAME" python3 "$script" 2>&1; then
+            local script_end
+            script_end=$(date +%s)
+            local script_duration=$((script_end - script_start))
+            log_ok "  $script passed (${script_duration}s)"
+            e2e_results+=("$script:PASS")
+        else
+            local script_end
+            script_end=$(date +%s)
+            local script_duration=$((script_end - script_start))
+            log_err "  $script FAILED (${script_duration}s)"
+            e2e_results+=("$script:FAIL")
+            e2e_failed=1
+        fi
+    done
+
+    if [ $e2e_failed -ne 0 ]; then
+        echo ""
+        log_err "═══════════════════════════════════════════════════════"
+        log_err "  E2E VERIFICATION FAILED — Deployment blocked!"
+        log_err "═══════════════════════════════════════════════════════"
+        for res in "${e2e_results[@]}"; do
+            local name="${res%%:*}"
+            local status="${res##*:}"
+            if [ "$status" = "PASS" ]; then
+                log_ok "  $name: PASS"
+            else
+                log_err "  $name: FAIL"
+            fi
+        done
+        echo ""
+        log_err "E2E checks failed. Rolling back to previous version..."
+        docker stop -t "$GRACEFUL_STOP_TIMEOUT" "$CONTAINER_NAME" 2>/dev/null || true
+        docker rm "$CONTAINER_NAME" 2>/dev/null || true
+
+        if [ "$current_image" != "none" ]; then
+            log_info "Restarting previous version: $current_image"
+            set_agent_image "$current_image"
+            docker compose up -d "$AGENT_SERVICE" 2>&1 | tail -3
+            sleep 15
+            if check_health_url "$HEALTH_URL"; then
+                log_ok "Automatic rollback successful — previous version restored"
+            else
+                log_err "Automatic rollback also failed! Manual intervention required."
+                log_info "Run ./rollback.sh to try again."
+            fi
+        else
+            log_err "No previous version available. Manual intervention required."
+        fi
+        exit 1
+    fi
+
+    log_ok "E2E verification gate passed!"
+
+    # Step 10: Save deploy state and clean up
+    log_info "Step 10: Saving deploy state and cleaning up..."
     save_deploy_state "$new_image" "$current_image"
 
     # Clean up old dangling images (keep last 5)
@@ -291,6 +358,7 @@ main() {
     log_ok "  Deploy successful! Version: $commit_sha"
     log_ok "  Image: $new_image"
     log_ok "  Previous: $current_image (rollback available)"
+    log_ok "  E2E verification: PASSED"
     log_ok "═══════════════════════════════════════════════════════"
     echo ""
 }

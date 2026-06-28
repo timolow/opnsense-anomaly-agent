@@ -550,11 +550,66 @@ docker logs anomaly-agent 2>&1 | grep -i "error\|exception" | tail -20
 
 ---
 
-## Pre-commit / Pre-deploy Gate
+## E2E Enforcement Rules
 
-The `hooks/pre-commit` hook and `KANBAN_E2E_GATE.md` document the policy: every kanban worker that modifies the anomaly agent MUST run E2E verification before calling `kanban_complete()`. If E2E fails, the worker blocks the task with structured failure details.
+### Deployment Gate (Automated — `deploy.sh`)
 
-**Memory rule for workers:** Do NOT skip the gate even for "small changes". A one-line config fix can break an API endpoint. The gate runs in ~20s and catches regressions before they reach the user.
+`deploy.sh` now runs a mandatory E2E verification gate **after** production health checks pass but **before** marking the deployment complete. This is Step 9 in the deploy flow.
+
+**What runs (inside the container, against localhost:8766):**
+
+| # | Script | Purpose | Duration |
+|---|--------|---------|----------|
+| 1 | `api_verification.py` | All API endpoints (26+ endpoints, ~210 checks) | ~15s |
+| 2 | `empty_state_verification.py` | Per-tab empty-state messaging (26 tabs) | ~10s |
+| 3 | `pipeline_verification.py` | 8-stage source-to-UI trace | ~20s |
+
+**Exit behavior:**
+
+- **All pass** → Deploy continues to cleanup + success message.
+- **Any FAIL** → Deploy **ABORTS**: failed container stopped, previous version automatically restored via rollback, script exits 1.
+- **Script crash** → Treated as FAIL (same rollback behavior).
+
+**No skip flags.** There are no `--skip-e2e` or `--force` flags in deploy.sh. The gate is mandatory.
+
+**Success output includes E2E confirmation:**
+
+```
+[+] Deploy successful! Version: abc1234
+[+] Image: opnsense-anomaly-agent:abc1234
+[+] Previous: opnsense-anomaly-agent:def5678 (rollback available)
+[+] E2E verification: PASSED
+```
+
+### Kanban Completion Gate (Worker-enforced)
+
+Every kanban worker that modifies the anomaly agent MUST run E2E verification before calling `kanban_complete()`. See `KANBAN_E2E_GATE.md` and `kanban_e2e_hook.py`.
+
+```python
+from kanban_e2e_hook import E2ECompletionGate
+
+gate = E2ECompletionGate(
+    base_url="http://192.168.1.50:8766",
+    workspace_path=os.environ.get("HERMES_KANBAN_WORKSPACE", "."),
+    skip_ui=True,
+    verbose=True,
+)
+result = gate.run()
+
+if result.passed:
+    kanban_complete(summary=..., metadata=..., artifacts=[result.report_path])
+else:
+    kanban_comment(task_id=..., body=result.failure_comment())
+    kanban_block(reason=result.block_reason())
+```
+
+### Enforcement Rules
+
+1. **Never skip E2E verification.** Not for "small changes," not for hotfixes, not for config-only changes. A one-line YAML fix can break an API endpoint.
+2. **Block on FAIL.** If any E2E check returns FAIL, the task is blocked with `kanban_block()`. Do not complete with a note "E2E failed but I think it's fine."
+3. **Run after deploy, before declare-done.** E2E verification happens after the code is deployed and the health check passes, but before the deploy script reports success.
+4. **Worker-created E2E modules crash on live APIs.** Always test new E2E modules against the live system before committing — unit tests are necessary but insufficient.
+5. **Rollback is automatic.** Both `deploy.sh` and `kanban_e2e_hook.py` handle rollback. If E2E fails, the previous version is restored automatically.
 
 ---
 
