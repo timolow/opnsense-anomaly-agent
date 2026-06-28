@@ -1651,8 +1651,6 @@ def query_flows():
     except Exception as e:
         print(f"Flows query failed: {e}")
         return {"flows": [], "total_flows": 0, "protocols": {}}
-    finally:
-        close_db(conn)
 
 
 def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
@@ -1696,8 +1694,6 @@ def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
     except Exception as e:
         print(f"Logs query failed: {e}")
         return {"logs": []}
-    finally:
-        close_db(conn)
 
 
 def query_system_logs():
@@ -1796,8 +1792,6 @@ def query_system_logs():
             "services_by_volume": {},
             "recent_logs": [],
         }
-    finally:
-        close_db(conn)
 
 
 def query_new_since(since_ts: str):
@@ -2864,7 +2858,7 @@ def query_nginx_summary():
         }
     try:
         cur = conn.cursor()
-        cutoff = datetime.now(timezone.utc).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         
         # Total requests
         cur.execute(
