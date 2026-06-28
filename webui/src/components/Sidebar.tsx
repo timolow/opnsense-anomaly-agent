@@ -128,7 +128,7 @@ export default function Sidebar() {
           <Activity size={18} className="text-cyber-accent" />
         </div>
         {!sidebarCollapsed && (
-          <span className="text-sm font-bold tracking-wider text-gradient-cyber">
+          <span className="text-sm font-bold tracking-wider text-[#00e5ff]" style={{ textShadow: '0 0 8px rgba(0,229,255,0.5), 0 0 16px rgba(0,229,255,0.3)' }}>
             WATCHTOWER
           </span>
         )}
