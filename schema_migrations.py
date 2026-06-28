@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -589,6 +589,42 @@ MIGRATIONS: List[Dict[str, Any]] = [
                 ON events (rule_name)
                 INCLUDE (action, proto, src_ip, dst_ip, dst_port)
                 WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
+            """,
+        ],
+    },
+    # ------------------------------------------------------------------
+    # V12: Composite indexes for dashboard queries + ANALYZE
+    # ------------------------------------------------------------------
+    {
+        "version": 12,
+        "description": "Add composite indexes for dashboard endpoints and refresh planner stats",
+        "sql": [
+            """
+            -- Composite index for timestamp-range queries (most dashboard endpoints)
+            -- Covers: WHERE timestamp > NOW() - INTERVAL '24 hours' GROUP BY ...
+            CREATE INDEX IF NOT EXISTS idx_events_ts_action
+                ON events (timestamp, action)
+                INCLUDE (src_ip, dst_ip, dst_port, proto, interface);
+            """,
+            """
+            -- Composite index for src_ip grouping with time range
+            -- Covers: top_sources, blocked IPs, unique IP counts
+            CREATE INDEX IF NOT EXISTS idx_events_ts_src
+                ON events (timestamp, src_ip)
+                INCLUDE (dst_ip, dst_port, action, interface, proto);
+            """,
+            """
+            -- Composite index for dst_port filtering (DNS, Nginx, etc.)
+            -- Covers: WHERE dst_port IN (80, 443, 53) AND timestamp > ...
+            CREATE INDEX IF NOT EXISTS idx_events_dstport_ts
+                ON events (dst_port, timestamp)
+                WHERE dst_port IS NOT NULL
+                INCLUDE (src_ip, dst_ip, action, proto);
+            """,
+            """
+            -- Refresh planner statistics on all key tables (critical after index additions)
+            ANALYZE events;
+            ANALYZE anomalies;
             """,
         ],
     },
