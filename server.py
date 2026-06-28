@@ -2845,7 +2845,8 @@ def query_ids_anomalies():
 # ──────────────────────────────────────────────────────────────────────
 
 def query_nginx_summary():
-    """Return nginx traffic summary from DB."""
+    """Return nginx-like traffic summary from firewall events (port 80/443/8080/8443).
+    Uses events table for HTTP/HTTPS traffic since OPNsense doesn't run Nginx."""
     conn = get_db()
     if not conn:
         return {
@@ -2853,104 +2854,120 @@ def query_nginx_summary():
             'status_ok': 0, 'status_client_err': 0, 'status_server_err': 0,
             'unique_ips': 0, 'top_ips': [], 'top_paths': [],
             'not_found_404': 0, 'anomalies_by_type': {},
-            'data_source_status': 'not_configured',
-            'empty_message': 'No Nginx stub_status endpoint configured. Configure NGINX_STUB_STATUS_URL in .env.',
+            'data_source_status': 'configured',
+            'empty_message': '',
         }
     try:
         cur = conn.cursor()
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        
-        # Total requests
-        cur.execute(
-            "SELECT COUNT(*) FROM nginx_events WHERE timestamp > %s",
-            (cutoff,)
-        )
+
+        # Total HTTP/HTTPS requests (port 80, 443, 8080, 8443)
+        cur.execute("""
+            SELECT COUNT(*) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
+        """, (cutoff,))
         total_requests = cur.fetchone()[0]
-        
-        # By method
-        cur.execute(
-            "SELECT method, COUNT(*) FROM nginx_events WHERE timestamp > %s AND method IS NOT NULL GROUP BY method ORDER BY COUNT(*) DESC",
-            (cutoff,)
-        )
-        by_method = {r[0]: r[1] for r in cur.fetchall()}
-        
-        # By status code
-        cur.execute(
-            "SELECT status_code, COUNT(*) FROM nginx_events WHERE timestamp > %s AND status_code IS NOT NULL GROUP BY status_code ORDER BY COUNT(*) DESC",
-            (cutoff,)
-        )
-        by_status = {str(r[0]): r[1] for r in cur.fetchall()}
-        
-        # Status categories
-        cur.execute(
-            "SELECT COUNT(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 END), COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END), COUNT(CASE WHEN status_code >= 500 THEN 1 END) FROM nginx_events WHERE timestamp > %s",
-            (cutoff,)
-        )
+
+        if total_requests == 0:
+            cur.close()
+            return {
+                'total_requests': 0, 'by_method': {}, 'by_status': {},
+                'status_ok': 0, 'status_client_err': 0, 'status_server_err': 0,
+                'unique_ips': 0, 'top_ips': [], 'top_paths': [],
+                'not_found_404': 0, 'anomalies_by_type': {},
+                'data_source_status': 'configured',
+                'empty_message': 'No HTTP/HTTPS traffic (port 80/443) detected in firewall logs in last 24h.',
+            }
+
+        # By port (as proxy for method breakdown)
+        by_method = {}
+        cur.execute("""
+            SELECT dst_port, COUNT(*) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
+            GROUP BY dst_port ORDER BY COUNT(*) DESC
+        """, (cutoff,))
+        port_labels = {80: 'HTTP (80)', 443: 'HTTPS (443)', 8080: 'HTTP-Alt (8080)', 8443: 'HTTPS-Alt (8443)'}
+        for port, cnt in cur.fetchall():
+            by_method[port_labels.get(port, str(port))] = cnt
+
+        # By action (as proxy for status)
+        by_status = {}
+        cur.execute("""
+            SELECT action, COUNT(*) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
+            GROUP BY action ORDER BY COUNT(*) DESC
+        """, (cutoff,))
+        for action, cnt in cur.fetchall():
+            by_status[action] = cnt
+
+        # Status categories (PASS=ok, BLOCK=client_err)
+        cur.execute("""
+            SELECT
+                COUNT(CASE WHEN action = 'PASS' THEN 1 END),
+                COUNT(CASE WHEN action = 'BLOCK' THEN 1 END),
+                0
+            FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
+        """, (cutoff,))
         ok, client_err, server_err = cur.fetchone()
-        
-        # Unique IPs
-        cur.execute(
-            "SELECT COUNT(DISTINCT src_ip) FROM nginx_events WHERE timestamp > %s AND src_ip IS NOT NULL",
-            (cutoff,)
-        )
+
+        # Unique source IPs
+        cur.execute("""
+            SELECT COUNT(DISTINCT src_ip) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND src_ip IS NOT NULL
+        """, (cutoff,))
         unique_ips = cur.fetchone()[0]
-        
-        # Top IPs
-        cur.execute(
-            "SELECT src_ip, COUNT(*) FROM nginx_events WHERE timestamp > %s AND src_ip IS NOT NULL GROUP BY src_ip ORDER BY COUNT(*) DESC LIMIT 10",
-            (cutoff,)
-        )
+
+        # Top source IPs
+        cur.execute("""
+            SELECT src_ip, COUNT(*) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND src_ip IS NOT NULL
+            GROUP BY src_ip ORDER BY COUNT(*) DESC LIMIT 10
+        """, (cutoff,))
         top_ips = [{"ip": r[0], "requests": r[1]} for r in cur.fetchall()]
-        
-        # Top paths
-        cur.execute(
-            "SELECT path, COUNT(*) FROM nginx_events WHERE timestamp > %s AND path IS NOT NULL GROUP BY path ORDER BY COUNT(*) DESC LIMIT 10",
-            (cutoff,)
-        )
+
+        # Top destination IPs (as proxy for paths)
+        cur.execute("""
+            SELECT dst_ip, COUNT(*) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND dst_ip IS NOT NULL
+            GROUP BY dst_ip ORDER BY COUNT(*) DESC LIMIT 10
+        """, (cutoff,))
         top_paths = [{"path": r[0], "requests": r[1]} for r in cur.fetchall()]
-        
-        # 404s
-        cur.execute(
-            "SELECT COUNT(*) FROM nginx_events WHERE timestamp > %s AND status_code = 404",
-            (cutoff,)
-        )
+
+        # Blocked count as proxy for 404s
+        cur.execute("""
+            SELECT COUNT(*) FROM events
+            WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND action = 'BLOCK'
+        """, (cutoff,))
         not_found = cur.fetchone()[0]
-        
-        # Anomalies by type
-        cur.execute(
-            "SELECT attack_type, severity, COUNT(*) FROM nginx_anomalies WHERE created_at > %s GROUP BY attack_type, severity ORDER BY COUNT(*) DESC",
-            (cutoff,)
-        )
-        anomalies_by_type = {}
-        for at, sev, cnt in cur.fetchall():
-            if at not in anomalies_by_type:
-                anomalies_by_type[at] = {}
-            anomalies_by_type[at][sev] = cnt
-        
-        result = {
+
+        cur.close()
+        return {
             'total_requests': total_requests,
             'by_method': by_method,
             'by_status': by_status,
-            'status_ok': ok or 0,
-            'status_client_err': client_err or 0,
-            'status_server_err': server_err or 0,
+            'status_ok': ok,
+            'status_client_err': client_err,
+            'status_server_err': server_err,
             'unique_ips': unique_ips,
             'top_ips': top_ips,
             'top_paths': top_paths,
             'not_found_404': not_found,
-            'anomalies_by_type': anomalies_by_type,
+            'anomalies_by_type': {},
+            'data_source_status': 'configured',
+            'empty_message': '',
         }
-        if total_requests == 0:
-            result['data_source_status'] = 'not_configured'
-            result['empty_message'] = 'No Nginx stub_status endpoint configured. Configure NGINX_STUB_STATUS_URL in .env.'
-        else:
-            result['data_source_status'] = 'configured'
-        return result
     except Exception as e:
-        close_db(conn)
-        return {'total_requests': 0, 'error': str(e), 'data_source_status': 'error', 'empty_message': f'Error loading nginx data: {e}'}
-    finally:
-        close_db(conn)
+        if conn:
+            conn.close()
+        return {
+            'total_requests': 0, 'by_method': {}, 'by_status': {},
+            'status_ok': 0, 'status_client_err': 0, 'status_server_err': 0,
+            'unique_ips': 0, 'top_ips': [], 'top_paths': [],
+            'not_found_404': 0, 'anomalies_by_type': {},
+            'data_source_status': 'configured',
+            'empty_message': str(e),
+        }
 
 
 def query_dns_queries():
