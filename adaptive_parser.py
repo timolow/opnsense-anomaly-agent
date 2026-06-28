@@ -309,6 +309,17 @@ class AdaptiveParser:
                     if v1: features['src_ip'] = v1
                     if v2: features['dst_ip'] = v2
                     
+                    # For IPv6, extract ports at positions after IPs (17/18 = sport/dport)
+                    if len(parts) > 18:
+                        try:
+                            features['sport'] = int(parts[17]) if parts[17].isdigit() and 0 <= int(parts[17]) <= 65535 else None
+                        except (ValueError, IndexError):
+                            features['sport'] = None
+                        try:
+                            features['dport'] = int(parts[18]) if parts[18].isdigit() and 0 <= int(parts[18]) <= 65535 else None
+                        except (ValueError, IndexError):
+                            features['dport'] = None
+                    
                     # For IPv6, the proto field may not be explicit in the CSV.
                     # Detect protocol from TCP indicators:
                     tcp_flags = ('S', 'S-A', 'SA', 'A', 'F', 'R', 'P', 'U')
