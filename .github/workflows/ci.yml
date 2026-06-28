@@ -23,6 +23,7 @@ jobs:
           python-version: "3.11"
 
       - name: Cache pip
+        if: false
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
