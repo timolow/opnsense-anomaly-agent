@@ -129,7 +129,7 @@ export default function Sidebar() {
         </div>
         {!sidebarCollapsed && (
           <span className="text-sm font-bold tracking-wider text-gradient-cyber">
-            SOC DASHBOARD
+            WATCHTOWER
           </span>
         )}
         {/* Mobile close button */}
