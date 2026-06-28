@@ -3643,6 +3643,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(data)
                 except Exception as e:
                     self._send_json({'error': str(e)}, 500)
+            # Flow classification endpoints
+            elif path == "/api/flow-classifications":
+                try:
+                    data = api_flow_classifications()
+                    self._send_json(data)
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
+            elif path.startswith("/api/flow-classifications/"):
+                try:
+                    ip = path[len("/api/flow-classifications/"):]
+                    data = api_flow_classifications_by_ip(ip)
+                    self._send_json(data)
+                except Exception as e:
+                    self._send_json({'error': str(e)}, 500)
             # P2-6: SSE streaming endpoint
             elif path == "/api/sse":
                 self._handle_sse()
@@ -4917,6 +4931,161 @@ def api_ml_classifications():
         }
     except Exception as e:
         logger.error("ml_classifications failed: %s", e)
+        return {"error": str(e)}
+
+
+def api_flow_classifications():
+    """GET /api/flow-classifications — Return flow classification summary + recent classifications."""
+    try:
+        db = EventDatabase()
+
+        # Get classification counts by label
+        cur = db._new_cursor()
+        try:
+            cur.execute("""
+                SELECT label, COUNT(*) as cnt
+                FROM flow_classifications
+                GROUP BY label
+                ORDER BY cnt DESC
+            """)
+            label_counts = [{"label": r[0], "count": r[1]} for r in cur.fetchall()]
+
+            # Total counts
+            cur.execute("SELECT COUNT(*) FROM flow_classifications")
+            total = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM flow_classifications WHERE is_uncertain = TRUE")
+            uncertain = cur.fetchone()[0]
+
+            # Recent classifications (last 50)
+            cur.execute("""
+                SELECT timestamp, src_ip, dst_ip, dst_port, label, label_code,
+                       confidence, reason, is_uncertain
+                FROM flow_classifications
+                ORDER BY classified_at DESC
+                LIMIT 50
+            """)
+            recent = []
+            for row in cur.fetchall():
+                recent.append({
+                    "timestamp": str(row[0]),
+                    "src_ip": row[1],
+                    "dst_ip": row[2],
+                    "dst_port": row[3],
+                    "label": row[4],
+                    "label_code": row[5],
+                    "confidence": round(row[6], 4) if row[6] else 0,
+                    "reason": row[7],
+                    "is_uncertain": row[8],
+                })
+        finally:
+            cur.close()
+
+        # Try to get live model info
+        try:
+            from flow_classifier import FlowClassifier, FLOW_LABEL_NAMES
+            classifier = FlowClassifier()
+            model_info = classifier.ml_classifier.get_model_info()
+            summary = classifier.get_classifications_summary()
+        except Exception as e:
+            logger.debug("Could not load FlowClassifier for live state: %s", e)
+            model_info = {"model_trained": False, "error": str(e)}
+            summary = {}
+
+        return {
+            "total_classifications": total,
+            "uncertain_count": uncertain,
+            "label_distribution": label_counts,
+            "recent": recent,
+            "model_info": model_info,
+            "live_summary": summary,
+            "labels": ["BENIGN", "SUSPICIOUS", "RECONNAISSANCE", "ATTACK", "EXPLOIT"],
+        }
+    except Exception as e:
+        logger.error("flow_classifications failed: %s", e)
+        return {"error": str(e)}
+
+
+def api_flow_classifications_by_ip(ip: str):
+    """GET /api/flow-classifications/<ip> — Return flow classifications for a specific source IP."""
+    try:
+        import urllib.parse
+        ip = urllib.parse.unquote(ip)
+
+        db = EventDatabase()
+        cur = db._new_cursor()
+        try:
+            # All classifications for this IP
+            cur.execute("""
+                SELECT timestamp, src_ip, dst_ip, dst_port, label, label_code,
+                       confidence, reason, is_uncertain, flow_key
+                FROM flow_classifications
+                WHERE src_ip = %s
+                ORDER BY classified_at DESC
+                LIMIT 200
+            """, (ip,))
+            classifications = []
+            for row in cur.fetchall():
+                classifications.append({
+                    "timestamp": str(row[0]),
+                    "src_ip": row[1],
+                    "dst_ip": row[2],
+                    "dst_port": row[3],
+                    "label": row[4],
+                    "label_code": row[5],
+                    "confidence": round(row[6], 4) if row[6] else 0,
+                    "reason": row[7],
+                    "is_uncertain": row[8],
+                    "flow_key": row[9],
+                })
+
+            # Summary for this IP
+            cur.execute("""
+                SELECT label, COUNT(*) as cnt
+                FROM flow_classifications
+                WHERE src_ip = %s
+                GROUP BY label
+                ORDER BY cnt DESC
+            """, (ip,))
+            label_counts = [{"label": r[0], "count": r[1]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT COUNT(DISTINCT dst_ip) as unique_dsts,
+                       COUNT(DISTINCT dst_port) as unique_ports,
+                       COUNT(*) as total
+                FROM flow_classifications
+                WHERE src_ip = %s
+            """, (ip,))
+            row = cur.fetchone()
+            ip_summary = {
+                "unique_destinations": row[0],
+                "unique_ports": row[1],
+                "total_flows": row[2],
+            }
+        finally:
+            cur.close()
+
+        # Get threat info if available
+        try:
+            from flow_classifier import FlowClassifier
+            classifier = FlowClassifier()
+            src_stats = classifier.src_stats.get(ip, {})
+        except Exception:
+            src_stats = {}
+
+        return {
+            "ip": ip,
+            "classifications": classifications,
+            "label_distribution": label_counts,
+            "ip_summary": ip_summary,
+            "threat_info": {
+                "threat_score": src_stats.get("threat_score", 0),
+                "country": src_stats.get("country", ""),
+                "total_events": src_stats.get("total_events", 0),
+            },
+        }
+    except Exception as e:
+        logger.error("flow_classifications_by_ip failed: %s", e)
         return {"error": str(e)}
 
 

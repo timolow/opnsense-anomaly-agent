@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -651,6 +651,45 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
             """
             ANALYZE events;
+            """,
+        ],
+    },
+
+    # ------------------------------------------------------------------
+    # V14: Flow classification table for behavioral ML classifier
+    # ------------------------------------------------------------------
+    {
+        "version": 14,
+        "description": "Create flow_classifications table for behavioral flow-based ML classification",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS flow_classifications (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ NOT NULL,
+                src_ip TEXT NOT NULL,
+                dst_ip TEXT,
+                dst_port INTEGER,
+                flow_key TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL,
+                label_code INTEGER NOT NULL,
+                confidence REAL NOT NULL,
+                feature_vector JSONB,
+                reason TEXT,
+                is_uncertain BOOLEAN DEFAULT FALSE,
+                human_feedback TEXT,
+                classified_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_flow_classifications_timestamp
+                ON flow_classifications(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_flow_classifications_src_ip
+                ON flow_classifications(src_ip);
+            CREATE INDEX IF NOT EXISTS idx_flow_classifications_label
+                ON flow_classifications(label);
+            CREATE INDEX IF NOT EXISTS idx_flow_classifications_uncertain
+                ON flow_classifications(is_uncertain)
+                WHERE is_uncertain = TRUE;
             """,
         ],
     },

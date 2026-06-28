@@ -72,6 +72,7 @@ from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
 from rule_classifier import RuleClassifier
+from flow_classifier import FlowClassifier
 from system_log_classifier import SystemLogClassifier
 from service_monitor import ServiceMonitor
 from apprise_notifier import AppriseNotifier
@@ -628,6 +629,7 @@ class OPNsenseAgent:
         # State persistence
         self.persistence = StatePersistence()
         self.rule_classifier = RuleClassifier()
+        self.flow_classifier = FlowClassifier()
         self.system_log_classifier = SystemLogClassifier()
         # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
         self.service_monitor = ServiceMonitor(None)
@@ -870,6 +872,26 @@ class OPNsenseAgent:
 
         # Pre-filter firewall events for downstream consumers
         fw_events = [e for e in events if e.get("log_type") == "firewall"]
+
+        # Flow-based behavioral classification (firewall events only)
+        for fw_event in fw_events:
+            src_ip = fw_event.get("src_ip", "")
+            threat_score = 0.0
+            country = ""
+            if src_ip:
+                if self.threat_engine:
+                    threat_score = self.threat_engine.score_ip(src_ip)
+                try:
+                    cc = self.geo_lookup._detector.lookup_country(src_ip)
+                    if cc:
+                        country = cc
+                except Exception:
+                    pass
+            self.flow_classifier.process_event(fw_event, threat_score=threat_score, country=country)
+
+        # Auto-retrain flow classifier ML model
+        if self.flow_classifier.should_retrain_ml():
+            self.flow_classifier.train_ml_model()
 
         # Concept drift detection — batch process firewall events
         if self.drift_detector and fw_events:
