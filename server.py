@@ -4051,6 +4051,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(result, code)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+        # ── ML PIVOT: New behavioral ML endpoints ────────────────────
+        elif path == "/api/incidents":
+            self._send_json(api_incidents())
+        elif path == "/api/incidents/stats":
+            self._send_json(api_incident_stats())
+        elif path.startswith("/api/incidents/"):
+            inc_id = path[len("/api/incidents/"):]
+            self._send_json(api_incident_by_id(inc_id))
+        elif path == "/api/signal-bus/stats":
+            self._send_json(api_signal_bus_stats())
+        elif path == "/api/behavior-profiles":
+            self._send_json(api_behavior_profiles())
+        elif path.startswith("/api/behavior-profiles/"):
+            profile_ip = path[len("/api/behavior-profiles/"):]
+            self._send_json(api_behavior_profile_by_ip(profile_ip))
         else:
             self.send_response(405)
             self.end_headers()
@@ -5141,6 +5156,319 @@ def api_active_learning_queue_items():
     except Exception as e:
         logger.error("active_learning_queue_items failed: %s", e)
         return {'error': str(e), 'items': [], 'count': 0}
+
+
+# ═══════════════════════════════════════════════
+# ML PIVOT API endpoints — behavioral ML system
+# ═══════════════════════════════════════════════
+
+def api_incidents():
+    """GET /api/incidents — List correlated incidents."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection", "incidents": []}
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT id, ip, severity, signal_count, signal_types, sources,
+                   phases, first_seen, last_seen, description, metadata,
+                   is_active, auto_resolved, resolved_at
+            FROM incidents
+            ORDER BY
+                CASE severity
+                    WHEN 'critical' THEN 0
+                    WHEN 'high' THEN 1
+                    WHEN 'medium' THEN 2
+                    WHEN 'low' THEN 3
+                    ELSE 4
+                END,
+                last_seen DESC
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        incidents = []
+        for r in rows:
+            incidents.append({
+                "id": r["id"],
+                "ip": r["ip"],
+                "severity": r["severity"],
+                "signal_count": r["signal_count"],
+                "signal_types": r["signal_types"] or [],
+                "sources": r["sources"] or [],
+                "phases": r["phases"] or [],
+                "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                "description": r["description"],
+                "metadata": r["metadata"] if isinstance(r["metadata"], dict) else {},
+                "is_active": r["is_active"],
+                "auto_resolved": r["auto_resolved"],
+            })
+        return {
+            "incidents": incidents,
+            "count": len(incidents),
+            "active": len([i for i in incidents if i["is_active"]]),
+        }
+    except Exception as e:
+        logger.error("api_incidents failed: %s", e)
+        return {"error": str(e), "incidents": []}
+
+
+def api_incident_stats():
+    """GET /api/incidents/stats — Incident summary statistics."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection"}
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Total and active counts
+        cur.execute("SELECT COUNT(*) FROM incidents")
+        total = cur.fetchone()["count"]
+
+        cur.execute("SELECT COUNT(*) FROM incidents WHERE is_active = TRUE")
+        active = cur.fetchone()["count"]
+
+        # By severity
+        cur.execute("""
+            SELECT severity, COUNT(*) as cnt
+            FROM incidents
+            GROUP BY severity
+        """)
+        by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
+
+        # Active by severity
+        cur.execute("""
+            SELECT severity, COUNT(*) as cnt
+            FROM incidents
+            WHERE is_active = TRUE
+            GROUP BY severity
+        """)
+        active_by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
+
+        # By attack phase
+        cur.execute("""
+            SELECT phases, COUNT(*) as cnt
+            FROM incidents
+            WHERE array_length(phases, 1) > 0
+            GROUP BY phases
+        """)
+        by_phase = {str(row["phases"]): row["cnt"] for row in cur.fetchall()}
+
+        # Top offending IPs
+        cur.execute("""
+            SELECT ip, COUNT(*) as cnt
+            FROM incidents
+            WHERE is_active = TRUE
+            GROUP BY ip
+            ORDER BY cnt DESC
+            LIMIT 10
+        """)
+        top_ips = [{"ip": row["ip"], "incident_count": row["cnt"]} for row in cur.fetchall()]
+
+        cur.close()
+        return {
+            "total_incidents": total,
+            "active_incidents": active,
+            "by_severity": by_severity,
+            "active_by_severity": active_by_severity,
+            "by_phase": by_phase,
+            "top_offending_ips": top_ips,
+        }
+    except Exception as e:
+        logger.error("api_incident_stats failed: %s", e)
+        return {"error": str(e)}
+
+
+def api_incident_by_id(inc_id: str):
+    """GET /api/incidents/<id> — Single incident detail."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection"}
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM incidents WHERE id = %s", (inc_id,))
+        r = cur.fetchone()
+        if not r:
+            cur.close()
+            return {"error": "Incident not found"}
+
+        # Get signals for this incident (via ip correlation)
+        cur.execute("""
+            SELECT signal_type, source, severity, timestamp
+            FROM ip_behavior_signals
+            WHERE ip = %s AND timestamp > first_seen - INTERVAL '1 hour'
+            ORDER BY timestamp DESC
+            LIMIT 50
+        """, (r["ip"],))
+        signals = [{
+            "signal_type": row["signal_type"],
+            "source": row["source"],
+            "severity": row["severity"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+        } for row in cur.fetchall()]
+        cur.close()
+
+        return {
+            "incident": {
+                "id": r["id"],
+                "ip": r["ip"],
+                "severity": r["severity"],
+                "signal_count": r["signal_count"],
+                "signal_types": r["signal_types"] or [],
+                "sources": r["sources"] or [],
+                "phases": r["phases"] or [],
+                "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                "description": r["description"],
+                "metadata": r["metadata"] if isinstance(r["metadata"], dict) else {},
+                "is_active": r["is_active"],
+                "auto_resolved": r["auto_resolved"],
+            },
+            "signals": signals,
+        }
+    except Exception as e:
+        logger.error("api_incident_by_id failed: %s", e)
+        return {"error": str(e)}
+
+
+def api_signal_bus_stats():
+    """GET /api/signal-bus/stats — Signal bus statistics from DB."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection"}
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Total signals
+        cur.execute("SELECT COUNT(*) FROM ip_behavior_signals")
+        total = cur.fetchone()["count"]
+
+        # By source
+        cur.execute("""
+            SELECT source, COUNT(*) as cnt
+            FROM ip_behavior_signals
+            GROUP BY source
+            ORDER BY cnt DESC
+        """)
+        by_source = {row["source"]: row["cnt"] for row in cur.fetchall()}
+
+        # By severity
+        cur.execute("""
+            SELECT severity, COUNT(*) as cnt
+            FROM ip_behavior_signals
+            GROUP BY severity
+            ORDER BY cnt DESC
+        """)
+        by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
+
+        # Recent signals (last hour)
+        cur.execute("""
+            SELECT ip, signal_type, source, severity, timestamp
+            FROM ip_behavior_signals
+            ORDER BY timestamp DESC
+            LIMIT 50
+        """)
+        recent = [{
+            "ip": row["ip"],
+            "signal_type": row["signal_type"],
+            "source": row["source"],
+            "severity": row["severity"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+        } for row in cur.fetchall()]
+
+        cur.close()
+        return {
+            "total_signals": total,
+            "by_source": by_source,
+            "by_severity": by_severity,
+            "recent": recent,
+        }
+    except Exception as e:
+        logger.error("api_signal_bus_stats failed: %s", e)
+        return {"error": str(e)}
+
+
+def api_behavior_profiles(limit=50, offset=0):
+    """GET /api/behavior-profiles — List IP behavior profiles."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection", "profiles": []}
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT ip, first_seen, last_seen, profile_data, baseline_data,
+                   threat_level, total_events, behavior_score, updated_at
+            FROM ip_behavior_profiles
+            ORDER BY behavior_score DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        rows = cur.fetchall()
+        cur.close()
+        profiles = [{
+            "ip": r["ip"],
+            "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+            "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+            "threat_level": r["threat_level"],
+            "total_events": r["total_events"],
+            "behavior_score": r["behavior_score"],
+            "profile_data": r["profile_data"] if isinstance(r["profile_data"], dict) else {},
+        } for r in rows]
+        return {"profiles": profiles, "count": len(profiles)}
+    except Exception as e:
+        logger.error("api_behavior_profiles failed: %s", e)
+        return {"error": str(e), "profiles": []}
+
+
+def api_behavior_profile_by_ip(ip: str):
+    """GET /api/behavior-profiles/<ip> — Single IP behavior profile."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection"}
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT ip, first_seen, last_seen, profile_data, baseline_data,
+                   threat_level, total_events, behavior_score, updated_at
+            FROM ip_behavior_profiles
+            WHERE ip = %s
+        """, (ip,))
+        r = cur.fetchone()
+        if not r:
+            cur.close()
+            return {"error": "Profile not found"}
+
+        # Get recent signals for this IP
+        cur.execute("""
+            SELECT signal_type, source, severity, timestamp
+            FROM ip_behavior_signals
+            WHERE ip = %s
+            ORDER BY timestamp DESC
+            LIMIT 100
+        """, (ip,))
+        signals = [{
+            "signal_type": row["signal_type"],
+            "source": row["source"],
+            "severity": row["severity"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+        } for row in cur.fetchall()]
+
+        cur.close()
+        return {
+            "profile": {
+                "ip": r["ip"],
+                "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+                "threat_level": r["threat_level"],
+                "total_events": r["total_events"],
+                "behavior_score": r["behavior_score"],
+                "profile_data": r["profile_data"] if isinstance(r["profile_data"], dict) else {},
+                "baseline_data": r["baseline_data"] if isinstance(r["baseline_data"], dict) else {},
+            },
+            "signals": signals,
+        }
+    except Exception as e:
+        logger.error("api_behavior_profile_by_ip failed: %s", e)
+        return {"error": str(e)}
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):

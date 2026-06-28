@@ -72,6 +72,8 @@ from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
 from flow_classifier import FlowClassifier
+from signal_bus import SignalBus
+from correlation_engine import CorrelationEngine
 from system_log_classifier import SystemLogClassifier
 from service_monitor import ServiceMonitor
 from apprise_notifier import AppriseNotifier
@@ -637,6 +639,19 @@ class OPNsenseAgent:
         # State persistence
         self.persistence = StatePersistence()
         self.flow_classifier = FlowClassifier()
+
+        # Signal bus — unified signal architecture for all detectors
+        self.signal_bus = SignalBus(self.db)
+
+        # Correlation engine — groups signals into incidents
+        self.correlation_engine = CorrelationEngine(self.db)
+        def _on_signal(sig):
+            self.correlation_engine.process_signal(sig)
+        self.signal_bus.subscribe("all", _on_signal)
+
+        # Auto-resolve stale incidents every 5 minutes via maintenance thread
+        # (wired below in _start_maintenance_thread)
+
         self.system_log_classifier = SystemLogClassifier()
         # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
         self.service_monitor = ServiceMonitor(None)
@@ -721,6 +736,15 @@ class OPNsenseAgent:
                     except Exception as e:
                         logger.warning(f"Scheduled backup failed: {e}")
                     self.last_backup = now
+
+                # Auto-resolve stale incidents every hour
+                try:
+                    if self.correlation_engine:
+                        resolved = self.correlation_engine.auto_resolve_stale()
+                        if resolved:
+                            logger.info("Auto-resolved %d stale incidents", resolved)
+                except Exception as e:
+                    logger.warning("Incident auto-resolve failed: %s", e)
 
                 self._shutdown.wait(3600)  # Run every hour
         
@@ -923,7 +947,17 @@ class OPNsenseAgent:
 
         # Behavior profiler — ingest all events for behavioral profiling
         if self.behavior_profiler:
-            self.behavior_profiler.ingest_batch(events)
+            behavior_signals = self.behavior_profiler.ingest_batch(events)
+            # Emit behavior signals to signal bus
+            for ip, signals in behavior_signals.items():
+                for sig in signals:
+                    self.signal_bus.emit(
+                        source="behavior_profiler",
+                        signal_type=sig.get("signal_type", "behavior_deviation"),
+                        severity=sig.get("severity", "low"),
+                        ip=ip,
+                        metadata=sig.get("metadata", {}),
+                    )
 
         # ── Phase 5: Batch attack detection ──────────────────────────
         attacks = self.attack_detector.check_events_batch(events)
@@ -951,6 +985,19 @@ class OPNsenseAgent:
                     severity=attack.get("severity", "medium"),
                     description=attack.get("description", ""),
                 )
+                # Emit signal to signal bus
+                self.signal_bus.emit(
+                    source="attack_detector",
+                    signal_type=attack_type.lower().replace(" ", "_"),
+                    severity=attack.get("severity", "medium"),
+                    ip=src_ip,
+                    metadata={
+                        "description": attack.get("description", ""),
+                        "dst_ip": attack.get("dst_ip"),
+                        "dst_port": attack.get("dst_port"),
+                        "protocol": attack.get("protocol"),
+                    },
+                )
                 self.discord_bot.send_alert(attack, llm_analysis=llm_analysis)
                 self.apprise_notifier.send_alert(attack)
 
@@ -966,6 +1013,17 @@ class OPNsenseAgent:
                     )
                     continue
                 self.anomaly_count += 1
+                # Emit geo anomaly signal
+                self.signal_bus.emit(
+                    source="geo",
+                    signal_type=geo_result.get("type", "geo_anomaly").replace(" ", "_"),
+                    severity=geo_result.get("severity", "medium"),
+                    ip=src_ip,
+                    metadata={
+                        "country_code": geo_result.get("country_code"),
+                        "country_name": geo_result.get("country_name"),
+                    },
+                )
                 self.discord_bot.send_alert(geo_result)
                 self.apprise_notifier.send_alert(geo_result)
 
