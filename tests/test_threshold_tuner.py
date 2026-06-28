@@ -147,17 +147,12 @@ class TestThresholdTuner(unittest.TestCase):
         self.assertIn('current_threshold', metrics['volume_zscore'])
         self.assertIn('false_positive_rate', metrics['volume_zscore'])
 
+    @patch.object(ThresholdTuner, '_load_state', return_value=None)
     @patch.object(ThresholdTuner, '_save_state')
-    @unittest.expectedFailure
-    def test_tuning_adjusts_on_high_fpr(self, mock_save):
-        # NOTE: marked expectedFailure because shared state from other tests
-        # (via module-level ThresholdTuner instance) leaks feedback data.
-        # Fixing would require refactoring the module to avoid singleton state.
-        # The test logic itself is correct and passes in isolation.
-        tracker = self.tuner.trackers['volume_zscore']
-        tracker.roc.positive_scores.clear()
-        tracker.roc.negative_scores.clear()
-        # Simulate high FPR: many false positives near threshold
+    def test_tuning_adjusts_on_high_fpr(self, mock_save, mock_load):
+        # Mock _load_state so feedback from other tests doesn't leak in
+        tuner = ThresholdTuner(db=None)
+        tracker = tuner.trackers['volume_zscore']
         # True positives at high scores
         for s in [4.0, 4.5, 5.0, 5.5, 6.0]:
             tracker.record_feedback(s, 'true_positive')
@@ -165,8 +160,8 @@ class TestThresholdTuner(unittest.TestCase):
         for s in [2.5, 2.8, 3.0, 3.2, 3.5]:
             tracker.record_feedback(s, 'false_positive')
 
-        old_val = self.tuner.current_thresholds['volume_zscore']
-        adjustments = self.tuner.tune('volume_zscore')
+        old_val = tuner.current_thresholds['volume_zscore']
+        adjustments = tuner.tune('volume_zscore')
         self.assertGreaterEqual(len(adjustments), 0)
 
 
