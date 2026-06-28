@@ -575,7 +575,7 @@ def query_stats():
             # Events + blocked + passed per hour (single query with conditional aggregation)
             cur3.execute("""
                 SELECT
-                    DATE_TRUNC('hour', timestamp) AS hour,
+                    DATE_TRUNC('hour', timestamp)::text AS hour,
                     COUNT(*) AS total,
                     COUNT(*) FILTER (WHERE action = 'BLOCK') AS blocked,
                     COUNT(*) FILTER (WHERE action = 'PASS') AS passed
@@ -586,14 +586,14 @@ def query_stats():
             """)
             hourly_rows = cur3.fetchall()
             for row in hourly_rows:
-                sparklines["events"].append({"time": row[0].isoformat(), "count": row[1]})
-                sparklines["blocked"].append({"time": row[0].isoformat(), "count": row[2]})
-                sparklines["passed"].append({"time": row[0].isoformat(), "count": row[3]})
+                sparklines["events"].append({"time": row[0], "count": row[1]})
+                sparklines["blocked"].append({"time": row[0], "count": row[2]})
+                sparklines["passed"].append({"time": row[0], "count": row[3]})
             
             # Unique IPs per hour
             cur3.execute("""
                 SELECT
-                    DATE_TRUNC('hour', timestamp) AS hour,
+                    DATE_TRUNC('hour', timestamp)::text AS hour,
                     COUNT(DISTINCT src_ip) AS unique_count
                 FROM events
                 WHERE timestamp > NOW() - INTERVAL '24 hours'
@@ -602,12 +602,12 @@ def query_stats():
                 ORDER BY hour
             """)
             for row in cur3.fetchall():
-                sparklines["unique_ips"].append({"time": row[0].isoformat(), "count": row[1]})
+                sparklines["unique_ips"].append({"time": row[0], "count": row[1]})
             
             # Anomalies per hour
             cur3.execute("""
                 SELECT
-                    DATE_TRUNC('hour', timestamp) AS hour,
+                    DATE_TRUNC('hour', timestamp)::text AS hour,
                     COUNT(*) AS anomaly_count
                 FROM anomalies
                 WHERE timestamp > NOW() - INTERVAL '24 hours'
@@ -615,9 +615,11 @@ def query_stats():
                 ORDER BY hour
             """)
             for row in cur3.fetchall():
-                sparklines["anomalies"].append({"time": row[0].isoformat(), "count": row[1]})
+                sparklines["anomalies"].append({"time": row[0], "count": row[1]})
             cur3.close()
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("sparkline query failed: %s", e)
             pass
     
     return {
