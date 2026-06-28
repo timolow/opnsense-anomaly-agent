@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -616,6 +616,7 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """
             -- Composite index for dst_port filtering (DNS, Nginx, etc.)
             -- Covers: WHERE dst_port IN (80, 443, 53) AND timestamp > ...
+            -- NOTE: INCLUDE must come before WHERE in PostgreSQL syntax
             CREATE INDEX IF NOT EXISTS idx_events_dstport_ts
                 ON events (dst_port, timestamp)
                 INCLUDE (src_ip, dst_ip, action, proto)
@@ -625,6 +626,31 @@ MIGRATIONS: List[Dict[str, Any]] = [
             -- Refresh planner statistics on all key tables (critical after index additions)
             ANALYZE events;
             ANALYZE anomalies;
+            """,
+        ],
+    },
+    # ------------------------------------------------------------------
+    # V13: Composite indexes for rules-classified port/dest diversity queries
+    #     Eliminates seq scans on GROUP BY rule_name, src_ip queries
+    # ------------------------------------------------------------------
+    {
+        "version": 13,
+        "description": "Add composite indexes for rules-classified port/dest diversity scans",
+        "sql": [
+            """
+            -- Covers: GROUP BY rule_name, src_ip HAVING COUNT(DISTINCT dst_port) >= 10
+            CREATE INDEX IF NOT EXISTS idx_events_rule_src_port
+                ON events (rule_name, src_ip, dst_port)
+                WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
+            """,
+            """
+            -- Covers: GROUP BY rule_name, src_ip HAVING COUNT(DISTINCT dst_ip) >= 10
+            CREATE INDEX IF NOT EXISTS idx_events_rule_src_dst
+                ON events (rule_name, src_ip, dst_ip)
+                WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
+            """,
+            """
+            ANALYZE events;
             """,
         ],
     },
