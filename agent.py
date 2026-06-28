@@ -71,7 +71,6 @@ from server import run_server as start_dashboard
 from reverse_dns import ReverseDNSResolver
 from network_classifier import NetworkClassifier
 from state_persistence import StatePersistence
-from rule_classifier import RuleClassifier
 from system_log_classifier import SystemLogClassifier
 from service_monitor import ServiceMonitor
 from apprise_notifier import AppriseNotifier
@@ -627,7 +626,7 @@ class OPNsenseAgent:
         
         # State persistence
         self.persistence = StatePersistence()
-        self.rule_classifier = RuleClassifier()
+        # Rule-based learning removed (rule_classifier.py deleted)
         self.system_log_classifier = SystemLogClassifier()
         # Service monitor — DHCP, Unbound, NTP, OpenVPN, WireGuard
         self.service_monitor = ServiceMonitor(None)
@@ -854,13 +853,6 @@ class OPNsenseAgent:
         if now - self.last_syslog_anomaly_check >= self.config.learn_interval:
             self._check_system_log_anomalies()
             self.last_syslog_anomaly_check = now
-
-        # Rule-based learning (firewall rules only)
-        self.rule_classifier.process_events(events)
-
-        # Auto-retrain ML model when enough new data accumulates
-        if self.rule_classifier.should_retrain_ml():
-            self.rule_classifier.train_ml_model()
 
         # Service monitor — process all events
         self.service_monitor.process_events(events)

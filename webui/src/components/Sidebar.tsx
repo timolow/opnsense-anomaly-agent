@@ -42,13 +42,6 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    name: 'Rules',
-    icon: <TrendingUp size={16} />,
-    items: [
-      { id: 'rules-classified', label: 'Rules ML', icon: <TrendingUp size={14} /> },
-    ],
-  },
-  {
     name: 'Network',
     icon: <Network size={16} />,
     items: [
@@ -88,7 +81,6 @@ export default function Sidebar() {
     heatmap: 'Analytics',
     traffic: 'Analytics',
     alerts: 'Threats',
-    'rules-classified': 'Rules',
     network: 'Network',
     'wan-flap': 'Network',
     logs: 'Logs',

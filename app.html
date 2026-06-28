@@ -574,9 +574,6 @@ tr:hover { background: var(--bg-tertiary); }
         <div class="nav-item" data-tab="alerts" onclick="switchTab('alerts')">
           <span class="nav-icon">🚨</span><span class="nav-label">Alerts</span>
         </div>
-        <div class="nav-item" data-tab="rules-classified" onclick="switchTab('rules-classified')">
-          <span class="nav-icon">🤖</span><span class="nav-label">Rules ML</span>
-        </div>
         <div class="nav-item" data-tab="mutes" onclick="switchTab('mutes')">
           <span class="nav-icon">🔇</span><span class="nav-label">Mutes</span>
         
@@ -1138,58 +1135,6 @@ tr:hover { background: var(--bg-tertiary); }
       </div>
     </div>
 
-    <!-- Rules ML Tab -->
-    <div class="tab-content" id="tab-rules-classified">
-      <div class="card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-          <span>🤖 ML Firewall Rule Classification Engine</span>
-          <button onclick="loadRulesML()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
-            🔄 Refresh ML Classification
-          </button>
-        </div>
-        <div class="card-body">
-          <p style="color:var(--text-muted);margin-bottom:16px">
-            The ML engine analyzes traffic patterns to classify each firewall rule into one of 3 categories:
-            <strong style="color:#22c55e">Good (legitimate traffic)</strong>,
-            <strong style="color:#ef4444">Abusive (scanning, brute force)</strong>, or
-            <strong style="color:#f59e0b">SUSPICIOUS</strong>.
-            Traffic with no rule falls into <strong style="color:#8b5cf6">Default Deny</strong>.
-          </p>
-          <div class="grid" id="rulesMLSummary"></div>
-          <div id="mlSelfLearningStats" style="margin-top:20px"></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">🔍 Understanding Classifications</div>
-        <div class="card-body" id="rulesMLExplanation">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">📋 Active Learning Queue — Rules Needing Review</div>
-        <div class="card-body" id="activeLearningQueue">
-          <div class="loading"><div class="loading-spinner"></div>Loading...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">⚠️ Abusive Rules — Scanning, Brute Force, Suspicious Patterns</div>
-        <div class="card-body" id="rulesMLABUSIVE">
-          <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">✅ Good Rules — Normal, Legitimate Traffic Patterns</div>
-        <div class="card-body" id="rulesMLGOOD">
-          <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">📊 Default Deny — Events Caught Without Any Rule</div>
-        <div class="card-body" id="rulesMLOther">
-          <div class="loading"><div class="loading-spinner"></div>Loading ML classification...</div>
-        </div>
-      </div>
-    </div>
 
   </div><!-- end main-content -->
 </div><!-- end main-area -->
@@ -1277,7 +1222,7 @@ function switchTab(tabId) {
     'geo': 'Geo Distribution', 'opnsense': 'OPNsense', 'wan-flap': 'WAN Flaps',
     'settings': 'Settings', 'logs': 'Log Search', 'network': 'Network Map',
     'rules': 'Firewall Rules', 'syslogs': 'System Logs',
-    'services': 'Services', 'rules-classified': 'Rules ML',
+    'services': 'Services',
     'zenarmor': 'ZenArmor Security Gateway', 'ids': 'IDS / Snort / Suricata'
   };
   document.getElementById('headerTitle').textContent = titleMap[tabId] || tabId;
@@ -1296,15 +1241,12 @@ function loadTabData(tabId) {
     case 'mutes': loadMutes(); break;
     case 'geo': loadGeo(); break;
     case 'opnsense': loadOPNsense(); break;
-    case 'rules': loadRules(); break;
-    case 'syslogs': loadSysLogs(); break;
+    case 'settings': loadSettings(); break;
     case 'services': loadServices(); break;
-    case 'wan-flap': loadWanFlapStatus(); loadWanFlapHistory(); break;
     case 'settings': loadSettings(); break;
     case 'logs': searchLogs(); break;
     case 'network': loadNetworkMap(); break;
-    case 'rules-classified': loadRulesML(); break;
-    case 'zenarmor': loadZenArmor(); break;
+    case 'settings': loadSettings(); break;
     case 'ids': loadIDS(); break;
   }
 }
