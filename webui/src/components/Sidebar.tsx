@@ -7,7 +7,7 @@ import { useStore } from '../store';
 import { api } from '../api';
 import {
   LayoutDashboard, Map, GitMerge, Network, ShieldAlert,
-  Ban, Shield, Eye, Globe, Settings, Server, FileText,
+  Ban, Shield, Eye, Globe, Settings, Server, FileText, Search,
   Activity, Cpu, Radio, Layers, TrendingUp, Database,
   Menu, X, ChevronDown, ChevronRight,
   Flame, Wifi,
