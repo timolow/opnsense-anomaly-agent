@@ -617,6 +617,15 @@ class OPNsenseAgent:
             self.anomaly_detector = None
         self._adapt_cycle = 0
 
+        # Incident manager — lifecycle, feedback, grouping for correlated incidents
+        try:
+            from incident_manager import IncidentManager
+            self.incident_manager = IncidentManager(self.db)
+            logger.info("Incident manager initialized")
+        except Exception as e:
+            logger.warning("Failed to initialize incident manager: %s", e)
+            self.incident_manager = None
+
         # Concept drift detector — monitors traffic distribution changes
         self.drift_detector = ConceptDriftDetector()
         self.last_drift_check = time.time()

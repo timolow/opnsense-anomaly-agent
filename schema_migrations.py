@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 18
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -846,6 +846,29 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """
             ANALYZE incident_feedback;
             ANALYZE incident_groups;
+            """,
+        ],
+    },
+
+    # ------------------------------------------------------------------
+    # V18: Incident lifecycle management
+    #      Add status column to incidents table
+    # ------------------------------------------------------------------
+    {
+        "version": 18,
+        "description": "Add status column to incidents table for lifecycle management",
+        "sql": [
+            """
+            ALTER TABLE incidents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new';
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_incidents_active_status ON incidents(is_active, status) WHERE is_active = TRUE;
+            """,
+            """
+            ANALYZE incidents;
             """,
         ],
     },

@@ -409,6 +409,8 @@ class CommandHandler:
         'search': 'Search anomalies by IP, attack type, or description',
         'top-threats': 'Show top threat IPs ranked by threat score',
         'recent-alerts': 'Show recent anomaly alerts',
+        'incident': 'View or transition an incident by ID',
+        'incident-status': 'List active incidents with optional filters',
         'help': 'Show available commands',
     }
     
@@ -446,6 +448,10 @@ class CommandHandler:
             return self._cmd_top_threats(args)
         elif cmd == 'recent-alerts':
             return self._cmd_recent_alerts(args)
+        elif cmd == 'incident':
+            return self._cmd_incident(args)
+        elif cmd == 'incident-status':
+            return self._cmd_incident_status(args)
         else:
             return CommandResult(content=f"Unknown command: `{cmd}`. Type `/help` for available commands.")
     
@@ -787,6 +793,128 @@ class CommandHandler:
         content = f"Showing **{len(results)}** most recent alerts"
         return CommandResult(content=content, embed=embed)
     
+    def _cmd_incident(self, args: str) -> CommandResult:
+        """Handle /incident <inc_id> [transition|feedback] [status|feedback_type] — View or act on an incident."""
+        parts = args.strip().split()
+        if not parts:
+            return CommandResult(content="Usage: `/incident <inc_id> [action] [value]`\n\nActions:\n  (none) — View incident details\n  `transition <status>` — Transition to: investigating, confirmed, resolved\n  `feedback thumbs_up|thumbs_down` — Record feedback\n  `stats` — Show incident statistics")
+
+        inc_id = parts[0]
+        action = parts[1] if len(parts) > 1 else ""
+        value = parts[2] if len(parts) > 2 else ""
+
+        # Get the incident manager
+        mgr = getattr(self.agent, 'incident_manager', None)
+        if not mgr:
+            return CommandResult(content="Incident manager not available.")
+
+        if action == "transition":
+            if not value:
+                return CommandResult(content="Usage: `/incident <inc_id> transition <investigating|confirmed|resolved>`")
+            success, message = mgr.transition(inc_id, value)
+            status_icon = "✅" if success else "❌"
+            return CommandResult(content=f"{status_icon} {message}")
+
+        elif action == "feedback":
+            if not value:
+                return CommandResult(content="Usage: `/incident <inc_id> feedback <thumbs_up|thumbs_down>`")
+            success, message = mgr.record_feedback(inc_id, value)
+            status_icon = "✅" if success else "❌"
+            return CommandResult(content=f"{status_icon} {message}")
+
+        elif action == "stats":
+            stats = mgr.get_stats()
+            lines = ["**Incident Statistics:**"]
+            for k, v in stats.items():
+                lines.append(f"- **{k}:** {v}")
+            return CommandResult(content="\n".join(lines))
+
+        else:
+            result = mgr.get_incident(inc_id)
+            if result is None:
+                return CommandResult(content=f"Incident not found: `{inc_id}`")
+
+            # Build embed
+            status_colors = {
+                "new": 0x5865F2,  # Blurple
+                "investigating": 0xFFAA00,  # Amber
+                "confirmed": 0xFF6600,  # Orange
+                "resolved": 0x00CC66,  # Green
+            }
+
+            fields = [
+                {"name": "Status", "value": result["status"].upper(), "inline": True},
+                {"name": "Severity", "value": result["severity"].upper(), "inline": True},
+                {"name": "IP", "value": f"`{result['ip']}`", "inline": True},
+                {"name": "Signals", "value": str(result["signal_count"]), "inline": True},
+                {"name": "Feedback Score", "value": f"{result.get('feedback_score', 0):.2f} ({result.get('feedback_count', 0)} votes)", "inline": True},
+            ]
+
+            if result.get("signal_types"):
+                fields.append({"name": "Signal Types", "value": ", ".join(result["signal_types"]), "inline": False})
+            if result.get("description"):
+                fields.append({"name": "Description", "value": result["description"][:1024], "inline": False})
+
+            embed = AlertEmbed(
+                title=f"Incident: {inc_id}",
+                description=f"Group: {result.get('group_id', 'None')}",
+                color=status_colors.get(result["status"], 0x6699CC),
+                fields=fields,
+            )
+
+            return CommandResult(content=f"**{inc_id}** — {result['ip']}", embed=embed)
+
+    def _cmd_incident_status(self, args: str) -> CommandResult:
+        """Handle /incident-status [status] [severity] — List active incidents."""
+        parts = args.strip().split()
+        status_filter = None
+        severity_filter = "low"
+
+        for p in parts:
+            if p in ("new", "investigating", "confirmed", "resolved"):
+                status_filter = p
+            elif p in ("low", "medium", "high", "critical"):
+                severity_filter = p
+
+        mgr = getattr(self.agent, 'incident_manager', None)
+        if not mgr:
+            return CommandResult(content="Incident manager not available.")
+
+        incidents = mgr.get_incidents(
+            status=status_filter,
+            min_severity=severity_filter,
+            limit=20,
+        )
+
+        if not incidents:
+            filter_str = f" (status={status_filter or 'all'}, severity>={severity_filter})"
+            return CommandResult(content=f"No incidents found{filter_str}.")
+
+        # Build embed
+        fields = []
+        for inc in incidents:
+            status_icon = {"new": "🆕", "investigating": "🔍", "confirmed": "✅", "resolved": "🏁"}.get(inc["status"], "⚪")
+            sev_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(inc["severity"], "⚪")
+            name = f"{status_icon} {sev_icon} **{inc['id']}** — {inc['ip']}"
+            value_lines = [
+                f"Severity: {inc['severity'].upper()}",
+                f"Signals: {inc['signal_count']}",
+                f"Group: {inc.get('group_id', 'None')}",
+            ]
+            if inc.get("description"):
+                value_lines.append(f"{inc['description'][:200]}")
+            fields.append({"name": name[:256], "value": "\n".join(value_lines), "inline": False})
+
+        embed = AlertEmbed(
+            title=f"Active Incidents ({len(incidents)} shown)",
+            description=f"Filter: status={status_filter or 'all'}, min_severity={severity_filter}",
+            color=0x5865F2,
+            fields=fields,
+        )
+
+        content = f"**{len(incidents)}** active incidents"
+        return CommandResult(content=content, embed=embed)
+    
     def record_attack(self, attack: Dict[str, Any]):
         self._recent_attacks.append(attack)
         if len(self._recent_attacks) > self._max_attacks:
@@ -945,6 +1073,48 @@ class DiscordBot:
                                 'type': 4,  # INTEGER
                                 'name': 'limit',
                                 'description': 'Number of alerts to show (1-50, default: 10)',
+                                'required': False,
+                            }
+                        ],
+                    },
+                    {
+                        'name': 'incident',
+                        'description': 'View or transition an incident by ID',
+                        'options': [
+                            {
+                                'type': 3,  # STRING
+                                'name': 'incident_id',
+                                'description': 'Incident ID (e.g. inc_abc123)',
+                                'required': True,
+                            },
+                            {
+                                'type': 3,  # STRING
+                                'name': 'action',
+                                'description': 'Action: transition, feedback, or stats',
+                                'required': False,
+                            },
+                            {
+                                'type': 3,  # STRING
+                                'name': 'value',
+                                'description': 'Value: status for transition, thumbs_up/thumbs_down for feedback',
+                                'required': False,
+                            }
+                        ],
+                    },
+                    {
+                        'name': 'incident-status',
+                        'description': 'List active incidents with optional filters',
+                        'options': [
+                            {
+                                'type': 3,  # STRING
+                                'name': 'status',
+                                'description': 'Filter by status (new, investigating, confirmed, resolved)',
+                                'required': False,
+                            },
+                            {
+                                'type': 3,  # STRING
+                                'name': 'severity',
+                                'description': 'Minimum severity (low, medium, high, critical)',
                                 'required': False,
                             }
                         ],

@@ -3850,6 +3850,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(result)
                 except Exception as e:
                     self._send_json({"error": str(e)}, 500)
+            # ═══════════════════════════════════════════════
+            # Incident Management API endpoints
+            # ═══════════════════════════════════════════════
+            elif path == "/api/incidents":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                status_filter = query.get("status", [None])[0]
+                ip_filter = query.get("ip", [None])[0]
+                severity_filter = query.get("severity", ["low"])[0]
+                limit = int(query.get("limit", ["50"])[0])
+                self._send_json(api_get_incidents(status_filter, ip_filter, severity_filter, limit))
+            elif path.startswith("/api/incidents/groups"):
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                severity_filter = query.get("severity", ["low"])[0]
+                self._send_json(api_get_incident_groups(severity_filter))
+            elif path.startswith("/api/incidents/inc_"):
+                inc_id = path.split("/api/incidents/inc_")[1].split("?")[0]
+                inc_id = f"inc_{inc_id}"
+                self._send_json(api_get_incident(inc_id))
+            elif path == "/api/incidents/stats":
+                self._send_json(api_incident_stats())
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -4051,6 +4071,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(result, code)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+        # ═══════════════════════════════════════════════
+        # Incident Management POST endpoints
+        # ═══════════════════════════════════════════════
+        elif path.startswith("/api/incidents/inc_") and path.endswith("/transition"):
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            inc_id = path.split("/api/incidents/inc_")[1].split("/")[0]
+            inc_id = f"inc_{inc_id}"
+            self._send_json(api_transition_incident(inc_id, data))
+        elif path.startswith("/api/incidents/inc_") and path.endswith("/feedback"):
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            inc_id = path.split("/api/incidents/inc_")[1].split("/")[0]
+            inc_id = f"inc_{inc_id}"
+            self._send_json(api_incident_feedback(inc_id, data))
+        elif path == "/api/incidents/bulk-transition":
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            self._send_json(api_bulk_transition(data))
         else:
             self.send_response(405)
             self.end_headers()
@@ -4299,6 +4341,106 @@ def query_wan_flaps():
     else:
         result["data_source_status"] = "configured"
     return result
+
+
+# ═══════════════════════════════════════════════
+# Incident Management API functions
+# ═══════════════════════════════════════════════
+
+_incident_manager_instance = None
+_incident_manager_lock = threading_lib.Lock()
+
+
+def _get_incident_manager():
+    """Get or create the singleton IncidentManager instance."""
+    global _incident_manager_instance
+    if _incident_manager_instance is None:
+        with _incident_manager_lock:
+            if _incident_manager_instance is None:
+                try:
+                    db = EventDatabase()
+                    _incident_manager_instance = __import__(
+                        "incident_manager", fromlist=["IncidentManager"]
+                    ).IncidentManager(db)
+                except Exception as e:
+                    logger.warning("Failed to create IncidentManager: %s", e)
+                    _incident_manager_instance = __import__(
+                        "incident_manager", fromlist=["IncidentManager"]
+                    ).IncidentManager()
+    return _incident_manager_instance
+
+
+def api_get_incidents(status=None, ip=None, severity="low", limit=50):
+    """GET /api/incidents — Return filtered incident list."""
+    mgr = _get_incident_manager()
+    incidents = mgr.get_incidents(status=status, ip=ip, min_severity=severity, limit=limit)
+    return {
+        "incidents": incidents,
+        "count": len(incidents),
+    }
+
+
+def api_get_incident(inc_id: str):
+    """GET /api/incidents/<inc_id> — Return a single incident."""
+    mgr = _get_incident_manager()
+    result = mgr.get_incident(inc_id)
+    if result is None:
+        return {"error": f"Incident not found: {inc_id}"}, 404
+    return {"incident": result}
+
+
+def api_get_incident_groups(severity="low"):
+    """GET /api/incidents/groups — Return incident groups."""
+    mgr = _get_incident_manager()
+    groups = mgr.get_groups(min_severity=severity)
+    return {
+        "groups": groups,
+        "count": len(groups),
+    }
+
+
+def api_incident_stats():
+    """GET /api/incidents/stats — Return incident statistics."""
+    mgr = _get_incident_manager()
+    return mgr.get_stats()
+
+
+def api_transition_incident(inc_id: str, data: dict):
+    """POST /api/incidents/<inc_id>/transition — Transition an incident."""
+    mgr = _get_incident_manager()
+    new_status = data.get("status", "")
+    reason = data.get("reason", "")
+    success, message = mgr.transition(inc_id, new_status, reason)
+    status_code = 200 if success else 400
+    return {"success": success, "message": message}, status_code
+
+
+def api_incident_feedback(inc_id: str, data: dict):
+    """POST /api/incidents/<inc_id>/feedback — Record feedback on an incident."""
+    mgr = _get_incident_manager()
+    feedback_type = data.get("feedback_type", "")
+    notes = data.get("notes", "")
+    user_id = data.get("user_id", "dashboard")
+    success, message = mgr.record_feedback(inc_id, feedback_type, notes, user_id)
+    status_code = 201 if success else 400
+    return {"success": success, "message": message}, status_code
+
+
+def api_bulk_transition(data: dict):
+    """POST /api/incidents/bulk-transition — Transition multiple incidents."""
+    mgr = _get_incident_manager()
+    inc_ids = data.get("incident_ids", [])
+    new_status = data.get("status", "")
+    reason = data.get("reason", "")
+    results = mgr.bulk_transition(inc_ids, new_status, reason)
+    success_count = sum(1 for s, _ in results.values() if s)
+    return {
+        "success": success_count > 0,
+        "total": len(inc_ids),
+        "succeeded": success_count,
+        "failed": len(inc_ids) - success_count,
+        "results": {k: {"success": s, "message": m} for k, (s, m) in results.items()},
+    }
 
 
 def query_opnsense_firewall_rules():
