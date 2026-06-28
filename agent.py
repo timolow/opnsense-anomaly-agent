@@ -382,7 +382,7 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
                         "event_count": a.event_count,
                         "anomaly_count": a.anomaly_count,
                         "uptime": int(time.time() - a.start_time),
-                        "unique_ips": len(a.stat_model.unique_ips),
+                        "unique_ips": len(a.stat_model._src_ips_per_min),
                         "baselines": len(a.baseline_engine._baselines) if a.baseline_engine else 0
                     })
                 elif endpoint == "anomalies":

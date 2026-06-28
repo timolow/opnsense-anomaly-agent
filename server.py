@@ -1033,13 +1033,14 @@ def query_geo():
             LIMIT 1000
         """)
         rows = cur.fetchall()
+        cur.close()
         regions = defaultdict(int)
         for row in rows:
             ip, cnt = row["src_ip"], row["cnt"]
             first = _parse_ip_first_octet(ip)
             region_name = _classify_ip_region(first)
             regions[region_name] += cnt
-        
+
         total = sum(regions.values())
         result = []
         for r, c in sorted(regions.items(), key=lambda x: x[1], reverse=True):
@@ -1061,7 +1062,9 @@ def query_geo():
     except Exception as e:
         print(f"Geo query failed: {e}")
         return _fallback_geo()
-    finally: close_db(conn)
+    # NOTE: Do NOT close conn here — it is the shared cached connection
+    # that other callers (e.g. query_stats) still need. Use close_db() only
+    # when you own the connection (e.g. _get_db_once()).
 
 def _fallback_geo():
     state = load_state()
