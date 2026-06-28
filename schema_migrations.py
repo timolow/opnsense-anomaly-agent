@@ -754,6 +754,101 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+
+    # ------------------------------------------------------------------
+    # V16: Correlation engine tables
+    #      Incidents table + incident_signals for signal grouping
+    # ------------------------------------------------------------------
+    {
+        "version": 16,
+        "description": "Create incidents and incident_signals tables for correlation engine",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS incidents (
+                id SERIAL PRIMARY KEY,
+                ip TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'low',
+                signal_count INTEGER NOT NULL DEFAULT 0,
+                signal_types TEXT[] DEFAULT '{}',
+                sources TEXT[] DEFAULT '{}',
+                phases TEXT[] DEFAULT '{}',
+                first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                description TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                auto_resolved BOOLEAN NOT NULL DEFAULT FALSE,
+                resolved_at TIMESTAMPTZ
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_incidents_ip ON incidents(ip);
+            CREATE INDEX IF NOT EXISTS idx_incidents_active ON incidents(is_active) WHERE is_active = TRUE;
+            CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
+            CREATE INDEX IF NOT EXISTS idx_incidents_last_seen ON incidents(last_seen DESC);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS incident_signals (
+                id SERIAL PRIMARY KEY,
+                incident_id INTEGER REFERENCES incidents(id) ON DELETE CASCADE,
+                signal_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_incident_signals_incident
+                ON incident_signals(incident_id);
+            CREATE INDEX IF NOT EXISTS idx_incident_signals_timestamp
+                ON incident_signals(timestamp);
+            """,
+            """
+            ANALYZE incidents;
+            ANALYZE incident_signals;
+            """,
+        ],
+    },
+
+    # ------------------------------------------------------------------
+    # V17: Incident feedback and grouping tables
+    # ------------------------------------------------------------------
+    {
+        "version": 17,
+        "description": "Create incident_feedback and incident_groups tables",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS incident_feedback (
+                id SERIAL PRIMARY KEY,
+                incident_id INTEGER REFERENCES incidents(id) ON DELETE CASCADE,
+                feedback_type TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 1.0,
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                notes TEXT
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_incident_feedback_incident
+                ON incident_feedback(incident_id);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS incident_groups (
+                id SERIAL PRIMARY KEY,
+                ip TEXT NOT NULL,
+                incident_ids INTEGER[],
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at TIMESTAMPTZ
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_incident_groups_ip ON incident_groups(ip);
+            """,
+            """
+            ANALYZE incident_feedback;
+            ANALYZE incident_groups;
+            """,
+        ],
+    },
 ]
 
 
