@@ -82,7 +82,10 @@ class TestROCCurve(unittest.TestCase):
 class TestThresholdTuner(unittest.TestCase):
     """Test ThresholdTuner CRUD and tuning logic."""
 
-    def setUp(self):
+    @patch.object(ThresholdTuner, '_load_state')
+    def setUp(self, mock_load):
+        # Mock _load_state so persisted state from other tests doesn't leak in
+        super().setUp()
         self.tuner = ThresholdTuner(db=None)
 
     def test_initialization(self):

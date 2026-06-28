@@ -10,7 +10,10 @@ import subprocess
 import threading
 import time
 import unittest
+from pathlib import Path
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class TestDrainModeFunctions(unittest.TestCase):
     """Test drain mode module-level functions in drain.py."""
@@ -160,7 +163,7 @@ class TestDeployScript(unittest.TestCase):
         result = subprocess.run(
             ["bash", "-n", "deploy.sh"],
             capture_output=True, text=True,
-            cwd="/Users/timolow/opnsense-anomaly-agent"
+            cwd=str(PROJECT_ROOT)
         )
         self.assertEqual(result.returncode, 0, f"Syntax error in deploy.sh: {result.stderr}")
 
@@ -169,26 +172,26 @@ class TestDeployScript(unittest.TestCase):
         result = subprocess.run(
             ["bash", "-n", "rollback.sh"],
             capture_output=True, text=True,
-            cwd="/Users/timolow/opnsense-anomaly-agent"
+            cwd=str(PROJECT_ROOT)
         )
         self.assertEqual(result.returncode, 0, f"Syntax error in rollback.sh: {result.stderr}")
 
     def test_deploy_script_has_drain_step(self):
         """deploy.sh should contain a drain step."""
-        with open("/Users/timolow/opnsense-anomaly-agent/deploy.sh") as f:
+        with open(PROJECT_ROOT / "deploy.sh") as f:
             content = f.read()
         self.assertIn("/api/drain", content)
         self.assertIn("Draining old container", content)
 
     def test_deploy_script_has_rollback(self):
         """deploy.sh should have automatic rollback on failure."""
-        with open("/Users/timolow/opnsense-anomaly-agent/deploy.sh") as f:
+        with open(PROJECT_ROOT / "deploy.sh") as f:
             content = f.read()
         self.assertIn("Automatic rollback", content)
 
     def test_deploy_script_has_health_check(self):
         """deploy.sh should check health before and after."""
-        with open("/Users/timolow/opnsense-anomaly-agent/deploy.sh") as f:
+        with open(PROJECT_ROOT / "deploy.sh") as f:
             content = f.read()
         self.assertIn("check_health_url", content)
         self.assertIn("Staging container healthy", content)
@@ -196,13 +199,13 @@ class TestDeployScript(unittest.TestCase):
 
     def test_deploy_state_gitignored(self):
         """deploy_state.json should be in .gitignore."""
-        with open("/Users/timolow/opnsense-anomaly-agent/.gitignore") as f:
+        with open(PROJECT_ROOT / ".gitignore") as f:
             content = f.read()
         self.assertIn("deploy_state.json", content)
 
     def test_rollback_script_has_state_file(self):
         """rollback.sh should use deploy_state.json."""
-        with open("/Users/timolow/opnsense-anomaly-agent/rollback.sh") as f:
+        with open(PROJECT_ROOT / "rollback.sh") as f:
             content = f.read()
         self.assertIn("deploy_state.json", content)
 
@@ -211,31 +214,31 @@ class TestDeployScript(unittest.TestCase):
         result = subprocess.run(
             ["python3", "-c", "import drain; print('OK')"],
             capture_output=True, text=True,
-            cwd="/Users/timolow/opnsense-anomaly-agent"
+            cwd=str(PROJECT_ROOT)
         )
         self.assertEqual(result.returncode, 0, f"drain.py import failed: {result.stderr}")
 
     def test_server_imports_drain(self):
         """server.py should import from drain module."""
-        with open("/Users/timolow/opnsense-anomaly-agent/server.py") as f:
+        with open(PROJECT_ROOT / "server.py") as f:
             content = f.read()
         self.assertIn("from drain import", content)
 
     def test_agent_calls_shutdown_server(self):
         """agent.py should call shutdown_server during shutdown."""
-        with open("/Users/timolow/opnsense-anomaly-agent/agent.py") as f:
+        with open(PROJECT_ROOT / "agent.py") as f:
             content = f.read()
         self.assertIn("shutdown_server", content)
 
     def test_server_has_shutdown_server(self):
         """server.py should export shutdown_server function."""
-        with open("/Users/timolow/opnsense-anomaly-agent/server.py") as f:
+        with open(PROJECT_ROOT / "server.py") as f:
             content = f.read()
         self.assertIn("def shutdown_server", content)
 
     def test_health_endpoint_has_drain_fields(self):
         """query_health in server.py should include drain status."""
-        with open("/Users/timolow/opnsense-anomaly-agent/server.py") as f:
+        with open(PROJECT_ROOT / "server.py") as f:
             content = f.read()
         self.assertIn('"draining": is_draining()', content)
         self.assertIn('"active_requests": get_active_request_count()', content)
