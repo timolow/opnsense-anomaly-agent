@@ -74,6 +74,7 @@ function TabContent({ tab }: { tab: string }) {
           case 'syslogs': return <SyslogsTab />;
           case 'services': return <ServicesTab />;
           case 'settings': return <SettingsTab />;
+          case 'dns-queries': return <DnsQueriesTab />;
           case 'logs': return <DnsQueriesTab />;
           case 'network': return <NetworkTab />;
           case 'wan-flap': return <WanFlapTab />;
@@ -113,6 +114,7 @@ export default function App() {
         'rules-ml': 'rules-classified',
         'rulesml': 'rules-classified',
         'querylogs': 'query-logs',
+        'query-logs': 'query-logs',
         'wanflap': 'wan-flap',
         'wan-flap': 'wan-flap',
         'network-topology': 'network',
@@ -126,6 +128,8 @@ export default function App() {
         'geography': 'geo',
         'opnsense-status': 'opnsense',
         'system-health': 'settings',
+        'dns-queries': 'dns-queries',
+        'dns': 'dns-queries',
       };
       return map[hash] || hash;
     };

@@ -2960,68 +2960,105 @@ def query_nginx_summary():
 
 
 def query_dns_queries():
-    """Return DNS query data. Currently returns empty state since DNS logging
-    requires OPNsense Unbound config changes.
+    """Return DNS query data from firewall events with DNS traffic (port 53).
+    Uses events table where dst_port=53 (DNS queries) and src_hostname/dst_hostname
+    from reverse DNS resolution.
     UI expects: {queries: [], total: 0, top_domains: [], top_clients: [],
-                 data_source_status: 'not_configured', empty_message: ...}
+                 data_source_status: 'configured', empty_message: ...}
     """
     conn = get_db()
-    # Check if dns_queries table exists (future-proof)
-    if conn:
-        try:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT COUNT(*) FROM information_schema.tables
-                WHERE table_name = 'dns_queries'
-            """)
-            table_exists = cur.fetchone()[0] > 0
-            if table_exists:
-                cur.execute("""
-                    SELECT domain, client_ip, query_type, response_code, timestamp
-                    FROM dns_queries
-                    WHERE timestamp > NOW() - INTERVAL '24 hours'
-                    ORDER BY timestamp DESC LIMIT 200
-                """)
-                rows = cur.fetchall()
-                queries = [{
-                    'domain': r[0], 'client_ip': r[1],
-                    'query_type': r[2], 'response_code': r[3],
-                    'timestamp': str(r[4])
-                } for r in rows]
-                # Top domains
-                cur.execute("""
-                    SELECT domain, COUNT(*) as cnt FROM dns_queries
-                    WHERE timestamp > NOW() - INTERVAL '24 hours'
-                    GROUP BY domain ORDER BY cnt DESC LIMIT 20
-                """)
-                top_domains = [{'domain': r[0], 'count': r[1]} for r in cur.fetchall()]
-                # Top clients
-                cur.execute("""
-                    SELECT client_ip, COUNT(*) as cnt FROM dns_queries
-                    WHERE timestamp > NOW() - INTERVAL '24 hours'
-                    GROUP BY client_ip ORDER BY cnt DESC LIMIT 20
-                """)
-                top_clients = [{'client_ip': r[0], 'count': r[1]} for r in cur.fetchall()]
-                return {
-                    'queries': queries,
-                    'total': len(queries),
-                    'top_domains': top_domains,
-                    'top_clients': top_clients,
-                    'data_source_status': 'configured' if queries else 'no_data',
-                }
-        except Exception:
-            pass
-        finally:
-            close_db(conn)
+    if not conn:
+        return {
+            'queries': [], 'total': 0, 'top_domains': [], 'top_clients': [],
+            'data_source_status': 'no_data', 'empty_message': 'Database unavailable',
+        }
+    try:
+        cur = conn.cursor()
 
-    return {
-        'queries': [],
-        'total': 0,
-        'top_domains': [],
-        'top_clients': [],
-        'data_source_status': 'not_configured',
-        'empty_message': 'DNS query monitoring requires Unbound DNS logging enabled on OPNsense. To enable: go to Services > Unbound DNS > General > check "DNS log" in Advanced settings. After enabling, restart Unbound and this tab will show live DNS query data.',
-    }
+        # DNS events: traffic on port 53 (UDP/TCP DNS)
+        cur.execute("""
+            SELECT COUNT(*) FROM events WHERE dst_port = 53
+              AND timestamp > NOW() - INTERVAL '24 hours'
+        """)
+        total = cur.fetchone()[0]
+
+        if total == 0:
+            return {
+                'queries': [], 'total': 0, 'top_domains': [], 'top_clients': [],
+                'data_source_status': 'no_dns_events',
+                'empty_message': 'No DNS traffic detected in last 24h. DNS queries (port 53) appear in firewall logs when they are logged.',
+            }
+
+        # Recent DNS events
+        cur.execute("""
+            SELECT timestamp, src_ip, COALESCE(src_hostname, src_ip) AS src_host,
+                   dst_ip, COALESCE(dst_hostname, dst_ip) AS dst_host,
+                   action, proto, interface, rule_name
+            FROM events
+            WHERE dst_port = 53
+              AND timestamp > NOW() - INTERVAL '24 hours'
+            ORDER BY timestamp DESC LIMIT 200
+        """)
+        rows = cur.fetchall()
+        queries = []
+        for r in rows:
+            queries.append({
+                'timestamp': str(r[0]) if r[0] else '',
+                'client_ip': r[1] or '',
+                'client_hostname': r[2] or r[1] or '',
+                'server_ip': r[3] or '',
+                'server_hostname': r[4] or r[3] or '',
+                'action': r[5] or '',
+                'proto': r[6] or 'UDP',
+                'interface': r[7] or '',
+                'rule': r[8] or '',
+            })
+
+        # Top queried domains (dst_hostname from reverse DNS)
+        cur.execute("""
+            SELECT COALESCE(dst_hostname, dst_ip) AS domain, COUNT(*) as cnt
+            FROM events
+            WHERE dst_port = 53 AND timestamp > NOW() - INTERVAL '24 hours'
+              AND dst_hostname IS NOT NULL AND dst_hostname != ''
+            GROUP BY domain ORDER BY cnt DESC LIMIT 20
+        """)
+        top_domains = [{'domain': r[0], 'count': r[1]} for r in cur.fetchall()]
+
+        # Fallback: if no hostnames resolved, use dst_ip
+        if not top_domains:
+            cur.execute("""
+                SELECT dst_ip AS domain, COUNT(*) as cnt
+                FROM events
+                WHERE dst_port = 53 AND timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY domain ORDER BY cnt DESC LIMIT 20
+            """)
+            top_domains = [{'domain': r[0], 'count': r[1]} for r in cur.fetchall()]
+
+        # Top DNS clients (src_ip)
+        cur.execute("""
+            SELECT COALESCE(src_hostname, src_ip) AS client, COUNT(*) as cnt
+            FROM events
+            WHERE dst_port = 53 AND timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY client ORDER BY cnt DESC LIMIT 20
+        """)
+        top_clients = [{'client_ip': r[0], 'count': r[1]} for r in cur.fetchall()]
+
+        return {
+            'queries': queries,
+            'total': total,
+            'top_domains': top_domains,
+            'top_clients': top_clients,
+            'data_source_status': 'configured',
+        }
+
+    except Exception as e:
+        print(f"[DNS] query failed: {e}")
+        return {
+            'queries': [], 'total': 0, 'top_domains': [], 'top_clients': [],
+            'data_source_status': 'error', 'empty_message': str(e),
+        }
+    finally:
+        close_db(conn)
 
 
 def query_nginx_anomalies():
