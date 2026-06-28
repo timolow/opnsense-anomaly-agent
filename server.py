@@ -4534,9 +4534,14 @@ def query_rules_classified():
             opnsense_rules = query_opnsense_firewall_rules()
 
         conn = get_db()
-        cur = conn.cursor()
-        
+        if not conn:
+            return {
+                'error': 'Database connection unavailable',
+                'summary': {'total_rules': 0},
+                'classified_rules': [],
+            }
         # Fetch all firewall events (recent window for performance)
+        cur = conn.cursor()
         cur.execute("""
             SELECT timestamp, src_ip, dst_ip, dst_port, src_port,
                    action, rule_name, proto,
@@ -4574,9 +4579,42 @@ def query_rules_classified():
         summary = classifier.get_summary()
         classified_rules = classifier.get_classified_rules()
         
+        # Pre-fetch fallback data for all classified rules in one query (avoids cursor issues)
+        rule_names = [r.get('rule_name', '') for r in classified_rules]
+        fallback_cache: Dict[str, str] = {}
+        if rule_names:
+            try:
+                placeholders = ','.join(['%s'] * len(rule_names))
+                cur3 = conn.cursor()
+                cur3.execute(f"""
+                    SELECT rule_name, action, proto, dst_port, interface,
+                           COUNT(*) as cnt
+                    FROM events
+                    WHERE rule_name IN ({placeholders})
+                      AND action IN ('PASS', 'BLOCK')
+                    GROUP BY rule_name, action, proto, dst_port, interface
+                    ORDER BY rule_name, cnt DESC
+                """, rule_names)
+                by_rule: Dict[str, str] = {}
+                for row in cur3.fetchall():
+                    rn = row[0]
+                    if rn not in by_rule:
+                        parts = []
+                        action = (row[1] or '').upper()
+                        proto = (row[2] or '').upper()
+                        dst_port = row[3]
+                        iface = row[4]
+                        if action: parts.append(action)
+                        if proto: parts.append(proto)
+                        if dst_port: parts.append(f"port:{dst_port}")
+                        if iface: parts.append(f"[{iface}]")
+                        by_rule[rn] = ' '.join(parts) if parts else action
+                fallback_cache = by_rule
+                cur3.close()
+            except Exception as e:
+                print(f"[RulesClassified] fallback query failed: {e}")
+        
         # Enrich each classified rule with OPNsense metadata for human readability
-        # Reuse existing conn (cur2 is a separate cursor on the same connection)
-        cur2 = conn.cursor()
         for rule in classified_rules:
             rname = rule.get('rule_name', '')
             # Try to match by full rule_name (handles source_net names like __qfeeds_malware_ip)
@@ -4609,36 +4647,9 @@ def query_rules_classified():
                 rule['rule_log'] = meta.get('log', False)
                 rule['rule_uuid'] = meta.get('uuid', '')
             else:
-                # No OPNsense metadata found (legacy/deleted rule) — query DB for event patterns
-                cur2.execute("""
-                    SELECT action, proto, dst_port, interface,
-                           COUNT(*) as cnt
-                    FROM events
-                    WHERE rule_name = %s
-                      AND action IN ('PASS', 'BLOCK')
-                    GROUP BY action, proto, dst_port, interface
-                    ORDER BY cnt DESC
-                    LIMIT 1
-                """, (rname,))
-                row = cur2.fetchone()
-                fallback = ''
-                if row:
-                    parts = []
-                    action = (row[0] or '').upper()
-                    proto = (row[1] or '').upper()
-                    dst_port = row[2]
-                    iface = row[3]
-                    if action:
-                        parts.append(action)
-                    if proto:
-                        parts.append(proto)
-                    if dst_port:
-                        parts.append(f"port:{dst_port}")
-                    if iface:
-                        parts.append(f"[{iface}]")
-                    fallback = ' '.join(parts) if parts else action
+                # No OPNsense metadata found — use pre-fetched fallback or generate
+                fallback = fallback_cache.get(rname, '')
                 if not fallback:
-                    # If rule_name looks like a UUID, show a readable fallback
                     if len(rname) == 32 and all(c in '0123456789abcdef' for c in rname.lower()):
                         fallback = f"Legacy rule {rname[:8]}"
                     else:
@@ -4655,7 +4666,6 @@ def query_rules_classified():
                 rule['rule_disabled'] = False
                 rule['rule_log'] = False
                 rule['rule_uuid'] = ''
-        cur2.close()
         
         # Save state
         classifier.save_state()
