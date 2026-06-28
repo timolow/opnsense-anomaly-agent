@@ -15,7 +15,7 @@ import OverviewTab from './components/tabs/OverviewTab';
 import HeatmapTab from './components/tabs/HeatmapTab';
 import TrafficTab from './components/tabs/TrafficTab';
 import AlertsTab from './components/tabs/AlertsTab';
-import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
+
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import LogsTab from './components/tabs/LogsTab';
@@ -27,7 +27,6 @@ const TAB_TITLE: Record<string, string> = {
   heatmap: 'Heatmap',
   traffic: 'Traffic',
   alerts: 'Alerts',
-  'rules-classified': 'Rules ML',
   network: 'Network',
   'wan-flap': 'WAN Flap',
   logs: 'Logs',
@@ -45,7 +44,6 @@ function TabContent({ tab }: { tab: string }) {
           case 'heatmap': return <HeatmapTab />;
           case 'traffic': return <TrafficTab />;
           case 'alerts': return <AlertsTab />;
-          case 'rules-classified': return <RulesClassifiedTab />;
           case 'network': return <NetworkTab />;
           case 'wan-flap': return <WanFlapTab />;
           case 'logs': return <LogsTab />;
@@ -80,11 +78,12 @@ export default function App() {
       const hash = window.location.hash.slice(1).replace(/^\//, '');
       const map: Record<string, string> = {
         // Legacy redirects to new merged tabs
-        'firewall-rules': 'rules-classified',
-        'firerules': 'rules-classified',
-        'rules-ml': 'rules-classified',
-        'rulesml': 'rules-classified',
-        'rules': 'rules-classified',
+        // Rules ML tab removed — redirects to alerts
+        'firewall-rules': 'alerts',
+        'firerules': 'alerts',
+        'rules-ml': 'alerts',
+        'rulesml': 'alerts',
+        'rules': 'alerts',
         'flow-map': 'traffic',
         'flowmap': 'traffic',
         'flows': 'traffic',
