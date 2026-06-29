@@ -150,8 +150,8 @@ class Config:
         # Dedup
         self.dedup_seconds = int(os.getenv("DEDUP_SECONDS", "300"))
         # DB retention: configurable via env vars (default 30 days)
-        self.db_retention_days = int(os.getenv("DB_RETENTION_DAYS", "30"))
-        self.db_retention_incident_days = int(os.getenv("DB_RETENTION_INCIDENT_DAYS", "30"))
+        self.db_retention_days = int(os.getenv("DB_RETENTION_DAYS", "7"))
+        self.db_retention_incident_days = int(os.getenv("DB_RETENTION_INCIDENT_DAYS", "14"))
         # Reverse DNS
         # Reverse DNS (persistent cache via Redis)
         self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "false").lower() == "true"

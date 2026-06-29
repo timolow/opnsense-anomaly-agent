@@ -4212,7 +4212,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 # VACUUM ANALYZE
                 cur = db._new_cursor()
                 try:
-                    cur.execute("VACUUM ANALYZE events, anomalies, incidents, drift_events, baselines")
+                    cur.execute("VACUUM ANALYZE")
                 finally:
                     cur.close()
 
