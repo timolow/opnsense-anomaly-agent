@@ -331,7 +331,8 @@ class IPBehaviorProfile:
         # Simple aggregation: sum of weighted z-scores, mapped to 0-100
         if not max_z_scores:
             # Fallback: derive from action ratio (block-heavy = suspicious)
-            block_ratio = self.actions.get("block", 0) / max(self.total_events, 1)
+            block_ratio = self.actions.get("block", 0) + self.actions.get("BLOCK", 0)
+            block_ratio = block_ratio / max(self.total_events, 1)
             port_diversity = len(self.dst_ports) / max(self.total_events, 1)
 
             score = 0.0
