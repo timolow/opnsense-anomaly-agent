@@ -607,7 +607,7 @@ export interface DnsQueryData {
 // Behavioral Overview types (ML-PIVOT)
 // ═══════════════════════════════════════════════════
 
-export type BehaviorLevel = 'benign' | 'suspicious' | 'hostile';
+export type BehaviorLevel = 'benign' | 'suspicious' | 'hostile' | 'info';
 
 export interface BehaviorProfile {
   ip: string;

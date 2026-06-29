@@ -13,7 +13,7 @@ import CanvasBarChart from '@/components/charts/CanvasBarChart';
 import { IpProfilesSkeleton } from '@/components/SkeletonLoaders';
 import {
   Shield, ShieldCheck, ShieldAlert, ShieldX, Search, ChevronDown,
-  ChevronUp, Clock, Globe, Network, AlertTriangle, BarChart3,
+  ChevronUp, Clock, Network, AlertTriangle, TrendingUp,
   Filter, RefreshCw, X,
 } from 'lucide-react';
 
@@ -21,12 +21,14 @@ const LEVEL_ICONS: Record<BehaviorLevel, React.ComponentType<{ size?: number }>>
   benign: ShieldCheck,
   suspicious: ShieldAlert,
   hostile: ShieldX,
+  info: Shield,
 };
 
 const LEVEL_COLORS: Record<BehaviorLevel, { main: string; bg: string; border: string; badge: string }> = {
   benign: { main: CYBER.green, bg: 'rgba(0,255,136,0.08)', border: CYBER.green, badge: 'bg-green-500/20 text-green-400' },
   suspicious: { main: CYBER.orange, bg: 'rgba(255,120,0,0.08)', border: CYBER.orange, badge: 'bg-orange-500/20 text-orange-400' },
   hostile: { main: CYBER.red, bg: 'rgba(255,23,68,0.08)', border: CYBER.red, badge: 'bg-red-500/20 text-red-400' },
+  info: { main: CYBER.accent, bg: 'rgba(0,194,255,0.08)', border: CYBER.accent, badge: 'bg-cyan-500/20 text-cyan-400' },
 };
 
 function threatScoreColor(score: number): string {
@@ -41,6 +43,14 @@ function threatLevel(score: number): BehaviorLevel {
   return 'benign';
 }
 
+function getLevelFromProfile(profile: BehaviorProfile): BehaviorLevel {
+  const level = profile.threat_level as BehaviorLevel;
+  if (level === 'info') return 'info';
+  if (level === 'suspicious') return 'suspicious';
+  if (level === 'hostile') return 'hostile';
+  return 'benign';
+}
+
 // ── Summary Stats Row ──
 function IpProfilesSummary({ profiles }: { profiles: BehaviorProfile[] }) {
   const breakdown = useMemo(() => {
@@ -52,7 +62,7 @@ function IpProfilesSummary({ profiles }: { profiles: BehaviorProfile[] }) {
   }, [profiles]);
 
   const cards = [
-    { label: 'Total Profiles', value: breakdown.total.toLocaleString(), icon: Globe, color: CYBER.accent },
+    { label: 'Total Profiles', value: breakdown.total.toLocaleString(), icon: Network, color: CYBER.accent },
     { label: 'Hostile', value: breakdown.hostile.toLocaleString(), icon: ShieldX, color: CYBER.red },
     { label: 'Suspicious', value: breakdown.suspicious.toLocaleString(), icon: ShieldAlert, color: CYBER.orange },
     { label: 'Benign', value: breakdown.benign.toLocaleString(), icon: ShieldCheck, color: CYBER.green },
@@ -94,7 +104,7 @@ function IpDistributionChart({ profiles }: { profiles: BehaviorProfile[] }) {
   return (
     <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
       <h3 className="text-sm font-semibold text-cyber-text mb-3 flex items-center gap-2">
-        <BarChart3 size={14} /> Threat Distribution
+        <TrendingUp size={14} /> Threat Distribution
       </h3>
       <CanvasBarChart
         data={data.values}
@@ -153,7 +163,7 @@ function ProfileCard({ profile }: { profile: BehaviorProfile }) {
         </div>
         <ScoreGauge score={profile.behavior_score} />
         <div className="flex gap-4 mt-3 text-xs text-cyber-textMuted font-mono">
-          <span className="flex items-center gap-1"><Globe size={12} /> {profile.event_count_24h?.toLocaleString() || 0} events</span>
+          <span className="flex items-center gap-1"><Network size={12} /> {profile.event_count_24h?.toLocaleString() || 0} events</span>
           <span className="flex items-center gap-1"><Network size={12} /> {profile.unique_ports || 0} ports</span>
           <span className="flex items-center gap-1"><Clock size={12} /> {profile.last_seen ? new Date(profile.last_seen).toLocaleString() : 'N/A'}</span>
         </div>

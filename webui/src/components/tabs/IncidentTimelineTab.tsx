@@ -10,7 +10,7 @@ import { CYBER, severityStyle } from '@/utils/colors';
 import { IncidentTimelineSkeleton } from '@/components/SkeletonLoaders';
 import {
   ShieldAlert, AlertTriangle, Clock, ArrowRight, X, ChevronDown,
-  ChevronUp, Layers, Activity, Globe, Network, Filter,
+  ChevronUp, Shield, Activity, Network, Filter,
   Shield, ShieldCheck, Search,
 } from 'lucide-react';
 

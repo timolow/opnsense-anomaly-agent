@@ -360,13 +360,6 @@ export function DnsQueriesSkeleton() {
     </div>
   );
 }
-    <div className="space-y-4">
-      <TabHeaderSkeleton />
-      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
-      <TableSkeleton rows={8} />
-    </div>
-  );
-}
 
 // ── Behavioral Overview Skeleton ──
 export function BehavioralOverviewSkeleton() {

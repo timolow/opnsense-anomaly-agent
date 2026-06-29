@@ -12,7 +12,7 @@ import CanvasAreaChart from '@/components/charts/CanvasAreaChart';
 import { BehavioralBaselinesSkeleton } from '@/components/SkeletonLoaders';
 import {
   Activity, TrendingUp, TrendingDown, AlertTriangle, Clock,
-  BarChart3, Layers, RefreshCw, Shield, ShieldCheck, Filter,
+  TrendingUp, Network, RefreshCw, ShieldCheck, Filter,
   Database, Zap, ArrowUpRight, ArrowDownRight, Minus,
 } from 'lucide-react';
 
@@ -76,7 +76,7 @@ function SourceChart({ data }: { data: SignalSourceBreakdown[] }) {
   return (
     <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
       <h3 className="text-sm font-semibold text-cyber-text mb-3 flex items-center gap-2">
-        <Layers size={14} /> Signal Sources
+        <Network size={14} /> Signal Sources
       </h3>
       <CanvasBarChart
         data={sorted.map(d => d.count)}
@@ -98,7 +98,7 @@ function SeverityChart({ data }: { data: Record<string, number> }) {
   return (
     <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
       <h3 className="text-sm font-semibold text-cyber-text mb-3 flex items-center gap-2">
-        <BarChart3 size={14} /> Signal Severity
+        <TrendingUp size={14} /> Signal Severity
       </h3>
       <CanvasBarChart
         data={entries.map(([, v]) => v)}
@@ -218,7 +218,7 @@ export default function BehavioralBaselinesTab() {
         <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-cyber-textMuted uppercase tracking-wider">Active Sources</span>
-            <Layers size={14} style={{ color: CYBER.green }} />
+            <Network size={14} style={{ color: CYBER.green }} />
           </div>
           <div className="text-2xl font-bold font-mono" style={{ color: CYBER.green }}>
             {Object.keys(stats?.by_source || {}).length}

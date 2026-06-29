@@ -13,7 +13,7 @@ import { api } from '@/api';
 import type { IpFlowData } from '@/types';
 import { NETWORK, networkColor, CYBER, RECHARTS_TOOLTIP } from '@/utils/colors';
 import {
-  Network, Activity, Globe, Shield, Server, Wifi, Radio,
+  Network, Activity, Shield, Server, Wifi, Radio,
   ArrowUpRight, ArrowDownRight, Eye, MousePointer2,
   Maximize2, Minimize2
 } from 'lucide-react';
@@ -218,7 +218,7 @@ function TrafficDistribution({ stats }: { stats: any }) {
   return (
     <div className="cyber-card p-4">
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-        <Globe size={14} /> Traffic Distribution
+        <Network size={14} /> Traffic Distribution
       </h3>
       <ResponsiveContainer width="100%" height={200}>
         <PieChart>
@@ -449,7 +449,7 @@ export default function NetworkTab() {
           title="Categories"
           value={categories}
           subtitle="Traffic types"
-          icon={<Globe size={14} className="text-cyber-green" />}
+          icon={<Network size={14} className="text-cyber-green" />}
           color={CYBER.green}
         />
         <StatCard

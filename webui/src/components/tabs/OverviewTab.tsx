@@ -11,7 +11,7 @@ import {
   Activity, Clock, ArrowUpRight, ArrowDownRight,
   BarChart3, Zap, ChevronDown, ChevronUp,
   RadioTower, Network, ShieldCheck, Bell, FileText, Volume2,
-  RefreshCw, X, Globe, Lock,
+  RefreshCw, X, Shield, Lock,
 } from 'lucide-react';
 import CanvasBarChart from '../../components/charts/CanvasBarChart';
 import TimelineChart from '../../components/charts/TimelineChart';
@@ -432,7 +432,7 @@ function WhatChangedPanel({ data, onDismiss }: { data: WhatChangedData; onDismis
           {data.new_unique_ips.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-cyber-orange uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Globe size={12} /> New Source IPs — {data.new_unique_ips.length}
+                <Network size={12} /> New Source IPs — {data.new_unique_ips.length}
               </h4>
               <div className="flex flex-wrap gap-1.5">
                 {data.new_unique_ips.slice(0, 10).map((ip, i) => (

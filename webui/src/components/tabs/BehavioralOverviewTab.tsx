@@ -13,9 +13,9 @@ import CanvasAreaChart from '@/components/charts/CanvasAreaChart';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
 import { BehavioralOverviewSkeleton } from '@/components/SkeletonLoaders';
 import {
-  Activity, AlertTriangle, Shield, ShieldCheck, ShieldAlert,
-  Globe, Zap, Clock, ArrowUpRight, ArrowDownRight, Minus,
-  Cpu, Database, BarChart3, RefreshCw, X, Layers,
+  Activity, AlertTriangle, ShieldCheck, ShieldAlert,
+  Network, Zap, Clock, ArrowUpRight, ArrowDownRight, Minus,
+  Cpu, Database, TrendingUp, RefreshCw, X, Shield,
 } from 'lucide-react';
 
 // ── Color helpers for behavior levels ──
@@ -35,7 +35,7 @@ function KeyMetricsRow({ data }: { data: BehaviorOverviewData }) {
     {
       label: 'Active IPs (24h)',
       value: data.active_ips_24h.toLocaleString(),
-      icon: Globe,
+      icon: Shield,
       color: CYBER.accent,
     },
     {
@@ -93,7 +93,7 @@ function IpBreakdown({ data }: { data: BehaviorOverviewData }) {
   return (
     <div className="cyber-card p-4">
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-        <Globe size={14} /> IP Behavior Breakdown
+        <Network size={14} /> IP Behavior Breakdown
       </h3>
       <div className="flex items-center justify-around">
         {/* Donut-like bar chart */}
@@ -125,7 +125,7 @@ function BehavioralTimeline({ data }: { data: BehaviorOverviewData }) {
     return (
       <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-          <BarChart3 size={14} /> Behavioral Timeline
+          <TrendingUp size={14} /> Behavioral Timeline
         </h3>
         <div className="text-sm text-cyber-textMuted text-center py-8 font-mono">
           No behavioral timeline data available
@@ -361,7 +361,7 @@ function BehavioralChangesPanel({ data }: { data: BehaviorOverviewData }) {
           {changes.new_suspicious_ips.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-cyber-orange uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Globe size={12} /> New Suspicious IPs — {changes.new_suspicious_ips.length}
+                <Network size={12} /> New Suspicious IPs — {changes.new_suspicious_ips.length}
               </h4>
               <div className="flex flex-wrap gap-1.5">
                 {changes.new_suspicious_ips.slice(0, 10).map((ip, i) => (
@@ -420,7 +420,7 @@ function TrafficFlowBehavioral({ data }: { data: BehaviorOverviewData }) {
     return (
       <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Layers size={14} /> Traffic Flow Behavior
+          <Network size={14} /> Traffic Flow Behavior
         </h3>
         <div className="text-sm text-cyber-textMuted text-center py-8 font-mono">
           No behavioral flow data available yet
@@ -432,7 +432,7 @@ function TrafficFlowBehavioral({ data }: { data: BehaviorOverviewData }) {
   return (
     <div className="cyber-card p-4">
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-        <Layers size={14} /> Traffic Flow Behavior
+        <Network size={14} /> Traffic Flow Behavior
       </h3>
       <div className="cyber-scrollable max-h-[240px] overflow-y-auto space-y-2">
         {flows.map((flow, i) => {

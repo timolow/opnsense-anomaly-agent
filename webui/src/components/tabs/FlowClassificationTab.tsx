@@ -14,7 +14,7 @@ import { FlowClassificationSkeleton } from '@/components/SkeletonLoaders';
 import {
   Activity, ShieldCheck, ShieldAlert, ShieldX, Filter, Search,
   ArrowUpRight, Clock, Network, Database, ChevronDown, ChevronUp,
-  AlertTriangle, BarChart3, Layers,
+  AlertTriangle, TrendingUp, Network,
 } from 'lucide-react';
 
 type ClassificationType = 'GOOD' | 'ABUSIVE' | 'SUSPICIOUS' | 'UNCERTAIN' | string;
@@ -61,7 +61,7 @@ function FlowSummary({ items }: { items: FlowClassification[] }) {
   }, [items]);
 
   const cards = [
-    { label: 'Total Flows', value: items.length.toLocaleString(), icon: Layers, color: CYBER.accent },
+    { label: 'Total Flows', value: items.length.toLocaleString(), icon: Network, color: CYBER.accent },
     { label: 'Good', value: (breakdown['GOOD'] || 0).toLocaleString(), icon: ShieldCheck, color: CYBER.green },
     { label: 'Abusive', value: (breakdown['ABUSIVE'] || 0).toLocaleString(), icon: ShieldX, color: CYBER.red },
     { label: 'Suspicious', value: (breakdown['SUSPICIOUS'] || 0).toLocaleString(), icon: ShieldAlert, color: CYBER.orange },
@@ -228,7 +228,7 @@ export default function FlowClassificationTab() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
           <h3 className="text-sm font-semibold text-cyber-text mb-3 flex items-center gap-2">
-            <BarChart3 size={14} /> Classification Distribution
+            <TrendingUp size={14} /> Classification Distribution
           </h3>
           {chartData.values.some(v => v > 0) ? (
             <CanvasPieChart
