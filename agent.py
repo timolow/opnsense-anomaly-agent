@@ -1000,7 +1000,7 @@ class OPNsenseAgent:
         self.stat_model.add_events(events)
 
         # Pre-filter firewall events for downstream consumers
-        fw_events = [e for e in events if e.get("log_type") == "firewall"]
+        fw_events = [e for e in events if e.get("log_type") in ("firewall", "filterlog")]
 
         # Flow-based behavioral classification (firewall events only)
         for fw_event in fw_events:

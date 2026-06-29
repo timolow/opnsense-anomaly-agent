@@ -3653,6 +3653,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         self._send_json(data)
                     except Exception as e:
                         self._send_json({'error': str(e)}, 500)
+            elif path == "/api/flow-classifier/train":
+                # POST — train the flow-based behavioral classifier
+                if self.command == "POST":
+                    try:
+                        data = api_train_flow_classifier()
+                        self._send_json(data)
+                    except Exception as e:
+                        self._send_json({'error': str(e)}, 500)
+                else:
+                    # GET — return flow classifier status
+                    try:
+                        data = api_flow_classifier_status()
+                        self._send_json(data)
+                    except Exception as e:
+                        self._send_json({'error': str(e)}, 500)
+                        self._send_json({'error': str(e)}, 500)
             elif path == "/api/ml-classifications":
                 try:
                     data = api_ml_classifications()
@@ -5320,6 +5336,50 @@ def api_ml_classifications():
     except Exception as e:
         logger.error("ml_classifications failed: %s", e)
         return {"error": str(e)}
+
+
+def api_flow_classifier_status():
+    """GET /api/flow-classifier/train - Return flow classifier status."""
+    try:
+        from flow_classifier import FlowClassifier
+        classifier = FlowClassifier()
+        summary = classifier.get_classifications_summary()
+        model_info = classifier.ml_classifier.get_model_info()
+        return {
+            "success": True,
+            "model_trained": model_info.get("model_trained", False),
+            "flow_profiles": summary.get("active_flows", 0),
+            "total_processed": summary.get("total_processed", 0),
+            "total_classified": summary.get("total_classified", 0),
+            "label_distribution": summary.get("label_distribution", {}),
+            "model_info": model_info,
+            "should_retrain": classifier.should_retrain_ml(),
+        }
+    except Exception as e:
+        logger.error("api_flow_classifier_status failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+def api_train_flow_classifier():
+    """POST /api/flow-classifier/train - Train the flow classifier ML model."""
+    try:
+        from flow_classifier import FlowClassifier
+        classifier = FlowClassifier()
+        summary = classifier.get_classifications_summary()
+        if summary.get("active_flows", 0) < 30:
+            return {
+                "success": False,
+                "error": f"Insufficient data: {summary.get('active_flows', 0)} flow profiles (need >= 30)",
+            }
+        metrics = classifier.train_ml_model()
+        return {
+            "success": "error" not in metrics,
+            "metrics": metrics,
+            "model_trained": "error" not in metrics,
+        }
+    except Exception as e:
+        logger.error("api_train_flow_classifier failed: %s", e)
+        return {"success": False, "error": str(e)}
 
 
 def api_flow_classifications():
