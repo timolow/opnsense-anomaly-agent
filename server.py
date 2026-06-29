@@ -5590,7 +5590,7 @@ def api_behavior_overview():
                 "resolved_threats": [],
             },
             "traffic_flows": [],
-            "data_source_status": "live",
+            "data_source_status": "configured",
         }
     except Exception as e:
         logger.error("api_behavior_overview failed: %s", e)
