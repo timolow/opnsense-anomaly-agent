@@ -427,6 +427,11 @@ class CorrelationEngine:
                 for k, v in inc_dict["metadata"].items()
             })
 
+            # PostgreSQL ARRAY columns need native Python lists, NOT json.dumps()
+            signal_types = sorted(incident.signal_types)
+            sources = sorted(incident.sources)
+            phases = incident.get_attack_chain()
+
             # Check if incident already exists in DB
             cur = self.db._new_cursor()
             cur.execute(
@@ -439,14 +444,13 @@ class CorrelationEngine:
                 # Update existing
                 cur.execute(
                     """UPDATE incidents SET
-                       severity = %s, signal_count = %s, signal_types = %s,
-                       sources = %s, phases = %s, last_seen = to_timestamp(%s),
-                       description = %s, metadata = %s
+                       severity = %s, signal_count = %s, signal_types = %s::text[],
+                       sources = %s::text[], phases = %s::text[],
+                       last_seen = to_timestamp(%s),
+                       description = %s, metadata = %s::jsonb
                        WHERE id = %s""",
                     (incident.severity, incident.signal_count,
-                     json.dumps(sorted(incident.signal_types)),
-                     json.dumps(sorted(incident.sources)),
-                     json.dumps(incident.get_attack_chain()),
+                     signal_types, sources, phases,
                      incident.last_seen, incident.get_description(),
                      metadata, row[0]),
                 )
@@ -456,12 +460,10 @@ class CorrelationEngine:
                     """INSERT INTO incidents
                        (ip, severity, signal_count, signal_types, sources,
                         phases, first_seen, last_seen, description, metadata)
-                       VALUES (%s, %s, %s, %s, %s, %s,
-                               to_timestamp(%s), to_timestamp(%s), %s, %s)""",
+                       VALUES (%s, %s, %s, %s::text[], %s::text[], %s::text[],
+                               to_timestamp(%s), to_timestamp(%s), %s, %s::jsonb)""",
                     (incident.ip, incident.severity, incident.signal_count,
-                     json.dumps(sorted(incident.signal_types)),
-                     json.dumps(sorted(incident.sources)),
-                     json.dumps(incident.get_attack_chain()),
+                     signal_types, sources, phases,
                      incident.first_seen, incident.last_seen,
                      incident.get_description(), metadata),
                 )
