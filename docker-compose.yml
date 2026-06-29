@@ -83,6 +83,14 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-50}
       - LEARN_INTERVAL=${LEARN_INTERVAL:-300}
+      # UniFi controller monitoring (optional)
+      - UNIFI_ENABLED=${UNIFI_ENABLED:-false}
+      - UNIFI_HOST=${UNIFI_HOST:-}
+      - UNIFI_PORT=${UNIFI_PORT:-8443}
+      - UNIFI_USER=${UNIFI_USER:-}
+      - UNIFI_PASS=${UNIFI_PASS:-}
+      - UNIFI_SITE=${UNIFI_SITE:-default}
+      - UNIFI_POLL_INTERVAL=${UNIFI_POLL_INTERVAL:-60}
       # Scheduled backups (in-container via psycopg2 COPY, daily by default)
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}

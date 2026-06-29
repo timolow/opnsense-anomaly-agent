@@ -1343,7 +1343,7 @@ class EventDatabase:
                 ),
             )
             row = cur.fetchone()
-            self._conn.commit()
+            # autocommit=True via _PoolCursor — no explicit commit needed
             return row[0] if row else None
         except Exception as e:
             logger.error("Failed to insert UniFi event: %s", e)
@@ -1375,7 +1375,7 @@ class EventDatabase:
                 ),
             )
             row = cur.fetchone()
-            self._conn.commit()
+            # autocommit=True via _PoolCursor — no explicit commit needed
             return row[0] if row else None
         except Exception as e:
             logger.error("Failed to insert UniFi client: %s", e)
@@ -1408,7 +1408,7 @@ class EventDatabase:
                 ),
             )
             row = cur.fetchone()
-            self._conn.commit()
+            # autocommit=True via _PoolCursor — no explicit commit needed
             return row[0] if row else None
         except Exception as e:
             logger.error("Failed to insert UniFi device: %s", e)

@@ -25,3 +25,4 @@ webui/dist/
 webui/node_modules/
 *.local
 .env.bak
+.worktrees/

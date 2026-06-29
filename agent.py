@@ -80,6 +80,7 @@ from apprise_notifier import AppriseNotifier
 from zenarmor_classifier import ZenArmorClassifier
 from ids_signature_analyzer import IDSSignatureAnalyzer
 from nginx_monitor import NginxMonitor
+from unifi_monitor import UniFiMonitor
 from threat_engine import ThreatEngine
 from baseline_engine import BaselineEngine
 from anomaly_detector import AnomalyDetector
@@ -594,6 +595,7 @@ class OPNsenseAgent:
         self.last_status = time.time()
         self.last_syslog_anomaly_check = time.time()
         self.last_wan_flap_check = time.time()
+        self.last_unifi_check = time.time()
         self.last_backup = time.time()
         # Scheduled backups: daily by default, configurable via BACKUP_INTERVAL_SECONDS
         self.backup_interval = int(os.getenv("BACKUP_INTERVAL_SECONDS", "86400"))
@@ -676,7 +678,11 @@ class OPNsenseAgent:
         self.nginx_monitor = NginxMonitor()
         self.nginx_monitor.db = self.db
 
-        # Load consolidated state (covers zenarmor, ids, nginx + all other modules)
+        # UniFi controller monitor — polls API for events, clients, devices
+        self.unifi_monitor = UniFiMonitor()
+        self.unifi_monitor.db = self.db
+
+        # Load consolidated state (covers zenarmor, ids, nginx, unifi + all other modules)
         self.persistence.load(self)
         
         # Startup health checks
@@ -1243,6 +1249,50 @@ class OPNsenseAgent:
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
 
+    def _check_unifi(self):
+        """Poll UniFi controller and process events/anomalies."""
+        if not self.unifi_monitor.enabled:
+            return
+        if not self.unifi_monitor.host:
+            return
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            events = loop.run_until_complete(self.unifi_monitor.poll())
+        finally:
+            loop.close()
+
+        if not events:
+            return
+
+        # Insert into DB and alert on anomalies
+        for event in events:
+            # Insert to UniFi-specific table
+            try:
+                self.db.insert_unifi_event(event)
+            except Exception as e:
+                logger.warning("Failed to insert UniFi event: %s", e)
+
+            # Also insert to main events table for ML pipeline
+            try:
+                self.db.insert_event(event, event.get("raw", ""))
+            except Exception:
+                pass
+
+            # Alert on HIGH/CRITICAL severity
+            severity = event.get("severity", "").upper()
+            if severity in ("HIGH", "CRITICAL"):
+                self.anomaly_count += 1
+                logger.warning("UniFi anomaly: %s — %s", event.get("event_type"), event.get("description"))
+                self.discord_bot.send_alert(event)
+                self.apprise_notifier.send_alert(event)
+                # P2-6: Publish to SSE stream
+                try:
+                    _get_sse_publisher()(event)
+                except Exception:
+                    pass
+
     def _send_status(self):
         """Log periodic status."""
         uptime = int(time.time() - self.start_time)
@@ -1404,6 +1454,14 @@ class OPNsenseAgent:
                             self._check_ids_anomalies()
                         except Exception as e:
                             logger.warning("ZenArmor/IDS anomaly check failed: %s", e)
+
+                    # Check UniFi controller periodically
+                    if now - self.last_unifi_check >= self.config.learn_interval:
+                        self.last_unifi_check = now
+                        try:
+                            self._check_unifi()
+                        except Exception as e:
+                            logger.warning("UniFi check failed: %s", e)
 
                     # Save state periodically (every learn_interval, alongside baseline save)
                     if now - self.last_save >= self.config.learn_interval:

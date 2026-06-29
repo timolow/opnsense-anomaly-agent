@@ -7,6 +7,10 @@ Saves and restores:
 - NetworkClassifier IP tracking data
 - GeoDetector country tracking
 - Agent counters (event_count, anomaly_count, uptime_offset)
+- ZenArmor classifier state
+- IDS signature analyzer state
+- Nginx monitor counters
+- UniFi monitor client/device state caches
 
 State is saved to a JSON file and loaded on startup.
 Time-windowed state is pruned on load to remove stale data older than
@@ -62,6 +66,7 @@ class StatePersistence:
                 "zenarmor_classifier": self._save_zenarmor_classifier(agent),
                 "ids_analyzer": self._save_ids_analyzer(agent),
                 "nginx_monitor": self._save_nginx_monitor(agent),
+                "unifi_monitor": self._save_unifi_monitor(agent),
             }
 
             with open(self.state_file, "w") as f:
@@ -108,6 +113,7 @@ class StatePersistence:
             self._load_zenarmor_classifier(agent, state.get("zenarmor_classifier", {}))
             self._load_ids_analyzer(agent, state.get("ids_analyzer", {}))
             self._load_nginx_monitor(agent, state.get("nginx_monitor", {}))
+            self._load_unifi_monitor(agent, state.get("unifi_monitor", {}))
             
             logger.info("Agent state loaded successfully")
             
@@ -796,6 +802,57 @@ class StatePersistence:
         
         if loaded > 0:
             logger.info("Restored %d reverse DNS cache entries", loaded)
+
+    # ── UniFiMonitor persistence ─────────────────────────────────────
+
+    def _save_unifi_monitor(self, agent) -> Dict:
+        """Save UniFi monitor state (client/device caches for delta detection)."""
+        if not hasattr(agent, "unifi_monitor") or not agent.unifi_monitor:
+            return {}
+
+        uf = agent.unifi_monitor
+        data = {}
+
+        # Save client state cache (for delta detection on restart)
+        if uf._prev_clients:
+            data["prev_clients"] = dict(uf._prev_clients)
+        if uf._prev_devices:
+            data["prev_devices"] = dict(uf._prev_devices)
+        if uf._client_roam_count:
+            data["client_roam_count"] = dict(uf._client_roam_count)
+        if uf._poll_count > 0:
+            data["poll_count"] = uf._poll_count
+        if uf._error_count > 0:
+            data["error_count"] = uf._error_count
+
+        return data
+
+    def _load_unifi_monitor(self, agent, saved_data: Dict) -> None:
+        """Load and restore UniFi monitor state."""
+        if not hasattr(agent, "unifi_monitor") or not agent.unifi_monitor:
+            return
+
+        uf = agent.unifi_monitor
+        loaded = 0
+
+        if "prev_clients" in saved_data:
+            uf._prev_clients = saved_data["prev_clients"]
+            loaded += 1
+        if "prev_devices" in saved_data:
+            uf._prev_devices = saved_data["prev_devices"]
+            loaded += 1
+        if "client_roam_count" in saved_data:
+            uf._client_roam_count = defaultdict(int, saved_data["client_roam_count"])
+            loaded += 1
+        if "poll_count" in saved_data:
+            uf._poll_count = saved_data["poll_count"]
+            loaded += 1
+        if "error_count" in saved_data:
+            uf._error_count = saved_data["error_count"]
+            loaded += 1
+
+        if loaded > 0:
+            logger.info("Restored unifi monitor data: %d items", loaded)
 
 
 def save_state(agent) -> None:
