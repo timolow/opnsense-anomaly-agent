@@ -674,7 +674,8 @@ export const api = {
   },
   behaviorProfiles: async (): Promise<BehaviorProfile[]> => {
     try {
-      return json<BehaviorProfile[]>('/behavior-profiles');
+      const res = await json<{ profiles: BehaviorProfile[]; count: number }>('/behavior-profiles');
+      return res?.profiles || [];
     } catch {
       return [];
     }
@@ -691,6 +692,33 @@ export const api = {
         by_type: [],
         recent: [],
       };
+    }
+  },
+
+  // Flow classifications (ML-PIVOT-09)
+  flowClassifications: async () => {
+    try {
+      return json<{ classifications: any[]; count: number }>('/flow-classifications');
+    } catch {
+      return { classifications: [], count: 0 };
+    }
+  },
+
+  // Signal bus stats (ML-PIVOT-11)
+  signalBusStats: async () => {
+    try {
+      return json<any>('/signal-bus/stats');
+    } catch {
+      return { total_signals: 0, by_source: {}, by_severity: {}, recent: [] };
+    }
+  },
+
+  // Incidents (ML-PIVOT-10)
+  incidents: async () => {
+    try {
+      return json<{ incidents: any[]; count: number; active: number }>('/incidents');
+    } catch {
+      return { incidents: [], count: 0, active: 0 };
     }
   },
 };

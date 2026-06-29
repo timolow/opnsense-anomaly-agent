@@ -22,6 +22,10 @@ import LogsTab from './components/tabs/LogsTab';
 import ServicesViewTab from './components/tabs/ServicesViewTab';
 import SettingsTab from './components/tabs/SettingsTab';
 import BehavioralOverviewTab from './components/tabs/BehavioralOverviewTab';
+import IpProfilesTab from './components/tabs/IpProfilesTab';
+import FlowClassificationTab from './components/tabs/FlowClassificationTab';
+import IncidentTimelineTab from './components/tabs/IncidentTimelineTab';
+import BehavioralBaselinesTab from './components/tabs/BehavioralBaselinesTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Dashboard',
@@ -35,6 +39,10 @@ const TAB_TITLE: Record<string, string> = {
   services: 'Services',
   settings: 'Settings',
   'behavioral-overview': 'Behavioral Overview',
+  'ip-profiles': 'IP Profiles',
+  'flow-classification': 'Flow ML',
+  'incident-timeline': 'Incidents',
+  'behavioral-baselines': 'Baselines',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -54,6 +62,10 @@ function TabContent({ tab }: { tab: string }) {
           case 'services': return <ServicesViewTab />;
           case 'settings': return <SettingsTab />;
           case 'behavioral-overview': return <BehavioralOverviewTab />;
+          case 'ip-profiles': return <IpProfilesTab />;
+          case 'flow-classification': return <FlowClassificationTab />;
+          case 'incident-timeline': return <IncidentTimelineTab />;
+          case 'behavioral-baselines': return <BehavioralBaselinesTab />;
           case '': return <OverviewTab />;
           default: return <OverviewTab />;
         }

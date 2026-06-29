@@ -104,7 +104,8 @@ interface AppState {
 }
 
 const DEFAULT_TABS = [
-  'overview', 'heatmap', 'traffic', 'behavioral-overview', 'alerts', 'rules-classified',
+  'overview', 'heatmap', 'traffic', 'behavioral-overview', 'ip-profiles', 'flow-classification',
+  'incident-timeline', 'behavioral-baselines', 'alerts', 'rules-classified',
   'network', 'wan-flap', 'logs', 'services', 'settings',
 ];
 

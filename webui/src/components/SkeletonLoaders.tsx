@@ -341,8 +341,6 @@ export function WanFlapSkeleton() {
   );
 }
 
-// ── NginxTab Skeleton ──
-// Layout: header → stat cards → anomaly table
 export function NginxSkeleton() {
   return (
     <div className="space-y-4">
@@ -362,11 +360,6 @@ export function DnsQueriesSkeleton() {
     </div>
   );
 }
-
-// ── NginxTab Skeleton ──
-// Layout: header → stat cards → anomaly table
-export function NginxSkeleton() {
-  return (
     <div className="space-y-4">
       <TabHeaderSkeleton />
       <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
@@ -400,6 +393,74 @@ export function BehavioralOverviewSkeleton() {
   );
 }
 
+
+// ── IP Profiles Skeleton ──
+export function IpProfilesSkeleton() {
+  return (
+    <div className="space-y-4">
+      <SkeletonBlock className="h-10" />
+      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
+      <div className="flex gap-2 flex-wrap">
+        {[1,2,3,4].map(i => <SkeletonBlock key={i} className="h-7 w-20" />)}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {[1,2,3,4].map(i => <SkeletonBlock key={i} className="h-24" />)}
+      </div>
+    </div>
+  );
+}
+
+// ── Flow Classification Skeleton ──
+export function FlowClassificationSkeleton() {
+  return (
+    <div className="space-y-4">
+      <SkeletonBlock className="h-10" />
+      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <SkeletonBlock style={{ height: 250 }} />
+        <div className="lg:col-span-2 space-y-3">
+          {[1,2,3,4,5].map(i => <SkeletonBlock key={i} className="h-12" />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Incident Timeline Skeleton ──
+export function IncidentTimelineSkeleton() {
+  return (
+    <div className="space-y-4">
+      <SkeletonBlock className="h-10" />
+      <StatCardSkeleton count={5} cols="lg:grid-cols-5" />
+      <div className="flex gap-2 flex-wrap">
+        {[1,2,3,4,5].map(i => <SkeletonBlock key={i} className="h-7 w-20" />)}
+      </div>
+      <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
+        {[1,2,3,4,5,6].map(i => <SkeletonBlock key={i} className="h-10 mb-2" />)}
+      </div>
+    </div>
+  );
+}
+
+// ── Behavioral Baselines Skeleton ──
+export function BehavioralBaselinesSkeleton() {
+  return (
+    <div className="space-y-4">
+      <SkeletonBlock className="h-10" />
+      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {[1,2,3].map(i => <SkeletonBlock key={i} className="h-20" />)}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SkeletonBlock style={{ height: 220 }} />
+        <SkeletonBlock style={{ height: 220 }} />
+      </div>
+      <TableSkeleton rows={5} />
+    </div>
+  );
+}
+
+
 // ── Skeleton dispatch by tab key ──
 const SKELETON_MAP: Record<string, React.ComponentType> = {
   overview: OverviewSkeleton,
@@ -422,6 +483,10 @@ const SKELETON_MAP: Record<string, React.ComponentType> = {
   'wan-flap': WanFlapSkeleton,
   nginx: NginxSkeleton,
   'behavioral-overview': BehavioralOverviewSkeleton,
+  'ip-profiles': IpProfilesSkeleton,
+  'flow-classification': FlowClassificationSkeleton,
+  'incident-timeline': IncidentTimelineSkeleton,
+  'behavioral-baselines': BehavioralBaselinesSkeleton,
 };
 
 /**
