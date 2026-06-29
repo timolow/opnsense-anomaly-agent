@@ -237,11 +237,10 @@ class SignalBus:
         Returns:
             Signal object (may be used by caller for reference).
         """
-        # CRITICAL DEBUG - always print to stdout
-        if self._total_emitted == 0:
-            print(f"SIGNAL_BUS: emit() called for first time! source={source} type={signal_type} subs={len(self._subscribers)}")
+        # CRITICAL DEBUG - count emits
+        if self._total_emitted < 10 or self._total_emitted == 1000 or self._total_emitted == 5000:
+            print(f"SIGNAL_BUS: emit #{self._total_emitted}: source={source} type={signal_type} subs={len(self._subscribers)}")
             sys.stdout.flush()
-
         if not self._running:
             logger.warning("SignalBus is shut down, dropping signal: %s/%s",
                           source, signal_type)
