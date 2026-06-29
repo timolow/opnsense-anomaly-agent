@@ -4131,6 +4131,119 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(cl) if cl else b"{}"
             data = json.loads(body)
             self._send_json(api_bulk_transition(data))
+        elif path == "/api/db-maintenance":
+            # Trigger manual DB retention cleanup
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {}
+            retention_days = int(data.get("retention_days", 30))
+            incident_days = int(data.get("incident_days", 30))
+            try:
+                from eventdb import EventDatabase
+                db = EventDatabase()
+                pre_stats = {}
+                cur = db._new_cursor()
+                try:
+                    cur.execute("SELECT COUNT(*) FROM events")
+                    pre_stats["events"] = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM anomalies")
+                    pre_stats["anomalies"] = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM incidents")
+                    pre_stats["incidents"] = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM drift_events")
+                    pre_stats["drift_events"] = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM baselines")
+                    pre_stats["baselines"] = cur.fetchone()[0]
+                finally:
+                    cur.close()
+                cur = db._new_cursor()
+                try:
+                    cur.execute("SELECT pg_database_size(current_database())")
+                    db_size_bytes = cur.fetchone()[0]
+                finally:
+                    cur.close()
+
+                # Run retention cleanup directly on DB
+                deleted = {}
+
+                # 1. Anomalies (before events due to FK)
+                cur = db._new_cursor()
+                try:
+                    cur.execute("DELETE FROM anomalies WHERE created_at < NOW() - INTERVAL %s", (f"{retention_days} days",))
+                    deleted["anomalies"] = cur.rowcount or 0
+                finally:
+                    cur.close()
+
+                # 2. Events
+                cur = db._new_cursor()
+                try:
+                    cur.execute("DELETE FROM events WHERE timestamp < NOW() - INTERVAL %s", (f"{retention_days} days",))
+                    deleted["events"] = cur.rowcount or 0
+                finally:
+                    cur.close()
+
+                # 3. Resolved incidents
+                cur = db._new_cursor()
+                try:
+                    cur.execute("DELETE FROM incidents WHERE is_active = FALSE AND resolved_at IS NOT NULL AND resolved_at < NOW() - INTERVAL %s", (f"{incident_days} days",))
+                    deleted["incidents"] = cur.rowcount or 0
+                finally:
+                    cur.close()
+
+                # 4. Drift events
+                cur = db._new_cursor()
+                try:
+                    cur.execute("DELETE FROM drift_events WHERE timestamp < NOW() - INTERVAL %s", (f"{retention_days} days",))
+                    deleted["drift_events"] = cur.rowcount or 0
+                finally:
+                    cur.close()
+
+                # 5. Baselines
+                cur = db._new_cursor()
+                try:
+                    cur.execute("DELETE FROM baselines WHERE updated_at < NOW() - INTERVAL %s", (f"{retention_days} days",))
+                    deleted["baselines"] = cur.rowcount or 0
+                finally:
+                    cur.close()
+
+                # VACUUM ANALYZE
+                cur = db._new_cursor()
+                try:
+                    cur.execute("VACUUM ANALYZE events, anomalies, incidents, drift_events, baselines")
+                finally:
+                    cur.close()
+
+                cur = db._new_cursor()
+                try:
+                    cur.execute("SELECT pg_database_size(current_database())")
+                    post_size_bytes = cur.fetchone()[0]
+                finally:
+                    cur.close()
+
+                def _human_size(b):
+                    for u in ('B', 'KB', 'MB', 'GB', 'TB'):
+                        if b < 1024:
+                            return f"{b:.1f} {u}"
+                        b /= 1024
+                    return f"{b:.1f} PB"
+
+                self._send_json({
+                    "success": True,
+                    "message": "DB maintenance completed",
+                    "deleted": deleted,
+                    "pre_counts": pre_stats,
+                    "retention_days": retention_days,
+                    "incident_retention_days": incident_days,
+                    "db_size_before": _human_size(db_size_bytes),
+                    "db_size_after": _human_size(post_size_bytes),
+                    "space_reclaimed": _human_size(max(0, db_size_bytes - post_size_bytes)),
+                })
+            except Exception as e:
+                import traceback
+                self._send_json({"success": False, "error": str(e), "traceback": traceback.format_exc()}, 500)
         else:
             self.send_response(405)
             self.end_headers()

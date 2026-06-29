@@ -149,6 +149,9 @@ class Config:
         self.geo_anomaly_threshold = int(os.getenv("GEO_ANOMALY_THRESHOLD", "10"))
         # Dedup
         self.dedup_seconds = int(os.getenv("DEDUP_SECONDS", "300"))
+        # DB retention: configurable via env vars (default 30 days)
+        self.db_retention_days = int(os.getenv("DB_RETENTION_DAYS", "30"))
+        self.db_retention_incident_days = int(os.getenv("DB_RETENTION_INCIDENT_DAYS", "30"))
         # Reverse DNS
         # Reverse DNS (persistent cache via Redis)
         self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "false").lower() == "true"
@@ -739,10 +742,10 @@ class OPNsenseAgent:
         def maintenance_loop():
             while not self._shutdown.is_set():
                 try:
-                    # Prune old events from database (keep 30 days)
-                    self._prune_events()
+                    # DB retention: prune old events + resolved incidents
+                    self._db_retention_cleanup()
                 except Exception as e:
-                    logger.warning(f"Maintenance task failed: {e}")
+                    logger.warning(f"DB retention cleanup failed: {e}")
 
                 # Scheduled database backup
                 now = time.time()
@@ -766,28 +769,114 @@ class OPNsenseAgent:
         
         t = threading.Thread(target=maintenance_loop, daemon=True)
         t.start()
-        logger.info("Background maintenance thread started")
+        logger.info("Background maintenance thread started (interval=1h, retention=%d days)", self.config.db_retention_days)
 
-    def _prune_events(self):
-        """Prune old events from the database to prevent unlimited growth."""
-        conn = None
+    def _db_retention_cleanup(self):
+        """Run full DB retention cleanup: events, anomalies, incidents, drift_events, baselines.
+
+        Uses configurable retention periods from env vars:
+          DB_RETENTION_DAYS           — events, anomalies, drift_events, baselines (default 30)
+          DB_RETENTION_INCIDENT_DAYS  — resolved incidents (default 30)
+
+        Deletes in dependency order to respect foreign keys (anomalies → events).
+        """
+        events_days = self.config.db_retention_days
+        incident_days = self.config.db_retention_incident_days
+
+        stats = {"events": 0, "anomalies": 0, "drift_events": 0, "baselines": 0, "incidents": 0}
+
+        # ── 1. Anomalies (before events due to FK) ──
+        cur = self.db._new_cursor()
         try:
-            if self.db:
-                conn = self.db.connect()
-                if conn:
-                    cur = conn.cursor()
-                    # Delete events older than 30 days
-                    cur.execute("DELETE FROM events WHERE timestamp < NOW() - INTERVAL '30 days'")
-                    deleted = cur.rowcount
-                    conn.commit()
-                    cur.close()
-                    if deleted > 0:
-                        logger.info(f"Pruned {deleted} old events from database")
+            cur.execute(
+                "DELETE FROM anomalies WHERE created_at < NOW() - INTERVAL %s",
+                (f"{events_days} days",),
+            )
+            stats["anomalies"] = cur.rowcount or 0
         except Exception as e:
-            logger.error(f"Event pruning failed: {e}")
+            logger.warning("Anomaly retention failed: %s", e)
         finally:
-            if conn and self.db:
-                self.db.putconn(conn)
+            cur.close()
+
+        # ── 2. Events ──
+        cur = self.db._new_cursor()
+        try:
+            cur.execute(
+                "DELETE FROM events WHERE timestamp < NOW() - INTERVAL %s",
+                (f"{events_days} days",),
+            )
+            stats["events"] = cur.rowcount or 0
+        except Exception as e:
+            logger.warning("Event retention failed: %s", e)
+        finally:
+            cur.close()
+
+        # ── 3. Resolved incidents (older than retention) ──
+        cur = self.db._new_cursor()
+        try:
+            cur.execute(
+                """DELETE FROM incidents
+                   WHERE is_active = FALSE
+                     AND resolved_at IS NOT NULL
+                     AND resolved_at < NOW() - INTERVAL %s""",
+                (f"{incident_days} days",),
+            )
+            stats["incidents"] = cur.rowcount or 0
+        except Exception as e:
+            logger.warning("Incident retention failed: %s", e)
+        finally:
+            cur.close()
+
+        # ── 4. Drift events ──
+        cur = self.db._new_cursor()
+        try:
+            cur.execute(
+                "DELETE FROM drift_events WHERE timestamp < NOW() - INTERVAL %s",
+                (f"{events_days} days",),
+            )
+            stats["drift_events"] = cur.rowcount or 0
+        except Exception as e:
+            logger.warning("Drift event retention failed: %s", e)
+        finally:
+            cur.close()
+
+        # ── 5. Baselines ──
+        cur = self.db._new_cursor()
+        try:
+            cur.execute(
+                "DELETE FROM baselines WHERE updated_at < NOW() - INTERVAL %s",
+                (f"{events_days} days",),
+            )
+            stats["baselines"] = cur.rowcount or 0
+        except Exception as e:
+            logger.warning("Baseline retention failed: %s", e)
+        finally:
+            cur.close()
+
+        total = sum(stats.values())
+        if total > 0:
+            logger.info(
+                "DB retention cleanup: events=%d anomalies=%d incidents=%d drift=%d baselines=%d (total=%d)",
+                stats["events"], stats["anomalies"], stats["incidents"],
+                stats["drift_events"], stats["baselines"], total,
+            )
+            # Run VACUUM ANALYZE on pruned tables to reclaim disk space
+            try:
+                cur2 = self.db._new_cursor()
+                try:
+                    cur2.execute("VACUUM ANALYZE events")
+                    cur2.execute("VACUUM ANALYZE anomalies")
+                    cur2.execute("VACUUM ANALYZE incidents")
+                    cur2.execute("VACUUM ANALYZE drift_events")
+                    cur2.execute("VACUUM ANALYZE baselines")
+                finally:
+                    cur2.close()
+            except Exception as e:
+                logger.warning("VACUUM ANALYZE failed: %s", e)
+        else:
+            logger.debug("DB retention: nothing to prune (all data within %d days)", events_days)
+
+        return stats
 
     def _scheduled_backup(self):
         """Run a scheduled in-container backup using psycopg2 COPY."""

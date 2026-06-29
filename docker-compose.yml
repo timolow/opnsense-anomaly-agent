@@ -97,6 +97,9 @@ services:
       - BACKUP_DIR=${BACKUP_DIR:-/app/backups}
       # Internal IP prefixes (comma-separated, overrides defaults)
       - INTERNAL_IP_PREFIXES=${INTERNAL_IP_PREFIXES:-}
+      # DB retention (days to keep data)
+      - DB_RETENTION_DAYS=${DB_RETENTION_DAYS:-30}
+      - DB_RETENTION_INCIDENT_DAYS=${DB_RETENTION_INCIDENT_DAYS:-30}
       # GeoLite2 / MaxMind (optional)
       - MAXMIND_ACCOUNT_ID=${MAXMIND_ACCOUNT_ID:-}
       - MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY:-}
