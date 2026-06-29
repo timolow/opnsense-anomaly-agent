@@ -5568,7 +5568,14 @@ def api_behavior_overview():
                 "suspicious": suspicious,
                 "hostile": hostile,
             },
-            "incident_stats": incident_stats,
+            "incident_stats": {
+                "active": incident_stats.get("active_incidents", 0),
+                "escalated_24h": 0,
+                "resolved_24h": 0,
+                "by_severity": incident_stats.get("by_severity", {}),
+                "by_type": [],
+                "recent": [],
+            },
             "top_threat_ips": top_threat_ips,
             "pipeline_health": {
                 "events_per_second": 0,
