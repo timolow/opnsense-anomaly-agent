@@ -79,11 +79,8 @@ function SourceChart({ data }: { data: SignalSourceBreakdown[] }) {
         <Network size={14} /> Signal Sources
       </h3>
       <CanvasBarChart
-        data={sorted.map(d => d.count)}
-        labels={sorted.map(d => d.source)}
-        colors={sorted.map(() => CYBER.accent)}
+        data={sorted.map(d => ({ name: d.source, value: d.count, color: CYBER.accent }))}
         height={180}
-        showValues
         horizontal={true}
       />
     </div>
@@ -101,11 +98,8 @@ function SeverityChart({ data }: { data: Record<string, number> }) {
         <TrendingUp size={14} /> Signal Severity
       </h3>
       <CanvasBarChart
-        data={entries.map(([, v]) => v)}
-        labels={entries.map(([k]) => k.toUpperCase())}
-        colors={entries.map(([k]) => severityStyle(k).color)}
+        data={entries.map(([k, v]) => ({ name: k.toUpperCase(), value: v, color: severityStyle(k).color }))}
         height={180}
-        showValues
       />
     </div>
   );
