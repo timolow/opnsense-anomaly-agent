@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
-import { Flame, ChevronDown } from 'lucide-react';
+import { Flame, ChevronDown, Filter } from 'lucide-react';
 import { CYBER } from '@/utils/colors';
 
 import { HeatmapSkeleton } from '../../components/SkeletonLoaders';
@@ -20,11 +20,45 @@ function heatmapColor(intensity: number) {
 
 const TOP_N_OPTIONS = [10, 25, 50];
 
+const BEHAVIOR_COLORS = {
+  all: CYBER.accent,
+  benign: '#22c55e',
+  suspicious: '#f59e0b',
+  hostile: '#ef4444',
+};
+
 export default function HeatmapTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const legendCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string; behavior?: string } | null>(null);
   const [topN, setTopN] = useState<number>(50);
+  const [behaviorFilter, setBehaviorFilter] = useState<string>('all');
+
+  // Fetch behavioral profiles for IP classification
+  const { data: behaviorProfiles } = useQuery({
+    queryKey: ['behavior-profiles'],
+    queryFn: async () => {
+      try {
+        const res = await api.behaviorProfiles();
+        return res;
+      } catch {
+        return [];
+      }
+    },
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+
+  // Build IP -> behavior_level map
+  const ipBehaviorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (behaviorProfiles) {
+      for (const p of behaviorProfiles) {
+        map.set(p.ip, p.threat_level || 'benign');
+      }
+    }
+    return map;
+  }, [behaviorProfiles]);
   
   const { data, isLoading, isError, error, refetch } = useQuery<HeatmapData>({
     queryKey: ['heatmap'],
@@ -32,16 +66,37 @@ export default function HeatmapTab() {
     refetchInterval: 60000,
   });
 
-  // Client-side top-N filtering
+  // Client-side top-N filtering + behavior filter
   const filteredData = useMemo(() => {
     if (!data) return null;
-    const n = Math.min(topN, data.rowLabels.length);
+    let rows = data.rowLabels.length;
+    const matrix = data.matrix;
+
+    // If behavior filter is active, collect IPs matching the filter
+    if (behaviorFilter !== 'all' && ipBehaviorMap.size > 0) {
+      const filteredIndices: number[] = [];
+      for (let i = 0; i < rows; i++) {
+        const level = ipBehaviorMap.get(data.rowLabels[i]) || 'benign';
+        if (level === behaviorFilter) {
+          filteredIndices.push(i);
+        }
+      }
+      const n = Math.min(topN, filteredIndices.length);
+      const sliced = filteredIndices.slice(0, n);
+      return {
+        matrix: sliced.map(i => matrix[i]),
+        labels: data.labels,
+        rowLabels: sliced.map(i => data.rowLabels[i]),
+      };
+    }
+
+    const n = Math.min(topN, rows);
     return {
-      matrix: data.matrix.slice(0, n),
+      matrix: matrix.slice(0, n),
       labels: data.labels,
       rowLabels: data.rowLabels.slice(0, n),
     };
-  }, [data, topN]);
+  }, [data, topN, behaviorFilter, ipBehaviorMap]);
 
   // Draw heatmap canvas
   useEffect(() => {
@@ -91,6 +146,16 @@ export default function HeatmapTab() {
           ctx.fillRect(j * cellW, i * cellH, cellW - 1, cellH - 1);
           ctx.shadowBlur = 0;
         }
+      }
+    }
+
+    // Draw behavioral classification bars (left of IP labels)
+    for (let i = 0; i < rowLabels.length; i++) {
+      const ip = rowLabels[i];
+      const level = ipBehaviorMap.get(ip) || null;
+      if (level && level in BEHAVIOR_COLORS) {
+        ctx.fillStyle = BEHAVIOR_COLORS[level as keyof typeof BEHAVIOR_COLORS];
+        ctx.fillRect(0, i * cellH, 3, cellH - 1);
       }
     }
 
