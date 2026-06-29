@@ -3473,6 +3473,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({'error': str(e)}, 500)
 
+    def _handle_settings_get(self):
+        """GET /api/settings — return current agent settings."""
+        try:
+            state = load_state()
+            counters = state.get("agent_counters", {}) if state else {}
+            self._send_json({
+                "ok": True,
+                "portscan_window": os.getenv("PORTSCAN_WINDOW", "60"),
+                "bruteforce_threshold": os.getenv("BRUTEFORCE_THRESHOLD", "50"),
+                "sensitivity": os.getenv("SENSITIVITY", "medium"),
+                "events_processed": counters.get("event_count", 0),
+                "anomalies_detected": counters.get("anomaly_count", 0),
+            })
+        except Exception as e:
+            self._send_json({'error': str(e)}, 500)
+
     def _handle_threshold_metrics_get(self):
         """GET /api/threshold-metrics — return performance metrics."""
         try:
@@ -3791,6 +3807,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.__query_events()
             elif path == "/api/settings":
                 self._handle_settings_get()
+            elif path == "/api/pipeline-health":
+                self._send_json(api_pipeline_health())
             elif path == "/api/heartbeat":
                 state = load_state()
                 counters = state.get("agent_counters", {}) if state else {}
@@ -5360,72 +5378,6 @@ def api_incidents():
         return {"error": str(e), "incidents": []}
 
 
-def api_incident_stats():
-    """GET /api/incidents/stats — Incident summary statistics."""
-    try:
-        conn = get_db()
-        if not conn:
-            return {"error": "No database connection"}
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-        # Total and active counts
-        cur.execute("SELECT COUNT(*) FROM incidents")
-        total = cur.fetchone()["count"]
-
-        cur.execute("SELECT COUNT(*) FROM incidents WHERE is_active = TRUE")
-        active = cur.fetchone()["count"]
-
-        # By severity
-        cur.execute("""
-            SELECT severity, COUNT(*) as cnt
-            FROM incidents
-            GROUP BY severity
-        """)
-        by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
-
-        # Active by severity
-        cur.execute("""
-            SELECT severity, COUNT(*) as cnt
-            FROM incidents
-            WHERE is_active = TRUE
-            GROUP BY severity
-        """)
-        active_by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
-
-        # By attack phase
-        cur.execute("""
-            SELECT phases, COUNT(*) as cnt
-            FROM incidents
-            WHERE array_length(phases, 1) > 0
-            GROUP BY phases
-        """)
-        by_phase = {str(row["phases"]): row["cnt"] for row in cur.fetchall()}
-
-        # Top offending IPs
-        cur.execute("""
-            SELECT ip, COUNT(*) as cnt
-            FROM incidents
-            WHERE is_active = TRUE
-            GROUP BY ip
-            ORDER BY cnt DESC
-            LIMIT 10
-        """)
-        top_ips = [{"ip": row["ip"], "incident_count": row["cnt"]} for row in cur.fetchall()]
-
-        cur.close()
-        return {
-            "total_incidents": total,
-            "active_incidents": active,
-            "by_severity": by_severity,
-            "active_by_severity": active_by_severity,
-            "by_phase": by_phase,
-            "top_offending_ips": top_ips,
-        }
-    except Exception as e:
-        logger.error("api_incident_stats failed: %s", e)
-        return {"error": str(e)}
-
-
 def api_incident_by_id(inc_id: str):
     """GET /api/incidents/<id> — Single incident detail."""
     try:
@@ -5533,6 +5485,43 @@ def api_signal_bus_stats():
     except Exception as e:
         logger.error("api_signal_bus_stats failed: %s", e)
         return {"total_signals": 0, "by_source": {}, "by_severity": {}, "recent": []}
+
+
+def api_pipeline_health():
+    """GET /api/pipeline-health — Real-time pipeline status."""
+    try:
+        state = load_state()
+        counters = state.get("agent_counters", {}) if state else {}
+
+        # Check DB connectivity
+        db_ok = False
+        try:
+            conn = get_db()
+            if conn:
+                conn.cursor().execute("SELECT 1")
+                db_ok = True
+        except Exception:
+            pass
+
+        events = counters.get("event_count", 0)
+        anomalies = counters.get("anomaly_count", 0)
+
+        return {
+            "events_processed": events,
+            "anomalies_detected": anomalies,
+            "db_connected": db_ok,
+            "anomaly_rate": round(anomalies / max(events, 1) * 100, 2),
+            "last_event": state.get("last_event_timestamp", "") if state else "",
+        }
+    except Exception as e:
+        logger.error("api_pipeline_health failed: %s", e)
+        return {
+            "events_processed": 0,
+            "anomalies_detected": 0,
+            "db_connected": False,
+            "anomaly_rate": 0,
+            "last_event": "",
+        }
 
 
 def api_behavior_overview():
