@@ -372,13 +372,22 @@ class SignalBus:
         with self._lock:
             subscribers_copy = dict(self._subscribers)
 
+        if not subscribers_copy:
+            logger.debug("SignalBus._route: no subscribers for %s/%s", signal.source, signal.signal_type)
+            return
+
+        matched = 0
         for event, callbacks in subscribers_copy.items():
             if self._matches(event, signal):
                 for callback in callbacks:
                     try:
                         callback(signal)
+                        matched += 1
                     except Exception as e:
                         logger.error("Signal subscriber error for %s: %s", event, e)
+        if matched == 0:
+            logger.debug("SignalBus._route: no matches for %s/%s among %d subscribers", 
+                        signal.source, signal.signal_type, sum(len(v) for v in subscribers_copy.values()))
 
     def _matches(self, event: str, signal: Signal) -> bool:
         """Check if a signal matches a subscription event pattern."""

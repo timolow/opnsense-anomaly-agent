@@ -656,9 +656,18 @@ class OPNsenseAgent:
 
         # Correlation engine — groups signals into incidents
         self.correlation_engine = CorrelationEngine(self.db)
+        _signal_callback_count = [0]  # Mutable counter for closure
         def _on_signal(sig):
-            self.correlation_engine.process_signal(sig)
+            _signal_callback_count[0] += 1
+            if _signal_callback_count[0] <= 3:
+                logger.info("DEBUG _on_signal #%d: src=%s type=%s sev=%s ip=%s",
+                           _signal_callback_count[0], sig.source, sig.signal_type, sig.severity, sig.ip)
+            result = self.correlation_engine.process_signal(sig)
+            if result is not None and _signal_callback_count[0] <= 3:
+                logger.info("DEBUG _on_signal result: incident ip=%s severity=%s count=%d",
+                           result.ip, result.severity, result.signal_count)
         self.signal_bus.subscribe("all", _on_signal)
+        logger.info("Signal bus subscribed: _on_signal callback registered for correlation engine")
 
         # Auto-resolve stale incidents every 5 minutes via maintenance thread
         # (wired below in _start_maintenance_thread)
