@@ -3870,6 +3870,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(api_get_incident(inc_id))
             elif path == "/api/incidents/stats":
                 self._send_json(api_incident_stats())
+            # ML PIVOT: New behavioral ML endpoints (GET)
+            elif path == "/api/flow-classifications":
+                self._send_json(api_flow_classifications())
+            elif path.startswith("/api/flow-classifications-by-ip"):
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                ip_filter = query.get("ip", [None])[0]
+                if ip_filter:
+                    self._send_json(api_flow_classifications_by_ip(ip_filter))
+                else:
+                    self._send_json({"classifications": [], "count": 0})
+            elif path == "/api/signal-bus/stats":
+                self._send_json(api_signal_bus_stats())
+            elif path == "/api/behavior-profiles":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                limit = int(query.get("limit", ["50"])[0])
+                offset = int(query.get("offset", ["0"])[0])
+                self._send_json(api_behavior_profiles(limit, offset))
+            elif path.startswith("/api/behavior-profiles/"):
+                profile_ip = path[len("/api/behavior-profiles/"):]
+                self._send_json(api_behavior_profile_by_ip(profile_ip))
+            elif path == "/api/behavior-overview":
+                self._send_json(api_behavior_overview())
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -4071,11 +4093,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send_json(result, code)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
-        # ── ML PIVOT: New behavioral ML endpoints ────────────────────
-        elif path == "/api/incidents":
-            self._send_json(api_incidents())
-        elif path == "/api/incidents/stats":
-            self._send_json(api_incident_stats())
+        # ── ML PIVOT: Incident management write operations (POST only) ──
         elif path.startswith("/api/incidents/inc_") and path.endswith("/transition"):
             cl = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(cl) if cl else b"{}"
@@ -4090,21 +4108,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             inc_id = path.split("/api/incidents/inc_")[1].split("/")[0]
             inc_id = f"inc_{inc_id}"
             self._send_json(api_incident_feedback(inc_id, data))
-        elif path.startswith("/api/incidents/"):
-            inc_id = path[len("/api/incidents/"):]
-            self._send_json(api_incident_by_id(inc_id))
         elif path == "/api/incidents/bulk-transition":
             cl = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(cl) if cl else b"{}"
             data = json.loads(body)
             self._send_json(api_bulk_transition(data))
-        elif path == "/api/signal-bus/stats":
-            self._send_json(api_signal_bus_stats())
-        elif path == "/api/behavior-profiles":
-            self._send_json(api_behavior_profiles())
-        elif path.startswith("/api/behavior-profiles/"):
-            profile_ip = path[len("/api/behavior-profiles/"):]
-            self._send_json(api_behavior_profile_by_ip(profile_ip))
         else:
             self.send_response(405)
             self.end_headers()
@@ -5524,7 +5532,27 @@ def api_signal_bus_stats():
         }
     except Exception as e:
         logger.error("api_signal_bus_stats failed: %s", e)
-        return {"error": str(e)}
+        return {"total_signals": 0, "by_source": {}, "by_severity": {}, "recent": []}
+
+
+def api_behavior_overview():
+    """GET /api/behavior-overview — Combined behavioral overview data."""
+    try:
+        profiles = api_behavior_profiles(50, 0)
+        incident_stats = api_incident_stats()
+        return {
+            "profiles": profiles.get("profiles", []),
+            "incident_stats": incident_stats,
+            "data_source_status": "live",
+        }
+    except Exception as e:
+        logger.error("api_behavior_overview failed: %s", e)
+        return {
+            "profiles": [],
+            "incident_stats": {},
+            "data_source_status": "error",
+            "empty_message": str(e),
+        }
 
 
 def api_behavior_profiles(limit=50, offset=0):
