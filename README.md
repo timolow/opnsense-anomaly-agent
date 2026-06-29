@@ -10,38 +10,44 @@ A self-learning ML-based network security monitoring system that ingests OPNsens
 OPNsense Firewall (UDP syslog :1514)
           │
           ▼
-┌─────────────────────────────────────────────┐
-│  anomaly-agent (Docker container)            │
-│                                             │
-│  syslog_listener  ──►  adaptive_parser       │
-│       │                │                     │
-│       ▼                ▼                     │
-│  agent.py (main loop)                        │
-│  ├── attack_detectors   (port scan, SYN flood, brute force, probes)
-│  ├── anomaly_detector   (z-score volume spikes, temporal anomalies)
-│  ├── baseline_engine    (per-rule traffic learning, hourly patterns)
-│  ├── rule_classifier    (GradientBoosting ML, GOOD/SUSPICIOUS/ABUSIVE)
-│  ├── threat_engine      (multi-source IP reputation scoring)
-│  ├── geo_lookup         (MaxMind GeoLite2 + ip-api fallback)
+┌───────────────────────────────────────────────────┐
+│  anomaly-agent (Docker container)                  │
+│                                                    │
+│  syslog_listener ──► adaptive_parser               │
+│       │                │                           │
+│       ▼                ▼                           │
+│  agent.py (main loop)                              │
+│  ├── attack_detectors  (port scan, SYN flood, brute force, probes)
+│  ├── anomaly_detector  (z-score volume spikes, temporal anomalies)
+│  ├── baseline_engine   (per-rule traffic learning, hourly patterns)
+│  ├── threat_engine     (multi-source IP reputation scoring)
+│  ├── geo_lookup        (MaxMind GeoLite2 + ip-api fallback)
 │  ├── zenarmor_classifier (security gateway policy tracking)
-│  ├── ids_analyzer       (Snort/Suricata signature analysis)
-│  ├── nginx_monitor      (web attack detection)
-│  ├── service_monitor    (DHCP, Unbound, NTP, OpenVPN, WireGuard)
-│  ├── wan_flap_detector  (gateway up/down flapping)
+│  ├── ids_analyzer      (Snort/Suricata signature analysis)
+│  ├── nginx_monitor     (web attack detection)
+│  ├── service_monitor   (DHCP, Unbound, NTP, OpenVPN, WireGuard)
+│  ├── wan_flap_detector (gateway up/down flapping)
 │  ├── system_log_classifier (system log pattern learning)
-│  ├── concept_drift      (ADWIN algorithm, stale baseline detection)
-│  ├── threshold_tuner    (ROC-based auto-tuning, Phase 5)
-│  ├── health_monitor     (subsystem checks, Discord status reporting)
-│  ├── discord_bot        (rich embeds, slash commands, reconnection)
-│  ├── apprise_notifier   (70+ platforms: Telegram, Slack, email, etc.)
-│  └── server.py          (REST API :8766, SSE streaming, React SPA)
-└──────┬──────────────────┬────────────────────┘
+│  ├── concept_drift     (ADWIN algorithm, stale baseline detection)
+│  ├── health_monitor    (subsystem checks, Discord status reporting)
+│  ├── discord_bot       (rich embeds, slash commands, reconnection)
+│  ├── apprise_notifier  (70+ platforms: Telegram, Slack, email, etc.)
+│  └── server.py         (REST API :8766, SSE streaming, React SPA)
+│
+│  ─── Behavioral ML Pipeline (ML-PIVOT) ────       │
+│  ├── signal_bus        (unified signal routing, 51 signal types)
+│  ├── correlation_engine (attack chain detection, incident grouping)
+│  ├── incident_manager  (lifecycle state machine, feedback loop)
+│  ├── ip_behavior_model (per-IP behavioral profiles, EMA baselines)
+│  └── flow_classifier   (GradientBoosting flow classification)
+└──────┬──────────────────┬──────────────────────────┘
        │                  │
        ▼                  ▼
 ┌──────────────┐   ┌──────────────┐
 │  PostgreSQL  │   │    Redis     │
 │  (events,    │   │  (DNS cache, │
-│   baselines) │   │   rate limit)│
+│   baselines, │   │   rate limit)│
+│   incidents) │   │              │
 └──────────────┘   └──────────────┘
 ```
 
@@ -70,7 +76,7 @@ docker compose up -d
 ```
 
 This starts three containers:
-- `anomaly-postgres` — PostgreSQL 16 (persistent event/anomaly storage)
+- `anomaly-postgres` — PostgreSQL 16 (persistent event/anomaly/incident storage)
 - `anomaly-redis` — Redis 7 (DNS cache, rate limiting)
 - `anomaly-agent` — The anomaly detection engine (syslog, ML, API, Discord, web UI)
 
@@ -83,7 +89,12 @@ A React + TypeScript + Tailwind CSS SPA with a dark cyberpunk theme. All data is
 | Tab | Description |
 |-----|-------------|
 | **Overview** | Stat cards, event timeline (uPlot), severity distribution, recent activity |
-| **Heatmap** | IP-level traffic intensity grid |
+| **Heatmap** | IP-level traffic intensity grid with behavioral threat coloring |
+| **Behavioral** | ML behavioral overview: IP profiles, incident stats, threat scores |
+| **IP Profiles** | Per-IP behavioral profiles with threat scores, event breakdowns |
+| **Flow ML** | GradientBoosting flow classification (GOOD/SUSPICIOUS/ABUSIVE) |
+| **Incidents** | Correlated attack chains with timeline visualization |
+| **Baselines** | Signal bus monitoring, concept drift, severity distribution |
 | **Flow Map** | Sankey diagram of source→destination flows |
 | **IP Flow** | Detailed per-IP event counts and direction |
 | **Geography** | Country/region breakdown with intensity map |
@@ -96,23 +107,29 @@ A React + TypeScript + Tailwind CSS SPA with a dark cyberpunk theme. All data is
 | **Nginx Monitor** | Web traffic analysis and attack detection |
 | **Network Topology** | Force graph of IP connections (30+ nodes) |
 | **WAN Flap Detection** | Gateway stability timeline |
-| **Firewall Rules** | ML-classified rules (GOOD/SUSPICIOUS/ABUSIVE) with feedback |
-| **Rules ML** | Model parameters, classification distribution, training status |
+| **Firewall Rules** | Rule tracking and management |
 | **Syslogs** | Raw firewall log viewer with filtering |
 | **Query Logs** | Advanced search by IP, time range |
 | **Settings** | Detection thresholds, integration config, data management |
 
-## ML Self-Learning Engine
+## ML-PIVOT Behavioral Engine
 
-The agent evolves its detection capabilities over 5 phases:
+The behavioral ML pipeline processes every event through a unified signal bus, correlates related signals into incidents, and maintains per-IP behavioral profiles with exponential moving average baselines.
 
-1. **Feedback Loop** — Users classify rules via thumbs up/down; incorrect labels downgrade confidence to UNCERTAIN
-2. **Per-Rule Baselines** — Each rule learns volume, protocol distribution, port diversity, pass/block ratio, hourly patterns
-3. **Temporal Patterns** — Z-score anomalies against 24-hour distribution with mean/stddev
-4. **Active Learning Queue** — UNCERTAIN/low-confidence rules queued for human review
-5. **Threshold Auto-Tuning** — ROC curve analysis adjusts detection thresholds to reduce false positives
+### Signal Bus
+Unified signal routing with 51 signal types. Every detector output (attack, anomaly, geo, behavior, flow) flows through the bus before persistence. Thread-safe bounded queue with subscriber pattern.
 
-**Implementation**: GradientBoosting classifier (18 features) with heuristic fallback. Concept drift detection via ADWIN algorithm. Baseline versioning with migration support.
+### Correlation Engine
+Groups related signals into incidents using IP proximity and temporal windows. Detects multi-stage attack chains (e.g. scan → exploit → exfiltration). Severity escalation based on signal density and attack phase coverage.
+
+### Incident Manager
+Full lifecycle state machine (OPEN → ACTIVE → ESCALATED → MITIGATED → RESOLVED). Feedback loop for false positive correction. Auto-resolution of stale incidents. Discord integration for real-time incident reporting.
+
+### IP Behavior Model
+Per-IP behavioral profiles with exponential moving average baselines. Tracks event volume, protocol distribution, port diversity, pass/block ratio, and hourly patterns. Anomaly detection via z-score deviation from learned baselines.
+
+### Flow Classifier
+GradientBoosting classifier for network flow categorization. Trained on protocol, port, volume, duration, and direction features. Classifies flows as GOOD, SUSPICIOUS, or ABUSIVE with confidence scoring.
 
 ## Notifications
 
@@ -165,6 +182,19 @@ All endpoints served on port 8766. HTTP Basic Auth via `DASHBOARD_API_USER`/`DAS
 | `GET /api/metrics` | Agent metrics (JSON format) |
 | `GET /api/sse` | Server-Sent Events stream for real-time dashboard updates |
 
+### ML-PIVOT Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/behavior-profiles` | Per-IP behavioral profiles with threat scores |
+| `GET /api/behavior-overview` | Combined behavioral overview (profiles + incidents + signals) |
+| `GET /api/flow-classifications` | ML flow classification results |
+| `GET /api/flow-classifications-by-ip` | Flow classifications filtered by IP |
+| `GET /api/signal-bus/stats` | Signal bus statistics and recent signals |
+| `GET /api/incidents` | Correlated incidents with timeline data |
+| `GET /api/incidents/stats` | Incident statistics by severity and phase |
+| `POST /api/incidents/inc_<id>/transition` | Incident state transition |
+
 ## Zero-Downtime Deployment
 
 Blue-green deployment with health-check gating:
@@ -199,7 +229,8 @@ Key environment variables (full list in `.env.example`):
 
 ## CI/CD
 
-- **172 tests** across all modules (adaptive_parser, reverse_dns, ml_learning, rule_classify, statistical_model, apprise_notifier, integration)
+- **172 tests** across all modules (adaptive_parser, reverse_dns, ml_learning, rule_classify, statistical_model, apprise_notifier, integration, ml_pipeline)
+- **17 ML-PIVOT integration tests** (SignalBus, CorrelationEngine, IPBehaviorModel, FlowClassifier, FullPipeline)
 - **Docker build** — Multi-platform images pushed to GHCR on every push to `master`
 - **CodeQL** — Automated security scanning on every commit
 - **Tagged releases** — Images tagged with commit SHA and `latest`
