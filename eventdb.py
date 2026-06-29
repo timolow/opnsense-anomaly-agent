@@ -1315,3 +1315,183 @@ class EventDatabase:
         finally:
             cur.close()
 
+    # ── UniFi controller monitoring methods ─────────────────────────────
+
+    def insert_unifi_event(self, event: Dict) -> Optional[int]:
+        """Insert a UniFi controller event into the unifi_events table.
+        Returns the row ID or None on failure.
+        """
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO unifi_events
+                   (timestamp, event_key, event_type, severity, mac, ip, device, ap, ssid, message, metadata)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (
+                    event.get("timestamp"),
+                    event.get("unifi_event_key", ""),
+                    event.get("event_type", ""),
+                    event.get("severity", "MEDIUM"),
+                    event.get("mac", ""),
+                    event.get("src_ip", ""),
+                    event.get("device", ""),
+                    event.get("ap", ""),
+                    event.get("ssid", ""),
+                    event.get("description", ""),
+                    json.dumps(event.get("metadata", {})),
+                ),
+            )
+            row = cur.fetchone()
+            self._conn.commit()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error("Failed to insert UniFi event: %s", e)
+            return None
+        finally:
+            cur.close()
+
+    def insert_unifi_client(self, client: Dict) -> Optional[int]:
+        """Insert a UniFi client snapshot. Returns row ID or None."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO unifi_clients
+                   (mac, ip, hostname, is_wired, essid, ap_mac, rssi, rx_bytes, tx_bytes, connected_at, metadata)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (
+                    client.get("mac", ""),
+                    client.get("ip", ""),
+                    client.get("hostname", ""),
+                    client.get("is_wired", False),
+                    client.get("essid", ""),
+                    client.get("ap_mac", ""),
+                    client.get("rssi"),
+                    client.get("rx_bytes", 0),
+                    client.get("tx_bytes", 0),
+                    client.get("connected_at"),
+                    json.dumps(client.get("metadata", {})),
+                ),
+            )
+            row = cur.fetchone()
+            self._conn.commit()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error("Failed to insert UniFi client: %s", e)
+            return None
+        finally:
+            cur.close()
+
+    def insert_unifi_device(self, device: Dict) -> Optional[int]:
+        """Insert a UniFi device snapshot. Returns row ID or None."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """INSERT INTO unifi_devices
+                   (device_id, mac, ip, name, model, type, state, adopted, uptime, channel, num_sta, metadata)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (
+                    device.get("device_id", ""),
+                    device.get("mac", ""),
+                    device.get("ip", ""),
+                    device.get("name", ""),
+                    device.get("model", ""),
+                    device.get("type", ""),
+                    device.get("state", ""),
+                    device.get("adopted", False),
+                    device.get("uptime"),
+                    device.get("channel"),
+                    device.get("num_sta", 0),
+                    json.dumps(device.get("metadata", {})),
+                ),
+            )
+            row = cur.fetchone()
+            self._conn.commit()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error("Failed to insert UniFi device: %s", e)
+            return None
+        finally:
+            cur.close()
+
+    def query_unifi_events(self, limit: int = 100) -> List[Dict]:
+        """Get recent UniFi events for dashboard."""
+        cur = self._new_cursor()
+        try:
+            cur.execute(
+                """SELECT id, timestamp, event_key, event_type, severity, mac, ip, device, ap, ssid, message
+                   FROM unifi_events
+                   ORDER BY timestamp DESC LIMIT %s""",
+                (limit,),
+            )
+            if cur.description:
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+                result = []
+                for row in rows:
+                    item = dict(zip(cols, row))
+                    if item.get("timestamp"):
+                        item["timestamp"] = item["timestamp"].isoformat() if hasattr(item["timestamp"], "isoformat") else str(item["timestamp"])
+                    result.append(item)
+                return result
+            return []
+        except Exception as e:
+            logger.error("Failed to query UniFi events: %s", e)
+            return []
+        finally:
+            cur.close()
+
+    def query_unifi_summary(self) -> Dict:
+        """Get UniFi monitoring summary stats for the dashboard."""
+        cur = self._new_cursor()
+        try:
+            # Event counts by severity
+            cur.execute(
+                """SELECT severity, COUNT(*) FROM unifi_events
+                   WHERE timestamp > NOW() - INTERVAL '24 hours'
+                   GROUP BY severity"""
+            )
+            by_severity = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Event counts by type
+            cur.execute(
+                """SELECT event_type, COUNT(*) FROM unifi_events
+                   WHERE timestamp > NOW() - INTERVAL '24 hours'
+                   GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 10"""
+            )
+            by_type = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Unique clients
+            cur.execute(
+                "SELECT COUNT(DISTINCT mac) FROM unifi_clients WHERE last_seen > NOW() - INTERVAL '24 hours'"
+            )
+            unique_clients = cur.fetchone()[0]
+
+            # Unique devices
+            cur.execute(
+                "SELECT COUNT(DISTINCT device_id) FROM unifi_devices WHERE last_seen > NOW() - INTERVAL '24 hours'"
+            )
+            unique_devices = cur.fetchone()[0]
+
+            # Total events last 24h
+            cur.execute(
+                "SELECT COUNT(*) FROM unifi_events WHERE timestamp > NOW() - INTERVAL '24 hours'"
+            )
+            total_events = cur.fetchone()[0]
+
+            return {
+                "total_events_24h": total_events,
+                "by_severity": by_severity,
+                "by_type": by_type,
+                "unique_clients_24h": unique_clients,
+                "unique_devices_24h": unique_devices,
+            }
+        except Exception as e:
+            logger.error("Failed to query UniFi summary: %s", e)
+            return {}
+        finally:
+            cur.close()
+
+
