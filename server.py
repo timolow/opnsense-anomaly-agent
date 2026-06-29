@@ -4490,9 +4490,52 @@ def api_get_incident_groups(severity="low"):
 
 
 def api_incident_stats():
-    """GET /api/incidents/stats — Return incident statistics."""
-    mgr = _get_incident_manager()
-    return mgr.get_stats()
+    """GET /api/incidents/stats — Return incident statistics from DB."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection"}
+
+        import psycopg2.extras
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute("SELECT COUNT(*) FROM incidents")
+        total = cur.fetchone()["count"]
+
+        cur.execute("SELECT COUNT(*) FROM incidents WHERE is_active = TRUE")
+        active = cur.fetchone()["count"]
+
+        cur.execute("""
+            SELECT severity, COUNT(*) as cnt
+            FROM incidents GROUP BY severity
+        """)
+        by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
+
+        cur.execute("""
+            SELECT severity, COUNT(*) as cnt
+            FROM incidents WHERE is_active = TRUE
+            GROUP BY severity
+        """)
+        active_by_severity = {row["severity"]: row["cnt"] for row in cur.fetchall()}
+
+        cur.execute("""
+            SELECT ip, COUNT(*) as cnt
+            FROM incidents WHERE is_active = TRUE
+            GROUP BY ip ORDER BY cnt DESC LIMIT 10
+        """)
+        top_ips = [{"ip": row["ip"], "incident_count": row["cnt"]} for row in cur.fetchall()]
+
+        cur.close()
+        return {
+            "total_incidents": total,
+            "active_incidents": active,
+            "by_severity": by_severity,
+            "active_by_severity": active_by_severity,
+            "top_offending_ips": top_ips,
+        }
+    except Exception as e:
+        logger.error("api_incident_stats failed: %s", e)
+        return {"error": str(e)}
 
 
 def api_transition_incident(inc_id: str, data: dict):
