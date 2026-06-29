@@ -229,14 +229,14 @@ class CorrelationEngine:
     Thread-safe: uses locks for incident dictionary access.
     """
 
-    def __init__(self, db: Any = None, correlation_window: int = 300,
-                 auto_resolve_after: int = 3600, min_signals_escalate: int = 3):
+    def __init__(self, db: Any = None, correlation_window: int = 3600,
+                 auto_resolve_after: int = 86400, min_signals_escalate: int = 3):
         """Initialize correlation engine.
 
         Args:
             db: EventDatabase instance for persistence.
-            correlation_window: Seconds to group signals from same IP (default 300s).
-            auto_resolve_after: Seconds without new signals before auto-resolving (default 3600s).
+            correlation_window: Seconds to group signals from same IP (default 3600s).
+            auto_resolve_after: Seconds without new signals before auto-resolving (default 86400s/24h).
             min_signals_escalate: Minimum signals needed before escalation kicks in.
         """
         self.db = db

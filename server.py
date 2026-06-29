@@ -4409,13 +4409,65 @@ def _get_incident_manager():
 
 
 def api_get_incidents(status=None, ip=None, severity="low", limit=50):
-    """GET /api/incidents — Return filtered incident list."""
-    mgr = _get_incident_manager()
-    incidents = mgr.get_incidents(status=status, ip=ip, min_severity=severity, limit=limit)
-    return {
-        "incidents": incidents,
-        "count": len(incidents),
-    }
+    """GET /api/incidents — Return filtered incident list from DB."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection", "incidents": [], "count": 0}
+
+        import psycopg2.extras
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        query = "SELECT * FROM incidents WHERE 1=1"
+        params = []
+
+        if status == "active":
+            query += " AND is_active = TRUE"
+        elif status == "resolved":
+            query += " AND is_active = FALSE"
+
+        if ip:
+            query += " AND ip = %s"
+            params.append(ip)
+
+        # Severity filter
+        from signal_bus import SEVERITY_ORDER
+        min_rank = SEVERITY_ORDER.get(severity, 0)
+        if min_rank > 0:
+            query += " AND severity IN ("
+            valid_sevs = [s for s, r in SEVERITY_ORDER.items() if r >= min_rank]
+            query += ", ".join(["%s"] * len(valid_sevs))
+            query += ")"
+            params.extend(valid_sevs)
+
+        query += " ORDER BY last_seen DESC LIMIT %s"
+        params.append(limit)
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        incidents = []
+        for row in rows:
+            incidents.append({
+                "id": row.get("id", ""),
+                "ip": row.get("ip", ""),
+                "severity": row.get("severity", "low"),
+                "signal_count": row.get("signal_count", 0),
+                "signal_types": row.get("signal_types", []),
+                "sources": row.get("sources", []),
+                "first_seen": row.get("first_seen"),
+                "last_seen": row.get("last_seen"),
+                "description": row.get("description", ""),
+                "is_active": row.get("is_active", True),
+                "auto_resolved": row.get("auto_resolved", False),
+                "status": "active" if row.get("is_active", True) else "resolved",
+            })
+
+        cur.close()
+        return {"incidents": incidents, "count": len(incidents)}
+    except Exception as e:
+        logger.error("api_get_incidents failed: %s", e)
+        return {"error": str(e), "incidents": [], "count": 0}
 
 
 def api_get_incident(inc_id: str):
