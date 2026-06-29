@@ -5538,18 +5538,64 @@ def api_signal_bus_stats():
 def api_behavior_overview():
     """GET /api/behavior-overview — Combined behavioral overview data."""
     try:
-        profiles = api_behavior_profiles(50, 0)
+        profiles_data = api_behavior_profiles(50, 0)
+        profiles = profiles_data.get("profiles", [])
         incident_stats = api_incident_stats()
+
+        # Derive ip_breakdown from profiles
+        total = len(profiles)
+        hostile = sum(1 for p in profiles if p.get("threat_level") == "hostile")
+        suspicious = sum(1 for p in profiles if p.get("threat_level") == "suspicious")
+        benign = total - hostile - suspicious
+
+        # Top threat IPs
+        sorted_profiles = sorted(profiles, key=lambda p: p.get("behavior_score", 0), reverse=True)[:10]
+        top_threat_ips = [
+            {
+                "ip": p["ip"],
+                "score": p.get("behavior_score", 0),
+                "level": p.get("threat_level", "info"),
+                "events": p.get("total_events", 0),
+            }
+            for p in sorted_profiles
+        ]
+
         return {
-            "profiles": profiles.get("profiles", []),
+            "active_ips_24h": total,
+            "ip_breakdown": {
+                "total": total,
+                "benign": benign,
+                "suspicious": suspicious,
+                "hostile": hostile,
+            },
             "incident_stats": incident_stats,
+            "top_threat_ips": top_threat_ips,
+            "pipeline_health": {
+                "events_per_second": 0,
+                "last_event": "",
+                "db_connected": True,
+                "anomaly_rate": 0,
+            },
+            "behavior_timeline": [],
+            "behavioral_changes": {
+                "new_suspicious_ips": [],
+                "escalated_incidents": [],
+                "resolved_threats": [],
+            },
+            "traffic_flows": [],
             "data_source_status": "live",
         }
     except Exception as e:
         logger.error("api_behavior_overview failed: %s", e)
         return {
-            "profiles": [],
+            "active_ips_24h": 0,
+            "ip_breakdown": {"total": 0, "benign": 0, "suspicious": 0, "hostile": 0},
             "incident_stats": {},
+            "top_threat_ips": [],
+            "pipeline_health": {"events_per_second": 0, "last_event": "", "db_connected": False, "anomaly_rate": 0},
+            "behavior_timeline": [],
+            "behavioral_changes": {"new_suspicious_ips": [], "escalated_incidents": [], "resolved_threats": []},
+            "traffic_flows": [],
             "data_source_status": "error",
             "empty_message": str(e),
         }
