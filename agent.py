@@ -659,6 +659,8 @@ class OPNsenseAgent:
         _signal_callback_count = [0]  # Mutable counter for closure
         def _on_signal(sig):
             _signal_callback_count[0] += 1
+            print(f"DEBUG _on_signal #{_signal_callback_count[0]}: src={sig.source} type={sig.signal_type}")
+            sys.stdout.flush()
             if _signal_callback_count[0] <= 3:
                 logger.info("DEBUG _on_signal #%d: src=%s type=%s sev=%s ip=%s",
                            _signal_callback_count[0], sig.source, sig.signal_type, sig.severity, sig.ip)
