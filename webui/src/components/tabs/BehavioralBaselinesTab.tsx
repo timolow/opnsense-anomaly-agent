@@ -8,11 +8,10 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CYBER, severityStyle } from '@/utils/colors';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
-import CanvasAreaChart from '@/components/charts/CanvasAreaChart';
 import { BehavioralBaselinesSkeleton } from '@/components/SkeletonLoaders';
 import {
   Activity, TrendingUp, TrendingDown, AlertTriangle, Clock,
-  TrendingUp, Network, RefreshCw, ShieldCheck, Filter,
+  Network, RefreshCw, ShieldCheck, Filter,
   Database, Zap, ArrowUpRight, ArrowDownRight, Minus,
 } from 'lucide-react';
 
@@ -81,7 +80,6 @@ function SourceChart({ data }: { data: SignalSourceBreakdown[] }) {
       <CanvasBarChart
         data={sorted.map(d => ({ name: d.source, value: d.count, color: CYBER.accent }))}
         height={180}
-        horizontal={true}
       />
     </div>
   );
