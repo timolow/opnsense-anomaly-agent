@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -872,9 +872,93 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+
+    # ------------------------------------------------------------------
+    # V19: UniFi controller monitoring
+    #      Track UniFi network events, clients, devices, and anomalies
+    # ------------------------------------------------------------------
+    {
+        "version": 19,
+        "description": "Add UniFi controller monitoring tables",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS unifi_events (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                event_key TEXT NOT NULL DEFAULT '',
+                event_type TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'MEDIUM',
+                mac TEXT,
+                ip TEXT,
+                device TEXT,
+                ap TEXT,
+                ssid TEXT,
+                message TEXT,
+                metadata JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_unifi_events_ts ON unifi_events(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_unifi_events_type ON unifi_events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_unifi_events_mac ON unifi_events(mac);
+            CREATE INDEX IF NOT EXISTS idx_unifi_events_severity ON unifi_events(severity);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS unifi_clients (
+                id SERIAL PRIMARY KEY,
+                mac TEXT NOT NULL,
+                ip TEXT,
+                hostname TEXT,
+                is_wired BOOLEAN DEFAULT FALSE,
+                essid TEXT,
+                ap_mac TEXT,
+                rssi INTEGER,
+                rx_bytes BIGINT DEFAULT 0,
+                tx_bytes BIGINT DEFAULT 0,
+                connected_at TIMESTAMPTZ,
+                last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                metadata JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_unifi_clients_mac ON unifi_clients(mac);
+            CREATE INDEX IF NOT EXISTS idx_unifi_clients_last_seen ON unifi_clients(last_seen DESC);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS unifi_devices (
+                id SERIAL PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                mac TEXT,
+                ip TEXT,
+                name TEXT,
+                model TEXT,
+                type TEXT,
+                state TEXT,
+                adopted BOOLEAN DEFAULT FALSE,
+                uptime INTEGER,
+                channel INTEGER,
+                num_sta INTEGER DEFAULT 0,
+                metadata JSONB,
+                last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_unifi_devices_id ON unifi_devices(device_id);
+            CREATE INDEX IF NOT EXISTS idx_unifi_devices_last_seen ON unifi_devices(last_seen DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_unifi_events_meta ON unifi_events USING GIN (metadata);
+            CREATE INDEX IF NOT EXISTS idx_unifi_clients_meta ON unifi_clients USING GIN (metadata);
+            CREATE INDEX IF NOT EXISTS idx_unifi_devices_meta ON unifi_devices USING GIN (metadata);
+            """,
+        ],
+    },
 ]
 
-
+# =============================================================================
 # =============================================================================
 # Migration hooks — Python-level logic that replaces DO $$ blocks
 # =============================================================================
