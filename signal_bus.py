@@ -387,7 +387,7 @@ class SignalBus:
                        signal.source, signal.signal_type)
             return
 
-        total_subs = sum(len(v) for v in subscribers_copy.items())
+        total_subs = sum(len(v) for v in subscribers_copy.values())
         matched = 0
         for event, callbacks in subscribers_copy.items():
             is_match = self._matches(event, signal)

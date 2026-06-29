@@ -428,7 +428,8 @@ class CorrelationEngine:
             })
 
             # Check if incident already exists in DB
-            cur = self.db.execute(
+            cur = self.db._new_cursor()
+            cur.execute(
                 "SELECT id FROM incidents WHERE ip = %s AND is_active = TRUE",
                 (incident.ip,),
             )
@@ -436,7 +437,7 @@ class CorrelationEngine:
 
             if row:
                 # Update existing
-                self.db.execute(
+                cur.execute(
                     """UPDATE incidents SET
                        severity = %s, signal_count = %s, signal_types = %s,
                        sources = %s, phases = %s, last_seen = to_timestamp(%s),
@@ -451,7 +452,7 @@ class CorrelationEngine:
                 )
             else:
                 # Insert new
-                self.db.execute(
+                cur.execute(
                     """INSERT INTO incidents
                        (ip, severity, signal_count, signal_types, sources,
                         phases, first_seen, last_seen, description, metadata)
@@ -464,6 +465,7 @@ class CorrelationEngine:
                      incident.first_seen, incident.last_seen,
                      incident.get_description(), metadata),
                 )
+            cur.close()
 
         except Exception as e:
             logger.warning("Failed to persist incident for %s: %s", incident.ip, e)
