@@ -363,6 +363,43 @@ export function DnsQueriesSkeleton() {
   );
 }
 
+// ── NginxTab Skeleton ──
+// Layout: header → stat cards → anomaly table
+export function NginxSkeleton() {
+  return (
+    <div className="space-y-4">
+      <TabHeaderSkeleton />
+      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
+      <TableSkeleton rows={8} />
+    </div>
+  );
+}
+
+// ── Behavioral Overview Skeleton ──
+export function BehavioralOverviewSkeleton() {
+  return (
+    <div className="space-y-6">
+      <SkeletonBlock className="h-10" />
+      <StatCardSkeleton count={4} cols="lg:grid-cols-4" />
+      <SkeletonBlock className="h-24" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <ChartSkeleton height={200} />
+        </div>
+        <SkeletonBlock style={{ height: 260 }} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SkeletonBlock style={{ height: 280 }} />
+        <SkeletonBlock style={{ height: 280 }} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SkeletonBlock style={{ height: 200 }} />
+        <SkeletonBlock style={{ height: 200 }} />
+      </div>
+    </div>
+  );
+}
+
 // ── Skeleton dispatch by tab key ──
 const SKELETON_MAP: Record<string, React.ComponentType> = {
   overview: OverviewSkeleton,
@@ -384,6 +421,7 @@ const SKELETON_MAP: Record<string, React.ComponentType> = {
   network: NetworkSkeleton,
   'wan-flap': WanFlapSkeleton,
   nginx: NginxSkeleton,
+  'behavioral-overview': BehavioralOverviewSkeleton,
 };
 
 /**

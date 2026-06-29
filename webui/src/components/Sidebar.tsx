@@ -32,6 +32,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'heatmap', label: 'Heatmap', icon: <Flame size={14} /> },
       { id: 'traffic', label: 'Traffic', icon: <Network size={14} /> },
+      { id: 'behavioral-overview', label: 'Behavioral', icon: <Activity size={14} /> },
     ],
   },
   {
@@ -39,6 +40,13 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <ShieldAlert size={16} />,
     items: [
       { id: 'alerts', label: 'Alerts', icon: <ShieldAlert size={14} /> },
+    ],
+  },
+  {
+    name: 'Rules',
+    icon: <TrendingUp size={16} />,
+    items: [
+      { id: 'rules-classified', label: 'Rules ML', icon: <TrendingUp size={14} /> },
     ],
   },
   {
@@ -80,7 +88,9 @@ export default function Sidebar() {
     overview: 'Overview',
     heatmap: 'Analytics',
     traffic: 'Analytics',
+    'behavioral-overview': 'Analytics',
     alerts: 'Threats',
+    'rules-classified': 'Rules',
     network: 'Network',
     'wan-flap': 'Network',
     logs: 'Logs',

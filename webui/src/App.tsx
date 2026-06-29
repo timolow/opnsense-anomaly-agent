@@ -15,23 +15,26 @@ import OverviewTab from './components/tabs/OverviewTab';
 import HeatmapTab from './components/tabs/HeatmapTab';
 import TrafficTab from './components/tabs/TrafficTab';
 import AlertsTab from './components/tabs/AlertsTab';
-
+import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
 import NetworkTab from './components/tabs/NetworkTab';
 import WanFlapTab from './components/tabs/WanFlapTab';
 import LogsTab from './components/tabs/LogsTab';
 import ServicesViewTab from './components/tabs/ServicesViewTab';
 import SettingsTab from './components/tabs/SettingsTab';
+import BehavioralOverviewTab from './components/tabs/BehavioralOverviewTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Dashboard',
   heatmap: 'Heatmap',
   traffic: 'Traffic',
   alerts: 'Alerts',
+  'rules-classified': 'Rules ML',
   network: 'Network',
   'wan-flap': 'WAN Flap',
   logs: 'Logs',
   services: 'Services',
   settings: 'Settings',
+  'behavioral-overview': 'Behavioral Overview',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -44,11 +47,13 @@ function TabContent({ tab }: { tab: string }) {
           case 'heatmap': return <HeatmapTab />;
           case 'traffic': return <TrafficTab />;
           case 'alerts': return <AlertsTab />;
+          case 'rules-classified': return <RulesClassifiedTab />;
           case 'network': return <NetworkTab />;
           case 'wan-flap': return <WanFlapTab />;
           case 'logs': return <LogsTab />;
           case 'services': return <ServicesViewTab />;
           case 'settings': return <SettingsTab />;
+          case 'behavioral-overview': return <BehavioralOverviewTab />;
           case '': return <OverviewTab />;
           default: return <OverviewTab />;
         }
@@ -78,12 +83,11 @@ export default function App() {
       const hash = window.location.hash.slice(1).replace(/^\//, '');
       const map: Record<string, string> = {
         // Legacy redirects to new merged tabs
-        // Rules ML tab removed — redirects to alerts
-        'firewall-rules': 'alerts',
-        'firerules': 'alerts',
-        'rules-ml': 'alerts',
-        'rulesml': 'alerts',
-        'rules': 'alerts',
+        'firewall-rules': 'rules-classified',
+        'firerules': 'rules-classified',
+        'rules-ml': 'rules-classified',
+        'rulesml': 'rules-classified',
+        'rules': 'rules-classified',
         'flow-map': 'traffic',
         'flowmap': 'traffic',
         'flows': 'traffic',

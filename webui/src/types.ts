@@ -381,7 +381,7 @@ export interface RulesClassifiedData {
     rules_trained: number;
     last_training: string;
     accuracy: number;
-    self_learning_enabled: boolean;
+    self_learning_enabled?: boolean;
     portscan_threshold: number;
     bruteforce_threshold: number;
     sensitivity: string;
@@ -599,6 +599,94 @@ export interface DnsQueryData {
   total: number;
   top_domains: Array<{ domain: string; count: number }>;
   top_clients: Array<{ client_ip: string; count: number }>;
+  data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+  empty_message?: string;
+}
+
+// ═══════════════════════════════════════════════════
+// Behavioral Overview types (ML-PIVOT)
+// ═══════════════════════════════════════════════════
+
+export type BehaviorLevel = 'benign' | 'suspicious' | 'hostile';
+
+export interface BehaviorProfile {
+  ip: string;
+  behavior_score: number;       // 0-100
+  threat_level: BehaviorLevel;
+  event_count_24h: number;
+  unique_ports: number;
+  blocked_count: number;
+  passed_count: number;
+  first_seen: string;
+  last_seen: string;
+  classification: string;       // GOOD | ABUSIVE | SUSPICIOUS | UNCERTAIN
+  top_rules: Array<{ rule: string; count: number }>;
+}
+
+export interface BehaviorTimelinePoint {
+  time: string;
+  benign: number;
+  suspicious: number;
+  hostile: number;
+  avg_score: number;
+}
+
+export interface BehaviorTimelineData {
+  timeline: BehaviorTimelinePoint[];
+}
+
+export interface IncidentStats {
+  active: number;
+  escalated_24h: number;
+  resolved_24h: number;
+  by_severity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+  by_type: Array<{ type: string; count: number }>;
+  recent: Array<{
+    id: string;
+    type: string;
+    severity: string;
+    source_ip: string;
+    description: string;
+    timestamp: string;
+    status: 'active' | 'escalated' | 'resolved';
+  }>;
+}
+
+export interface BehaviorIpBreakdown {
+  total: number;
+  benign: number;
+  suspicious: number;
+  hostile: number;
+}
+
+export interface BehaviorOverviewData {
+  active_ips_24h: number;
+  ip_breakdown: BehaviorIpBreakdown;
+  incident_stats: IncidentStats;
+  top_threat_ips: Array<{ ip: string; score: number; level: BehaviorLevel; events: number }>;
+  pipeline_health: {
+    events_per_second: number;
+    last_event: string;
+    db_connected: boolean;
+    anomaly_rate: number;
+  };
+  behavior_timeline: BehaviorTimelinePoint[];
+  behavioral_changes: {
+    new_suspicious_ips: Array<{ ip: string; score: number }>;
+    escalated_incidents: Array<{ type: string; severity: string }>;
+    resolved_threats: Array<{ type: string; timestamp: string }>;
+  };
+  traffic_flows: Array<{
+    src_category: string;
+    dst_category: string;
+    behavior_level: BehaviorLevel;
+    event_count: number;
+  }>;
   data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
   empty_message?: string;
 }
