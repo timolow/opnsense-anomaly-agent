@@ -237,10 +237,6 @@ class SignalBus:
         Returns:
             Signal object (may be used by caller for reference).
         """
-        # CRITICAL DEBUG - count emits
-        if self._total_emitted < 10 or self._total_emitted == 1000 or self._total_emitted == 5000:
-            print(f"SIGNAL_BUS: emit #{self._total_emitted}: source={source} type={signal_type} subs={len(self._subscribers)}")
-            sys.stdout.flush()
         if not self._running:
             logger.warning("SignalBus is shut down, dropping signal: %s/%s",
                           source, signal_type)
@@ -277,10 +273,6 @@ class SignalBus:
         self._persist(signal)
 
         # Route to subscribers
-        if self._total_emitted <= 3 or self._total_emitted % 100 == 0:
-            logger.info("SignalBus.emit #%d: routing %s/%s (subscribers=%d)",
-                       self._total_emitted, signal.source, signal.signal_type,
-                       sum(len(v) for v in self._subscribers.values()))
         self._route(signal)
 
         return signal
@@ -383,26 +375,19 @@ class SignalBus:
             subscribers_copy = dict(self._subscribers)
 
         if not subscribers_copy:
-            logger.info("SignalBus._route: NO subscribers for %s/%s — callback may not be registered", 
-                       signal.source, signal.signal_type)
+            logger.debug("SignalBus._route: no subscribers for %s/%s", signal.source, signal.signal_type)
             return
 
         total_subs = sum(len(v) for v in subscribers_copy.values())
         matched = 0
         for event, callbacks in subscribers_copy.items():
-            is_match = self._matches(event, signal)
-            if is_match:
+            if self._matches(event, signal):
                 for callback in callbacks:
                     try:
                         callback(signal)
                         matched += 1
                     except Exception as e:
                         logger.error("Signal subscriber error for %s: %s", event, e)
-        
-        # Log first few routing events for debugging
-        if self._total_emitted <= 5:
-            print(f"SIGNAL_ROUTE: event={event} matched={is_match} total_matched={matched} total_subs={total_subs}")
-            sys.stdout.flush()
         # Log routing stats periodically
         if self._total_emitted % 1000 == 0:
             logger.info("SignalBus routing stats: total_emitted=%d, subscribers=%d, last_match=%s (matched=%d)",

@@ -273,20 +273,9 @@ class CorrelationEngine:
         if not ip:
             return None
 
-        # Debug trace first few signals
-        if self._total_signals_processed <= 5:
-            import sys as _sys
-            print(f"DEBUG process_signal #{self._total_signals_processed}: ip={ip} sev={signal.severity} type={signal.signal_type} db={self.db is not None}")
-            _sys.stdout.flush()
-
         with self._lock:
             # Find or create active incident for this IP
             incident = self._find_or_create_incident(ip, signal)
-
-        if incident and self._total_signals_processed <= 5:
-            import sys as _sys
-            print(f"DEBUG process_signal result: incident ip={incident.ip} count={incident.signal_count} severity={incident.severity}")
-            _sys.stdout.flush()
 
         # Notify callbacks
         for cb in self._callbacks:

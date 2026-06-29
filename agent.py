@@ -656,19 +656,8 @@ class OPNsenseAgent:
 
         # Correlation engine — groups signals into incidents
         self.correlation_engine = CorrelationEngine(self.db)
-        _signal_callback_count = [0]  # Mutable counter for closure
         def _on_signal(sig):
-            _signal_callback_count[0] += 1
-            try:
-                if _signal_callback_count[0] <= 3:
-                    logger.info("DEBUG _on_signal #%d: src=%s type=%s sev=%s ip=%s",
-                               _signal_callback_count[0], sig.source, sig.signal_type, sig.severity, sig.ip)
-                result = self.correlation_engine.process_signal(sig)
-                if result is not None and _signal_callback_count[0] <= 3:
-                    logger.info("DEBUG _on_signal result: incident ip=%s severity=%s count=%d",
-                               result.ip, result.severity, result.signal_count)
-            except Exception as e:
-                logger.error("CRITICAL: _on_signal callback FAILED: %s", e, exc_info=True)
+            self.correlation_engine.process_signal(sig)
         self.signal_bus.subscribe("all", _on_signal)
         logger.info("Signal bus subscribed: _on_signal callback registered for correlation engine")
 
