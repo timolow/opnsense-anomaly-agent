@@ -211,6 +211,87 @@ export default function SettingsTab() {
         </div>
       </div>
 
+      {/* UniFi Controller */}
+      <div className="cyber-card p-4">
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">UniFi Controller</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="text-xs text-cyber-textMuted block mb-1">Enable UniFi Monitoring</label>
+            <select
+              value={settings.unifi_enabled === 'true' ? 'true' : 'false'}
+              onChange={(e) => setSettings({ ...settings, unifi_enabled: e.target.value })}
+              className="cyber-select"
+            >
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-cyber-textMuted block mb-1">Controller Host</label>
+            <input
+              type="text"
+              placeholder="192.168.1.2"
+              value={settings.unifi_host || ''}
+              onChange={(e) => setSettings({ ...settings, unifi_host: e.target.value })}
+              className="cyber-input font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-cyber-textMuted block mb-1">Port</label>
+            <input
+              type="number"
+              placeholder="8443"
+              value={settings.unifi_port || 8443}
+              onChange={(e) => setSettings({ ...settings, unifi_port: parseInt(e.target.value) })}
+              className="cyber-input font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-cyber-textMuted block mb-1">Username</label>
+            <input
+              type="text"
+              placeholder="admin"
+              value={settings.unifi_user || ''}
+              onChange={(e) => setSettings({ ...settings, unifi_user: e.target.value })}
+              className="cyber-input font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-cyber-textMuted block mb-1">Password</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={settings.unifi_pass || ''}
+              onChange={(e) => setSettings({ ...settings, unifi_pass: e.target.value })}
+              className="cyber-input font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-cyber-textMuted block mb-1">Site</label>
+            <input
+              type="text"
+              placeholder="default"
+              value={settings.unifi_site || 'default'}
+              onChange={(e) => setSettings({ ...settings, unifi_site: e.target.value })}
+              className="cyber-input font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-cyber-textMuted block mb-1">Poll Interval (seconds)</label>
+            <input
+              type="number"
+              placeholder="60"
+              value={settings.unifi_poll_interval || 60}
+              onChange={(e) => setSettings({ ...settings, unifi_poll_interval: parseInt(e.target.value) })}
+              className="cyber-input font-mono text-xs"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-cyber-textMuted mt-3">
+          Configured here and saved to docker-compose env vars. Restart the agent container after enabling.
+        </p>
+      </div>
+
       {/* Data Management */}
       <div className="cyber-card p-4">
         <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4">Data Management</h3>

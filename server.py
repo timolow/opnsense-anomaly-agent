@@ -3483,8 +3483,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "portscan_window": os.getenv("PORTSCAN_WINDOW", "60"),
                 "bruteforce_threshold": os.getenv("BRUTEFORCE_THRESHOLD", "50"),
                 "sensitivity": os.getenv("SENSITIVITY", "medium"),
+                "syn_threshold": os.getenv("SYN_THRESHOLD", "100"),
                 "events_processed": counters.get("event_count", 0),
                 "anomalies_detected": counters.get("anomaly_count", 0),
+                # UniFi controller config
+                "unifi_enabled": os.getenv("UNIFI_ENABLED", "false"),
+                "unifi_host": os.getenv("UNIFI_HOST", ""),
+                "unifi_port": os.getenv("UNIFI_PORT", "8443"),
+                "unifi_user": os.getenv("UNIFI_USER", ""),
+                "unifi_pass": os.getenv("UNIFI_PASS", ""),
+                "unifi_site": os.getenv("UNIFI_SITE", "default"),
+                "unifi_poll_interval": os.getenv("UNIFI_POLL_INTERVAL", "60"),
             })
         except Exception as e:
             self._send_json({'error': str(e)}, 500)
@@ -3958,7 +3967,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "message": "Drain triggered" if drained else "Drain timed out"
             })
             return
-        if path == "/api/mutes":
+        elif path == "/api/settings":
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {}
+            try:
+                result = api_save_settings(data)
+                self._send_json(result)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        elif path == "/api/mutes":
             cl = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(cl)
             data = json.loads(body)
@@ -5753,6 +5774,47 @@ def api_signal_bus_stats():
     except Exception as e:
         logger.error("api_signal_bus_stats failed: %s", e)
         return {"total_signals": 0, "by_source": {}, "by_severity": {}, "recent": []}
+
+
+def api_save_settings(data: dict):
+    """POST /api/settings — Save settings to .env file (restart required to apply)."""
+    try:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        env_vars = {
+            "SENSITIVITY": str(data.get("sensitivity", "medium")),
+            "PORTSCAN_WINDOW": str(data.get("portscan_window", "60")),
+            "BRUTEFORCE_THRESHOLD": str(data.get("bruteforce_threshold", "50")),
+            "SYN_THRESHOLD": str(data.get("syn_threshold", "100")),
+            "UNIFI_ENABLED": str(data.get("unifi_enabled", "false")),
+            "UNIFI_HOST": str(data.get("unifi_host", "")),
+            "UNIFI_PORT": str(data.get("unifi_port", "8443")),
+            "UNIFI_USER": str(data.get("unifi_user", "")),
+            "UNIFI_PASS": str(data.get("unifi_pass", "")),
+            "UNIFI_SITE": str(data.get("unifi_site", "default")),
+            "UNIFI_POLL_INTERVAL": str(data.get("unifi_poll_interval", "60")),
+        }
+        # Read existing .env to preserve other keys
+        existing = {}
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        existing[k.strip()] = v.strip()
+        existing.update(env_vars)
+        with open(env_path, "w") as f:
+            for k, v in existing.items():
+                f.write(f"{k}={v}\n")
+        os.environ.update(env_vars)
+        return {
+            "ok": True,
+            "message": "Settings saved. Restart agent container for changes to take effect.",
+            "saved_keys": list(env_vars.keys()),
+        }
+    except Exception as e:
+        logger.error("api_save_settings failed: %s", e)
+        return {"ok": False, "error": str(e)}
 
 
 def api_pipeline_health():
