@@ -47,8 +47,9 @@ export default function CanvasPieChart({ data, height = 250, outerRadius = 80, i
 
     const cx = w / 2;
     const cy = h / 2;
-    const outer = Math.min(outerRadius, Math.min(w, h) / 2 - 20);
-    const inner = Math.min(innerRadius, outer * 0.6);
+    const outer = Math.max(10, Math.min(outerRadius, Math.min(w, h) / 2 - 20));
+    const inner = Math.max(5, Math.min(innerRadius, outer * 0.6));
+    if (outer <= 10 || w === 0 || h === 0) return;
 
     const allSlices = slices();
     (dataRef.current as any)._slices = allSlices;
