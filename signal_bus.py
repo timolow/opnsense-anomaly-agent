@@ -54,7 +54,7 @@ SOURCE_FIREWALL = "firewall"
 SOURCE_ATTACK_DETECTOR = "attack_detector"
 SOURCE_BEHAVIOR_PROFILER = "behavior_profiler"
 SOURCE_FLOW_CLASSIFIER = "flow_classifier"
-SOURCE_BASLINE_ENGINE = "baseline_engine"
+SOURCE_BASELINE_ENGINE = "baseline_engine"
 SOURCE_ANOMALY_DETECTOR = "anomaly_detector"
 SOURCE_NGINX = "nginx"
 SOURCE_IDS = "ids"
@@ -94,8 +94,8 @@ SIGNAL_TYPES = {
     "flow_exploit": {"source": SOURCE_FLOW_CLASSIFIER, "default_severity": SEVERITY_CRITICAL},
 
     # Baseline engine signals
-    "baseline_volume_spike": {"source": SOURCE_BASLINE_ENGINE, "default_severity": SEVERITY_MEDIUM},
-    "baseline_pattern_change": {"source": SOURCE_BASLINE_ENGINE, "default_severity": SEVERITY_LOW},
+    "baseline_volume_spike": {"source": SOURCE_BASELINE_ENGINE, "default_severity": SEVERITY_MEDIUM},
+    "baseline_pattern_change": {"source": SOURCE_BASELINE_ENGINE, "default_severity": SEVERITY_LOW},
 
     # Anomaly detector signals
     "anomaly_volume": {"source": SOURCE_ANOMALY_DETECTOR, "default_severity": SEVERITY_MEDIUM},
@@ -104,21 +104,24 @@ SIGNAL_TYPES = {
     "anomaly_port_scan": {"source": SOURCE_ANOMALY_DETECTOR, "default_severity": SEVERITY_MEDIUM},
 
     # Nginx signals
-    "http_attack": {"source": SOURCE_NGINX, "default_severity": SEVERITY_HIGH},
+    "path_traversal": {"source": SOURCE_NGINX, "default_severity": SEVERITY_CRITICAL},
     "http_brute_force": {"source": SOURCE_NGINX, "default_severity": SEVERITY_HIGH},
-    "path_probe": {"source": SOURCE_NGINX, "default_severity": SEVERITY_MEDIUM},
-    "http_404_spike": {"source": SOURCE_NGINX, "default_severity": SEVERITY_MEDIUM},
+    "http_scan": {"source": SOURCE_NGINX, "default_severity": SEVERITY_MEDIUM},
+    "http_ddos": {"source": SOURCE_NGINX, "default_severity": SEVERITY_HIGH},
+    "invalid_ua": {"source": SOURCE_NGINX, "default_severity": SEVERITY_LOW},
 
     # IDS signals
-    "ids_signature_hit": {"source": SOURCE_IDS, "default_severity": SEVERITY_HIGH},
+    "ids_new_signature": {"source": SOURCE_IDS, "default_severity": SEVERITY_MEDIUM},
     "ids_signature_spike": {"source": SOURCE_IDS, "default_severity": SEVERITY_HIGH},
-    "new_ids_signature": {"source": SOURCE_IDS, "default_severity": SEVERITY_MEDIUM},
+    "ids_target_change": {"source": SOURCE_IDS, "default_severity": SEVERITY_HIGH},
+    "ids_cross_network": {"source": SOURCE_IDS, "default_severity": SEVERITY_HIGH},
 
     # ZenArmor signals
-    "policy_violation": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_HIGH},
-    "content_block": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_MEDIUM},
     "new_policy": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_INFO},
     "policy_change": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_MEDIUM},
+    "block_spike": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_HIGH},
+    "mixed_policy": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_LOW},
+    "system_block_spike": {"source": SOURCE_ZENARMOR, "default_severity": SEVERITY_HIGH},
 
     # Geo signals
     "new_country": {"source": SOURCE_GEO, "default_severity": SEVERITY_LOW},
@@ -139,7 +142,10 @@ SIGNAL_TYPES = {
     "service_down": {"source": SOURCE_SERVICE_MONITOR, "default_severity": SEVERITY_HIGH},
     "service_recovery": {"source": SOURCE_SERVICE_MONITOR, "default_severity": SEVERITY_INFO},
     "wan_flap": {"source": SOURCE_WAN_FLAP, "default_severity": SEVERITY_HIGH},
-    "system_anomaly": {"source": SOURCE_SYSTEM_LOG, "default_severity": SEVERITY_MEDIUM},
+    "new_service": {"source": SOURCE_SYSTEM_LOG, "default_severity": SEVERITY_MEDIUM},
+    "system_volume_spike": {"source": SOURCE_SYSTEM_LOG, "default_severity": SEVERITY_MEDIUM},
+    "error_burst": {"source": SOURCE_SYSTEM_LOG, "default_severity": SEVERITY_MEDIUM},
+    "high_ip_diversity": {"source": SOURCE_SYSTEM_LOG, "default_severity": SEVERITY_MEDIUM},
 
     # Correlation signals (internal)
     "attack_chain": {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_CRITICAL},

@@ -674,7 +674,7 @@ class OPNsenseAgent:
         self.signal_bus = SignalBus(self.db)
 
         # Correlation engine — groups signals into incidents
-        self.correlation_engine = CorrelationEngine(self.db)
+        self.correlation_engine = CorrelationEngine(self.db, signal_bus=self.signal_bus)
         def _on_signal(sig):
             self.correlation_engine.process_signal(sig)
         self.signal_bus.subscribe("all", _on_signal)
@@ -695,7 +695,7 @@ class OPNsenseAgent:
         self.ids_analyzer = IDSSignatureAnalyzer()
 
         # Nginx web server monitor — tracks requests, detects attacks
-        self.nginx_monitor = NginxMonitor()
+        self.nginx_monitor = NginxMonitor(signal_bus=self.signal_bus)
         self.nginx_monitor.db = self.db
 
         # UniFi controller monitor — polls API for events, clients, devices
@@ -1302,11 +1302,26 @@ class OPNsenseAgent:
         
         for anomaly in anomalies:
             self.anomaly_count += 1
+            anomaly_type = anomaly.get('type', 'SYSTEM_ANOMALY').lower().replace(' ', '_')
+            signal_type = (
+                {'NEW_SERVICE': 'new_service', 'VOLUME_SPIKE': 'system_volume_spike', 'ERROR_BURST': 'error_burst', 'HIGH_IP_DIVERSITY': 'high_ip_diversity'}
+                .get(anomaly_type, anomaly_type) or 'system_anomaly'
+            )
             slogger.warning(
                 "System log anomaly detected",
-                attack_type=anomaly.get('type'),
+                attack_type=anomaly_type,
                 severity=anomaly.get('severity', 'medium'),
                 description=anomaly.get('description', ''),
+            )
+            self.signal_bus.emit(
+                source="system_log",
+                signal_type=signal_type,
+                severity=anomaly.get('severity', 'medium').lower(),
+                ip=anomaly.get('src_ip', ''),
+                metadata={
+                    "service": anomaly.get('service'),
+                    "description": anomaly.get('description', ''),
+                },
             )
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
@@ -1324,6 +1339,16 @@ class OPNsenseAgent:
                 attack_type=anomaly.get('type'),
                 severity=anomaly.get('severity', 'medium'),
                 description=anomaly.get('description', ''),
+            )
+            self.signal_bus.emit(
+                source="service_monitor",
+                signal_type=anomaly.get('signal_type', anomaly.get('type', 'service_anomaly').lower().replace(' ', '_')),
+                severity=anomaly.get('severity', 'medium').lower(),
+                ip=anomaly.get('src_ip', ''),
+                metadata={
+                    "service": anomaly.get('service'),
+                    "description": anomaly.get('description', ''),
+                },
             )
 
     # ── mute list helpers (cached) ───────────────────────────────────
@@ -1438,6 +1463,18 @@ class OPNsenseAgent:
                     if alert:
                         self.anomaly_count += 1
                         logger.warning("WAN flap detected: %s — %s", name, alert['description'])
+                        self.signal_bus.emit(
+                            source="wan_flap",
+                            signal_type="wan_flap",
+                            severity=alert.get('severity', 'high').lower(),
+                            ip='',
+                            metadata={
+                                "gateway": name,
+                                "flap_count": alert.get('flap_count'),
+                                "current_state": alert.get('current_state'),
+                                "description": alert.get('description', ''),
+                            },
+                        )
                         self.discord_bot.send_alert(alert)
                         self.apprise_notifier.send_alert(alert)
                 
@@ -1455,6 +1492,24 @@ class OPNsenseAgent:
         for anomaly in anomalies:
             self.anomaly_count += 1
             logger.info("ZenArmor anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            # Map anomaly types to signal types
+            zen_signal_map = {
+                'NEW_POLICY': 'new_policy',
+                'POLICY_CHANGE': 'policy_change',
+                'BLOCK_SPIKE': 'block_spike',
+                'MIXED_POLICY': 'mixed_policy',
+                'SYSTEM_BLOCK_SPIKE': 'system_block_spike',
+            }
+            self.signal_bus.emit(
+                source="zenarmor",
+                signal_type=zen_signal_map.get(anomaly.get('type', ''), anomaly.get('type', 'policy_violation').lower().replace(' ', '_') or 'policy_violation'),
+                severity=anomaly.get('severity', 'medium').lower(),
+                ip='',
+                metadata={
+                    "policy_name": anomaly.get('policy_name'),
+                    "description": anomaly.get('description', ''),
+                },
+            )
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
 
@@ -1467,6 +1522,25 @@ class OPNsenseAgent:
         for anomaly in anomalies:
             self.anomaly_count += 1
             logger.info("IDS anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
+            # Map anomaly types to signal types
+            ids_signal_map = {
+                'NEW_SIGNATURE': 'ids_new_signature',
+                'SIGNATURE_SPIKE': 'ids_signature_spike',
+                'TARGET_CHANGE': 'ids_target_change',
+                'CROSS_NETWORK': 'ids_cross_network',
+                'MULTIPLE_NEW_SIGNATURES': 'ids_new_signature',
+            }
+            self.signal_bus.emit(
+                source="ids",
+                signal_type=ids_signal_map.get(anomaly.get('type', ''), anomaly.get('type', 'ids_alert').lower().replace(' ', '_') or 'ids_alert'),
+                severity=anomaly.get('severity', 'medium').lower(),
+                ip=anomaly.get('src_ip', ''),
+                metadata={
+                    "signature": anomaly.get('signature'),
+                    "priority": anomaly.get('priority'),
+                    "description": anomaly.get('description', ''),
+                },
+            )
             self.discord_bot.send_alert(anomaly)
             self.apprise_notifier.send_alert(anomaly)
 
@@ -1634,6 +1708,26 @@ class OPNsenseAgent:
                                     continue
                                 self.anomaly_count += 1
                                 logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
+                                # Emit signal to signal bus
+                                anomaly_type = anomaly.get("type", "unknown")
+                                anomaly_signal_map = {
+                                    "volume_spike": "anomaly_volume",
+                                    "temporal_anomaly": "anomaly_temporal",
+                                    "new_ip": "anomaly_new_ip",
+                                    "port_scan": "anomaly_port_scan",
+                                }
+                                self.signal_bus.emit(
+                                    source="anomaly_detector",
+                                    signal_type=anomaly_signal_map.get(anomaly_type, anomaly_type) or anomaly_type,
+                                    severity=anomaly.get("severity", "medium").lower(),
+                                    ip=anomaly.get("src_ip", ""),
+                                    metadata={
+                                        "description": anomaly.get("description", ""),
+                                        "z_score": anomaly.get("z_score"),
+                                        "dst_ip": anomaly.get("dst_ip"),
+                                        "dst_port": anomaly.get("dst_port"),
+                                    },
+                                )
                                 # Save anomaly to database
                                 anomaly_id = None
                                 try:

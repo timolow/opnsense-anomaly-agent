@@ -229,17 +229,19 @@ class CorrelationEngine:
     Thread-safe: uses locks for incident dictionary access.
     """
 
-    def __init__(self, db: Any = None, correlation_window: int = 3600,
+    def __init__(self, db: Any = None, signal_bus: Any = None, correlation_window: int = 3600,
                  auto_resolve_after: int = 86400, min_signals_escalate: int = 3):
         """Initialize correlation engine.
 
         Args:
             db: EventDatabase instance for persistence.
+            signal_bus: SignalBus instance for emitting correlation signals.
             correlation_window: Seconds to group signals from same IP (default 3600s).
             auto_resolve_after: Seconds without new signals before auto-resolving (default 86400s/24h).
             min_signals_escalate: Minimum signals needed before escalation kicks in.
         """
         self.db = db
+        self.signal_bus = signal_bus
         self.correlation_window = correlation_window
         self.auto_resolve_after = auto_resolve_after
         self.min_signals_escalate = min_signals_escalate
@@ -378,11 +380,40 @@ class CorrelationEngine:
         for inc in incidents:
             if inc.is_active and (now - inc.last_seen) < self.correlation_window:
                 # Add signal to existing incident
+                old_severity = inc.severity
                 inc.add_signal(
                     signal.signal_type, signal.source,
                     signal.severity, signal.metadata
                 )
                 self._persist_incident(inc)
+                # Emit correlation signal if severity escalated or attack chain detected
+                if self.signal_bus and inc.is_active:
+                    if inc.severity != old_severity:
+                        self.signal_bus.emit(
+                            source="correlation",
+                            signal_type="incident_escalated",
+                            severity=inc.severity,
+                            ip=inc.ip,
+                            metadata={
+                                "signal_types": sorted(inc.signal_types),
+                                "sources": sorted(inc.sources),
+                                "signal_count": inc.signal_count,
+                                "description": inc.get_description(),
+                            },
+                        )
+                    elif len(inc.signal_types) >= 3:
+                        self.signal_bus.emit(
+                            source="correlation",
+                            signal_type="attack_chain",
+                            severity=inc.severity,
+                            ip=inc.ip,
+                            metadata={
+                                "signal_types": sorted(inc.signal_types),
+                                "sources": sorted(inc.sources),
+                                "phases": inc.get_attack_chain(),
+                                "description": inc.get_description(),
+                            },
+                        )
                 return inc
 
         # Create new incident
@@ -401,6 +432,20 @@ class CorrelationEngine:
         self._incidents[ip] = self._incidents[ip][-50:]
 
         self._persist_incident(new_incident)
+        # Emit incident_created signal
+        if self.signal_bus:
+            self.signal_bus.emit(
+                source="correlation",
+                signal_type="incident_created",
+                severity=new_incident.severity,
+                ip=new_incident.ip,
+                metadata={
+                    "signal_types": sorted(new_incident.signal_types),
+                    "sources": sorted(new_incident.sources),
+                    "signal_count": new_incident.signal_count,
+                    "description": new_incident.get_description(),
+                },
+            )
         return new_incident
 
     def _persist_incident(self, incident: Incident):
