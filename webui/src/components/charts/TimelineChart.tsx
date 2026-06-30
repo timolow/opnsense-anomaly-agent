@@ -168,7 +168,20 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
       },
       legend: {
         show: true,
-        mime: false,
+        live: false,
+        spec: function(spec: any) {
+          // Show summary stats instead of "--"
+          const events = spec.series[1]?.values;
+          if (events && events.length > 0) {
+            spec.table.innerHTML = `
+              <tr class="u-series">
+                <th><div class="u-marker" style="border: 2px solid ${COLORS.events}; background: ${COLORS.eventsFill}"></div><div class="u-label">Events</div></th>
+                <td class="u-value">${events.reduce((a: number, b: number) => a + b, 0).toLocaleString()} total</td>
+              </tr>
+            `;
+          }
+          return spec;
+        },
       },
     };
 
