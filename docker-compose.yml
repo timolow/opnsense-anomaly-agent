@@ -146,7 +146,7 @@ services:
         order: stop-first
 
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:latest-pg16
     container_name: anomaly-postgres
     restart: unless-stopped
     environment:
