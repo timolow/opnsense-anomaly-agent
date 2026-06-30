@@ -75,7 +75,10 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
     const maxVal = Math.max(...Array.from(values));
     const minVal = Math.min(...Array.from(values).filter(v => v > 0));
     const yMin = 0;
-    const yMax = maxVal * 1.1; // 10% headroom
+    // Use 90th percentile instead of max to avoid one huge spike squashing the rest
+    const sorted = Array.from(values).sort((a, b) => a - b);
+    const p90 = sorted[Math.floor(sorted.length * 0.9)];
+    const yMax = Math.min(maxVal, p90 * 2) * 1.1; // Cap at 2x p90
 
     const opts: any = {
       title: '',
@@ -145,17 +148,17 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
         {
           label: 'Events',
           stroke: COLORS.events,
-          width: 2,
-          fill: COLORS.eventsFill,
+          width: 2.5,
+          fill: 'rgba(6, 182, 212, 0.35)',
           points: {
             show: true,
-            size: 2,
+            size: 3,
             stroke: COLORS.events,
             fill: COLORS.bg || '#0d1117',
             filter: (self: any, idx: number) => {
-              // Show ~8 points max
+              // Show ~12 points max
               const total = self.data[1].length;
-              const step = Math.max(1, Math.floor(total / 8));
+              const step = Math.max(1, Math.floor(total / 12));
               return idx % step === 0;
             },
           },
@@ -231,7 +234,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
   }
 
   return (
-    <div className={`cyber-card p-4 ${className}`} style={{ overflow: 'visible' }}>
+    <div className={`cyber-card p-4 ${className}`}>
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
         <Activity size={14} /> {title}
         {isLive && (
@@ -241,7 +244,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
           </span>
         )}
       </h3>
-      <div ref={containerRef} className="w-full" style={{ height }} />
+      <div ref={containerRef} className="w-full" style={{ height: height + 30 }} />
     </div>
   );
 };
