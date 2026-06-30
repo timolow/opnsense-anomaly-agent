@@ -81,7 +81,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
       title: '',
       width,
       height,
-      padding: [12, 20, 40, 65],
+      padding: [12, 20, 55, 65],
       focus: {
         alpha: true,
       },
