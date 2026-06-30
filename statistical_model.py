@@ -6,6 +6,29 @@ z-scores and deviation metrics to identify statistically
 anomalous behavior.
 """
 
+import warnings
+
+# ── DEPRECATED ─────────────────────────────────────────────────────────
+# This module has been superseded by unified_behavioral_engine.py.
+# All functionality (StatisticalModel, RunningStats/Welford's algorithm,
+# WindowedCounter, Baseline, global z-score detection) has been migrated
+# into UnifiedBehavioralEngine.
+#
+# Migration guide:
+#   OLD:  from statistical_model import StatisticalModel
+#   NEW:  from unified_behavioral_engine import UnifiedBehavioralEngine
+#
+# These files are retained until 2026-07-14 as a safety net, then will be
+# removed. Please update any remaining imports.
+# ──────────────────────────────────────────────────────────────────────────
+warnings.warn(
+    "statistical_model is DEPRECATED — functionality migrated to "
+    "unified_behavioral_engine.UnifiedBehavioralEngine. "
+    "This module will be removed after 2026-07-14.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import math
 import logging
 from datetime import datetime, timezone, timedelta

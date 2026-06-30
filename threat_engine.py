@@ -23,6 +23,28 @@ Usage:
     engine.record_benign("10.0.0.1")      # feedback: confirmed benign
 """
 
+import warnings
+
+# ── DEPRECATED ─────────────────────────────────────────────────────────
+# This module has been superseded by unified_behavioral_engine.py.
+# All functionality (ThreatEngine, multi-source scoring, adaptive weights,
+# threat signals) has been migrated into UnifiedBehavioralEngine.
+#
+# Migration guide:
+#   OLD:  from threat_engine import ThreatEngine
+#   NEW:  from unified_behavioral_engine import UnifiedBehavioralEngine
+#
+# These files are retained until 2026-07-14 as a safety net, then will be
+# removed. Please update any remaining imports.
+# ──────────────────────────────────────────────────────────────────────────
+warnings.warn(
+    "threat_engine is DEPRECATED — functionality migrated to "
+    "unified_behavioral_engine.UnifiedBehavioralEngine. "
+    "This module will be removed after 2026-07-14.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import json
 import logging
 import math

@@ -19,8 +19,8 @@ OPNsense Firewall (UDP syslog :1514)
 │  agent.py (main loop)                              │
 │  ├── attack_detectors  (port scan, SYN flood, brute force, probes)
 │  ├── anomaly_detector  (z-score volume spikes, temporal anomalies)
-│  ├── baseline_engine   (per-rule traffic learning, hourly patterns)
-│  ├── threat_engine     (multi-source IP reputation scoring)
+│  ├── baseline_engine   (per-rule traffic learning, hourly patterns) [DEPRECATED → unified_behavioral_engine]
+│  ├── threat_engine     (multi-source IP reputation scoring) [DEPRECATED → unified_behavioral_engine]
 │  ├── geo_lookup        (MaxMind GeoLite2 + ip-api fallback)
 │  ├── zenarmor_classifier (security gateway policy tracking)
 │  ├── ids_analyzer      (Snort/Suricata signature analysis)
@@ -38,7 +38,7 @@ OPNsense Firewall (UDP syslog :1514)
 │  ├── signal_bus        (unified signal routing, 51 signal types)
 │  ├── correlation_engine (attack chain detection, incident grouping)
 │  ├── incident_manager  (lifecycle state machine, feedback loop)
-│  ├── ip_behavior_model (per-IP behavioral profiles, EMA baselines)
+│  ├── unified_behavioral_engine (consolidated: profiles, scoring, baselines, stats)
 │  └── flow_classifier   (GradientBoosting flow classification)
 └──────┬──────────────────┬──────────────────────────┘
        │                  │
@@ -125,8 +125,8 @@ Groups related signals into incidents using IP proximity and temporal windows. D
 ### Incident Manager
 Full lifecycle state machine (OPEN → ACTIVE → ESCALATED → MITIGATED → RESOLVED). Feedback loop for false positive correction. Auto-resolution of stale incidents. Discord integration for real-time incident reporting.
 
-### IP Behavior Model
-Per-IP behavioral profiles with exponential moving average baselines. Tracks event volume, protocol distribution, port diversity, pass/block ratio, and hourly patterns. Anomaly detection via z-score deviation from learned baselines.
+### Unified Behavioral Engine
+`unified_behavioral_engine.py` consolidates the previous 4 separate modules (ip_behavior_model, threat_engine, baseline_engine, statistical_model) into a single engine. Per-IP behavioral profiles with EMA baselines, multi-source threat scoring with adaptive weights, IP-level traffic baselines, and z-score anomaly detection via Welford's online algorithm. The 4 deprecated modules remain as thin wrappers with migration comments until 2026-07-14.
 
 ### Flow Classifier
 GradientBoosting classifier for network flow categorization. Trained on protocol, port, volume, duration, and direction features. Classifies flows as GOOD, SUSPICIOUS, or ABUSIVE with confidence scoring.

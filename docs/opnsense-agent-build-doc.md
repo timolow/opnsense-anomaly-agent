@@ -658,3 +658,15 @@ else:
 | `tests/test_pipeline_verification.py` | Unit tests for pipeline_verification |
 | `tests/test_empty_state_verification.py` | Unit tests for empty_state_verification |
 | `tests/README.md` | Test suite architecture documentation |
+
+### Behavioral Engine Modules (unified)
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `unified_behavioral_engine.py` | Unified engine: IP behavioral profiling, threat scoring, baselines, statistical models | **ACTIVE** |
+| `ip_behavior_model.py` | Per-IP EMA baselines, deviation signals | **DEPRECATED** → use `unified_behavioral_engine.py` |
+| `threat_engine.py` | Multi-source threat scoring, adaptive weights | **DEPRECATED** → use `unified_behavioral_engine.py` |
+| `baseline_engine.py` | Rule-level → IP-level traffic baselines | **DEPRECATED** → use `unified_behavioral_engine.py` |
+| `statistical_model.py` | Global rolling statistics, z-score anomaly detection | **DEPRECATED** → use `unified_behavioral_engine.py` |
+
+> **Note:** The 4 deprecated modules are retained until 2026-07-14 as a safety net. They emit `DeprecationWarning` on import and contain migration comments. After the retention window they will be removed.
