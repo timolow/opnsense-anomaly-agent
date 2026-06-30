@@ -131,6 +131,8 @@ ADAPTIVE_MIN_FEEDBACK = 3
 # ── Baseline settings (from baseline_engine.py) ──
 MIN_EVENTS_FOR_BASELINE = 10
 TEMPORAL_DRIFT_THRESHOLD = 0.5
+BASELINE_WINDOW_HOURS = 24
+HOURS_IN_DAY = 24
 
 # ── Statistical model settings (from statistical_model.py) ──
 DEFAULT_ANOMALY_THRESHOLD = 3.0
@@ -242,6 +244,78 @@ class RunningStats:
     def latest_values(self, n: int = 10) -> List[float]:
         """Get the N most recent values."""
         return list(self._values)[-n:]
+
+
+@dataclass
+class IPBaseline:
+    """IP-level traffic baseline learned from historical events.
+
+    Replaces per-rule TrafficBaseline from baseline_engine.py.
+    Key difference: keyed by IP, not by firewall rule.
+
+    Tracks per-IP behavioral statistics:
+    - Connection rate (events per hour)
+    - Port/IP diversity (unique dst ports, unique dst IPs)
+    - Volume (bytes per connection, packets per connection)
+    - Protocol/action distribution
+    - Temporal pattern (hourly distribution)
+
+    Source: baseline_engine.py TrafficBaseline → converted to IP-level
+    """
+    ip: str
+    hour: Optional[int] = None
+
+    # Volume stats
+    avg_events_per_hour: float = 0.0
+    std_events_per_hour: float = 0.0
+    max_events_per_hour: int = 0
+    min_events_per_hour: int = 0
+
+    # Diversity stats
+    avg_unique_dst_ports: float = 0.0
+    avg_unique_dst_ips: float = 0.0
+    avg_bytes_per_conn: float = 0.0
+
+    # Protocol distribution
+    protocol_distribution: Dict[str, float] = field(default_factory=dict)
+
+    # Action distribution (pass/block ratio)
+    pass_ratio: float = 0.0
+    block_ratio: float = 0.0
+
+    # Temporal pattern (hourly distribution — 24 floats)
+    hourly_distribution: List[float] = field(default_factory=list)
+
+    # Confidence
+    sample_count: int = 0
+    last_updated: Optional[datetime] = None
+
+    def confidence_score(self) -> float:
+        """Higher confidence = more data points."""
+        if self.sample_count < MIN_EVENTS_FOR_BASELINE:
+            return 0.0
+        return min(1.0, math.log(self.sample_count) / math.log(1000))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to JSON-serializable dict."""
+        return {
+            "ip": self.ip,
+            "hour": self.hour,
+            "avg_events_per_hour": round(self.avg_events_per_hour, 4),
+            "std_events_per_hour": round(self.std_events_per_hour, 4),
+            "max_events_per_hour": self.max_events_per_hour,
+            "min_events_per_hour": self.min_events_per_hour,
+            "avg_unique_dst_ports": round(self.avg_unique_dst_ports, 2),
+            "avg_unique_dst_ips": round(self.avg_unique_dst_ips, 2),
+            "avg_bytes_per_conn": round(self.avg_bytes_per_conn, 2),
+            "protocol_distribution": dict(self.protocol_distribution),
+            "pass_ratio": round(self.pass_ratio, 4),
+            "block_ratio": round(self.block_ratio, 4),
+            "hourly_distribution": [round(v, 2) for v in self.hourly_distribution],
+            "sample_count": self.sample_count,
+            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "confidence": round(self.confidence_score(), 4),
+        }
 
 
 @dataclass
@@ -1154,6 +1228,10 @@ class UnifiedBehavioralEngine:
         self._lock = threading.Lock()
         self.adaptive_weights = AdaptiveWeights(db)
 
+        # ── IP-level baselines (from baseline_engine.py, IP-level) ──
+        self._ip_baselines: Dict[str, IPBaseline] = {}
+        self._load_ip_baselines()
+
         # ── Global statistical baselines (from statistical_model.py) ──
         self._global_baselines: Dict[str, RunningStats] = {}
 
@@ -1585,6 +1663,392 @@ class UnifiedBehavioralEngine:
         except Exception as e:
             logger.warning("Failed to persist adaptive weights: %s", e)
         return persisted
+
+    # ── IP Baseline Management (from baseline_engine.py) ──
+
+    def learn_ip_baselines_from_events(self, events: List[Dict[str, Any]]) -> int:
+        """Learn IP-level baselines from historical events.
+
+        Replaces: BaselineEngine.learn_from_training_data()
+
+        Groups events by source IP and computes per-IP baselines:
+        - connection rate (events per hour)
+        - unique destination ports/IPs
+        - bytes per connection
+        - protocol/action distribution
+        - hourly temporal distribution
+
+        Args:
+            events: List of parsed event dicts.
+
+        Returns:
+            Number of IP baselines learned.
+        """
+        if not events:
+            return 0
+
+        logger.info("Learning IP baselines from %d events...", len(events))
+
+        # Group events by source IP
+        ip_events: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for event in events:
+            src_ip = event.get("src_ip")
+            if src_ip:
+                ip_events[src_ip].append(event)
+
+        learned_count = 0
+        for ip, events_list in ip_events.items():
+            if len(events_list) < MIN_EVENTS_FOR_BASELINE:
+                continue
+
+            baseline = self._compute_ip_baseline(ip, events_list)
+            if baseline:
+                with self._lock:
+                    self._ip_baselines[ip] = baseline
+                learned_count += 1
+
+        # Persist to DB
+        self._save_ip_baselines()
+        logger.info("Learned %d IP baselines from training data", learned_count)
+        return learned_count
+
+    def get_ip_baseline(self, ip: str) -> Optional[Dict[str, Any]]:
+        """Get the IP-level baseline for an IP address.
+
+        Args:
+            ip: The IP address.
+
+        Returns:
+            Baseline dict or None.
+        """
+        with self._lock:
+            baseline = self._ip_baselines.get(ip)
+        if baseline:
+            return baseline.to_dict()
+        return None
+
+    def update_ip_baseline(self, ip: str, new_events: List[Dict[str, Any]]) -> None:
+        """Incrementally update an IP baseline with new events.
+
+        Replaces: BaselineEngine.update_baseline() (converted to IP-level)
+
+        Args:
+            ip: The source IP address.
+            new_events: Recent events to incorporate.
+        """
+        if not new_events:
+            return
+
+        with self._lock:
+            existing = self._ip_baselines.get(ip)
+
+        if not existing:
+            # Create new baseline from scratch
+            baseline = self._compute_ip_baseline(ip, new_events)
+            if baseline:
+                with self._lock:
+                    self._ip_baselines[ip] = baseline
+        else:
+            # Incremental update
+            baseline = self._incremental_ip_baseline_update(existing, new_events)
+            if baseline:
+                with self._lock:
+                    self._ip_baselines[ip] = baseline
+
+    def get_all_ip_baselines(self) -> Dict[str, Dict[str, Any]]:
+        """Get all IP baselines as serializable dicts.
+
+        Returns:
+            Dict mapping IP -> baseline dict.
+        """
+        with self._lock:
+            return {ip: bl.to_dict() for ip, bl in self._ip_baselines.items()}
+
+    def _compute_ip_baseline(self, ip: str, events: List[Dict[str, Any]]) -> Optional[IPBaseline]:
+        """Compute an IP-level baseline from a list of events.
+
+        Args:
+            ip: The source IP address.
+            events: List of parsed event dicts for this IP.
+
+        Returns:
+            IPBaseline instance or None if insufficient data.
+        """
+        if len(events) < MIN_EVENTS_FOR_BASELINE:
+            return None
+
+        # Hourly distribution
+        hourly_counts: Dict[int, int] = defaultdict(int)
+        protocols = Counter()
+        dst_ports = Counter()
+        dst_ips = set()
+        pass_count = 0
+        block_count = 0
+        total_bytes = 0
+
+        for event in events:
+            # Parse timestamp for hour
+            ts = event.get("timestamp")
+            hour = 0
+            if isinstance(ts, datetime):
+                hour = ts.hour
+            elif isinstance(ts, str):
+                try:
+                    hour = datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
+                except (ValueError, AttributeError):
+                    pass
+            hourly_counts[hour] += 1
+
+            # Protocol
+            proto = event.get("proto", "") or event.get("protocol", "")
+            if proto:
+                protocols[proto] += 1
+
+            # Destination diversity
+            dst_port = event.get("dport") or event.get("dst_port")
+            if dst_port is not None:
+                dst_ports[int(dst_port)] += 1
+
+            dst_ip = event.get("dst_ip", "")
+            if dst_ip:
+                dst_ips.add(dst_ip)
+
+            # Action
+            action = event.get("action", "")
+            if action == "pass":
+                pass_count += 1
+            elif action == "block":
+                block_count += 1
+
+            # Bytes
+            total_bytes += event.get("ip_total_length", 0) or 0
+
+        total = len(events)
+
+        # Hourly volumes
+        hourly_volumes = [float(hourly_counts.get(h, 0)) for h in range(HOURS_IN_DAY)]
+        avg_volume = sum(hourly_volumes) / len(hourly_volumes)
+        std_volume = self._std_dev(hourly_volumes)
+
+        return IPBaseline(
+            ip=ip,
+            avg_events_per_hour=avg_volume,
+            std_events_per_hour=std_volume,
+            max_events_per_hour=int(max(hourly_volumes)) if hourly_volumes else 0,
+            min_events_per_hour=int(min(hourly_volumes)) if hourly_volumes else 0,
+            avg_unique_dst_ports=len(dst_ports),
+            avg_unique_dst_ips=len(dst_ips),
+            avg_bytes_per_conn=total_bytes / total if total > 0 else 0,
+            protocol_distribution={k: v / total for k, v in protocols.items()},
+            pass_ratio=pass_count / total if total > 0 else 0,
+            block_ratio=block_count / total if total > 0 else 0,
+            hourly_distribution=hourly_volumes,
+            sample_count=total,
+            last_updated=datetime.now(timezone.utc),
+        )
+
+    def _incremental_ip_baseline_update(self, existing: IPBaseline, new_events: List[Dict[str, Any]]) -> IPBaseline:
+        """Incrementally update an existing IP baseline with new events.
+
+        Uses exponential moving average to blend new data with existing baseline.
+
+        Args:
+            existing: Current baseline.
+            new_events: New events to incorporate.
+
+        Returns:
+            Updated IPBaseline.
+        """
+        total_new = len(new_events)
+        new_sample_count = existing.sample_count + total_new
+
+        # EMA blend factor for new events
+        alpha = total_new / max(new_sample_count, 1)
+
+        # Update volume stats
+        new_avg_events = 0
+        hourly_counts: Dict[int, int] = defaultdict(int)
+        for event in new_events:
+            ts = event.get("timestamp")
+            hour = 0
+            if isinstance(ts, datetime):
+                hour = ts.hour
+            elif isinstance(ts, str):
+                try:
+                    hour = datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
+                except (ValueError, AttributeError):
+                    pass
+            hourly_counts[hour] += 1
+        new_hourly = [hourly_counts.get(h, 0) for h in range(HOURS_IN_DAY)]
+        new_avg_events = sum(new_hourly) / len(new_hourly)
+
+        existing.avg_events_per_hour = (1 - alpha) * existing.avg_events_per_hour + alpha * new_avg_events
+        existing.sample_count = new_sample_count
+        existing.last_updated = datetime.now(timezone.utc)
+
+        # Update hourly distribution with EMA
+        existing.hourly_distribution = [
+            (1 - alpha) * old + alpha * new
+            for old, new in zip(existing.hourly_distribution, new_hourly)
+        ]
+
+        # Update protocol distribution incrementally
+        new_protocols = Counter()
+        new_actions_pass = 0
+        new_actions_block = 0
+        new_dst_ports = Counter()
+        new_dst_ips = set()
+        new_bytes = 0
+
+        for event in new_events:
+            proto = event.get("proto", "") or event.get("protocol", "")
+            if proto:
+                new_protocols[proto] += 1
+            action = event.get("action", "")
+            if action == "pass":
+                new_actions_pass += 1
+            elif action == "block":
+                new_actions_block += 1
+            dst_port = event.get("dport") or event.get("dst_port")
+            if dst_port is not None:
+                new_dst_ports[int(dst_port)] += 1
+            dst_ip = event.get("dst_ip", "")
+            if dst_ip:
+                new_dst_ips.add(dst_ip)
+            new_bytes += event.get("ip_total_length", 0) or 0
+
+        # Blend protocol distribution
+        for proto, count in new_protocols.items():
+            if proto in existing.protocol_distribution:
+                existing.protocol_distribution[proto] = (
+                    existing.protocol_distribution[proto] * (existing.sample_count - total_new) + count
+                ) / existing.sample_count
+            else:
+                existing.protocol_distribution[proto] = count / existing.sample_count
+
+        # Blend action ratios
+        existing.pass_ratio = (1 - alpha) * existing.pass_ratio + alpha * (new_actions_pass / max(total_new, 1))
+        existing.block_ratio = (1 - alpha) * existing.block_ratio + alpha * (new_actions_block / max(total_new, 1))
+
+        # Update diversity (simple EMA)
+        existing.avg_unique_dst_ports = (1 - alpha) * existing.avg_unique_dst_ports + alpha * len(new_dst_ports)
+        existing.avg_unique_dst_ips = (1 - alpha) * existing.avg_unique_dst_ips + alpha * len(new_dst_ips)
+        existing.avg_bytes_per_conn = (1 - alpha) * existing.avg_bytes_per_conn + alpha * (new_bytes / max(total_new, 1))
+
+        return existing
+
+    def _load_ip_baselines(self) -> None:
+        """Load IP baselines from the database."""
+        try:
+            conn = self.db.connect()
+            cur = conn.cursor()
+            try:
+                cur.execute("""
+                    SELECT ip, hour, avg_events_per_hour, std_events_per_hour,
+                           max_events_per_hour, min_events_per_hour,
+                           avg_unique_dst_ports, avg_unique_dst_ips, avg_bytes_per_conn,
+                           protocol_distribution, pass_ratio, block_ratio,
+                           hourly_distribution, sample_count, last_updated
+                    FROM ip_baselines
+                """)
+
+                for row in cur.fetchall():
+                    baseline = IPBaseline(
+                        ip=row[0],
+                        hour=row[1],
+                        avg_events_per_hour=row[2] or 0,
+                        std_events_per_hour=row[3] or 0,
+                        max_events_per_hour=row[4] or 0,
+                        min_events_per_hour=row[5] or 0,
+                        avg_unique_dst_ports=row[6] or 0,
+                        avg_unique_dst_ips=row[7] or 0,
+                        avg_bytes_per_conn=row[8] or 0,
+                        protocol_distribution=(
+                            row[9] if isinstance(row[9], dict)
+                            else (json.loads(row[9]) if isinstance(row[9], str) else {})
+                        ),
+                        pass_ratio=row[10] or 0,
+                        block_ratio=row[11] or 0,
+                        hourly_distribution=(
+                            row[12] if isinstance(row[12], list)
+                            else (json.loads(row[12]) if isinstance(row[12], str) else [])
+                        ),
+                        sample_count=row[13] or 0,
+                        last_updated=row[14] if row[14] else None,
+                    )
+                    self._ip_baselines[baseline.ip] = baseline
+
+                logger.info("Loaded %d IP baselines from database", len(self._ip_baselines))
+            finally:
+                cur.close()
+                self.db.putconn(conn)
+        except Exception as e:
+            logger.warning("Failed to load IP baselines: %s", e)
+
+    def _save_ip_baselines(self) -> None:
+        """Persist all IP baselines to the database."""
+        try:
+            conn = self.db.connect()
+            cur = conn.cursor()
+            try:
+                for ip, baseline in self._ip_baselines.items():
+                    try:
+                        cur.execute("""
+                            INSERT INTO ip_baselines
+                            (ip, hour, avg_events_per_hour, std_events_per_hour,
+                             max_events_per_hour, min_events_per_hour,
+                             avg_unique_dst_ports, avg_unique_dst_ips, avg_bytes_per_conn,
+                             protocol_distribution, pass_ratio, block_ratio,
+                             hourly_distribution, sample_count, last_updated)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (ip) DO UPDATE SET
+                                avg_events_per_hour = EXCLUDED.avg_events_per_hour,
+                                std_events_per_hour = EXCLUDED.std_events_per_hour,
+                                max_events_per_hour = EXCLUDED.max_events_per_hour,
+                                min_events_per_hour = EXCLUDED.min_events_per_hour,
+                                avg_unique_dst_ports = EXCLUDED.avg_unique_dst_ports,
+                                avg_unique_dst_ips = EXCLUDED.avg_unique_dst_ips,
+                                avg_bytes_per_conn = EXCLUDED.avg_bytes_per_conn,
+                                protocol_distribution = EXCLUDED.protocol_distribution,
+                                pass_ratio = EXCLUDED.pass_ratio,
+                                block_ratio = EXCLUDED.block_ratio,
+                                hourly_distribution = EXCLUDED.hourly_distribution,
+                                sample_count = EXCLUDED.sample_count,
+                                last_updated = EXCLUDED.last_updated
+                        """, (
+                            baseline.ip,
+                            baseline.hour,
+                            baseline.avg_events_per_hour,
+                            baseline.std_events_per_hour,
+                            baseline.max_events_per_hour,
+                            baseline.min_events_per_hour,
+                            baseline.avg_unique_dst_ports,
+                            baseline.avg_unique_dst_ips,
+                            baseline.avg_bytes_per_conn,
+                            json.dumps(baseline.protocol_distribution),
+                            baseline.pass_ratio,
+                            baseline.block_ratio,
+                            json.dumps(baseline.hourly_distribution),
+                            baseline.sample_count,
+                            baseline.last_updated,
+                        ))
+                    except Exception as e:
+                        logger.error("Failed to save IP baseline for %s: %s", ip, e)
+            finally:
+                cur.close()
+                conn.commit()
+                self.db.putconn(conn)
+                logger.info("Saved %d IP baselines to database", len(self._ip_baselines))
+        except Exception as e:
+            logger.warning("Failed to save IP baselines: %s", e)
+
+    def _std_dev(self, values: List) -> float:
+        """Calculate population standard deviation."""
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        return math.sqrt(variance)
 
     # ── Internal methods ──
 

@@ -407,7 +407,8 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
                         "anomaly_count": a.anomaly_count,
                         "uptime": int(time.time() - a.start_time),
                         "unique_ips": len(a.stat_model._src_ips_per_min),
-                        "baselines": len(a.baseline_engine._baselines) if a.baseline_engine else 0
+                        "baselines": len(a.baseline_engine._baselines) if a.baseline_engine else 0,
+                        "ip_baselines": len(a.behavior_profiler._ip_baselines) if a.behavior_profiler else 0
                     })
                 elif endpoint == "anomalies":
                     # Get recent anomalies from DB
@@ -1176,15 +1177,18 @@ class OPNsenseAgent:
             elif log_type == "nginx":
                 self.nginx_monitor.process_event(event)
 
-        # Baseline engine — batch update for firewall events
-        if self.baseline_engine and fw_events:
-            # Group firewall events by rule for baseline engine
-            rules: Dict[str, list] = {}
-            for e in fw_events:
-                rule = e.get("rule_name", "unknown")
-                rules.setdefault(rule, []).append(e)
-            for rule, rule_events in rules.items():
-                self.baseline_engine.update_baseline(rule, rule_events)
+        # IP-level baseline engine — batch update grouped by source IP
+        # Replaces rule-level baseline_engine.update_baseline() from baseline_engine.py
+        # (rule_baselines table kept for backward compat but deprecated)
+        if self.behavior_profiler and events:
+            # Group events by source IP for baseline updates
+            ip_events: Dict[str, list] = {}
+            for e in events:
+                ip = e.get("src_ip")
+                if ip:
+                    ip_events.setdefault(ip, []).append(e)
+            for ip, ip_event_list in ip_events.items():
+                self.behavior_profiler.update_ip_baseline(ip, ip_event_list)
 
         # Behavior profiler — ingest all events for behavioral profiling
         if self.behavior_profiler:

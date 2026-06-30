@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -1135,6 +1135,44 @@ MIGRATIONS: List[Dict[str, Any]] = [
             "ALTER TABLE IF EXISTS unifi_clients RENAME TO unifi_clients_deprecated;",
         ],
         "hook": lambda conn: _v22_verify_deprecation(conn),
+    },
+
+    # ------------------------------------------------------------------
+    # V23: IP-level baselines table
+    #
+    # Replaces rule_baselines (which is rule-level) with ip_baselines
+    # (which is IP-level). rule_baselines is kept for backward compat.
+    # ------------------------------------------------------------------
+    {
+        "version": 23,
+        "description": "Create ip_baselines table (IP-level baselines from baseline_engine.py migration)",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS ip_baselines (
+                ip TEXT NOT NULL PRIMARY KEY,
+                hour INTEGER,
+                avg_events_per_hour DOUBLE PRECISION DEFAULT 0,
+                std_events_per_hour DOUBLE PRECISION DEFAULT 0,
+                max_events_per_hour INTEGER DEFAULT 0,
+                min_events_per_hour INTEGER DEFAULT 0,
+                avg_unique_dst_ports DOUBLE PRECISION DEFAULT 0,
+                avg_unique_dst_ips DOUBLE PRECISION DEFAULT 0,
+                avg_bytes_per_conn DOUBLE PRECISION DEFAULT 0,
+                protocol_distribution JSONB DEFAULT '{}',
+                pass_ratio DOUBLE PRECISION DEFAULT 0,
+                block_ratio DOUBLE PRECISION DEFAULT 0,
+                hourly_distribution JSONB DEFAULT '[]',
+                sample_count INTEGER DEFAULT 0,
+                last_updated TIMESTAMPTZ DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_ip_baselines_last_updated
+                ON ip_baselines(last_updated DESC);
+            CREATE INDEX IF NOT EXISTS idx_ip_baselines_sample_count
+                ON ip_baselines(sample_count DESC);
+            """,
+        ],
     },
 ]
 
