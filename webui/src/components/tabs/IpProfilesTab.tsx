@@ -139,8 +139,8 @@ function ScoreGauge({ score }: { score: number }) {
 function ProfileCard({ profile }: { profile: BehaviorProfile }) {
   const [expanded, setExpanded] = useState(false);
   const level = profile.threat_level || threatLevel(profile.behavior_score);
-  const levelStyle = LEVEL_COLORS[level];
-  const LevelIcon = LEVEL_ICONS[level];
+  const levelStyle = LEVEL_COLORS[level] || LEVEL_COLORS.benign;
+  const LevelIcon = LEVEL_ICONS[level] || Shield;
 
   return (
     <div className="bg-cyber-panel border rounded-lg overflow-hidden transition-all hover:border-opacity-100"
