@@ -231,7 +231,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
   }
 
   return (
-    <div className={`cyber-card p-4 ${className}`}>
+    <div className={`cyber-card p-4 overflow-visible ${className}`}>
       <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
         <Activity size={14} /> {title}
         {isLive && (
