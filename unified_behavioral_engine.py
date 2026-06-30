@@ -78,10 +78,21 @@ class ThreatLevel(IntEnum):
 # ── Threat score boundaries for level assignment ──
 THREAT_LEVEL_THRESHOLDS = {
     ThreatLevel.BENIGN:         (0, 20),
-    ThreatLevel.SUSPICIOUS:     (21, 40),
-    ThreatLevel.RECONNAISSANCE: (41, 60),
-    ThreatLevel.ATTACK:         (61, 80),
-    ThreatLevel.EXPLOIT:        (81, 100),
+    ThreatLevel.SUSPICIOUS:     (21, 45),
+    ThreatLevel.RECONNAISSANCE: (46, 65),
+    ThreatLevel.ATTACK:         (66, 85),
+    ThreatLevel.EXPLOIT:        (86, 100),
+}
+
+# ── Signal types that force a minimum threat level ──
+# E.g., an IDS signature hit always bumps to RECONNAISSANCE+ regardless of score.
+SIGNAL_MIN_THREAT_LEVEL: Dict[str, ThreatLevel] = {
+    "ids_signature":    ThreatLevel.RECONNAISSANCE,
+    "zenarmor_threat":  ThreatLevel.RECONNAISSANCE,
+    "nginx_attack":     ThreatLevel.RECONNAISSANCE,
+    "firewall_port_scan": ThreatLevel.RECONNAISSANCE,
+    "firewall_dest_scan": ThreatLevel.RECONNAISSANCE,
+    "http_anomaly":     ThreatLevel.SUSPICIOUS,
 }
 
 # ── Default signal weights (from threat_engine.py) ──
@@ -950,14 +961,33 @@ class UnifiedIPProfile:
         Uses the pre-computed behavioral score and THREAT_LEVEL_THRESHOLDS
         to assign BENIGN, SUSPICIOUS, RECONNAISSANCE, ATTACK, or EXPLOIT.
 
+        Signal-type context: if the profile has active signals that
+        carry a minimum threat level (e.g., IDS hit → RECONNAISSANCE+),
+        the score-derived level is bumped up to meet that minimum.
+
         Returns:
             ThreatLevel enum value.
         """
         score = self.compute_behavioral_score()
+
+        # ── Score-derived level ──
+        score_level: ThreatLevel = ThreatLevel.BENIGN
         for level, (low, high) in THREAT_LEVEL_THRESHOLDS.items():
             if low <= score <= high:
-                return level
-        return ThreatLevel.EXPLOIT  # score > 100 (shouldn't happen, but safe fallback)
+                score_level = level
+                break
+        else:
+            score_level = ThreatLevel.EXPLOIT  # score > 100 (shouldn't happen)
+
+        # ── Signal-type minimum bump ──
+        min_level: ThreatLevel = ThreatLevel.BENIGN
+        for signal in self.signals:
+            sig_min = SIGNAL_MIN_THREAT_LEVEL.get(signal.signal_type)
+            if sig_min is not None and sig_min > min_level:
+                min_level = sig_min
+
+        # Final level is the higher of score-derived and signal-min
+        return max(score_level, min_level)
 
     def apply_decay(self, adaptive_weights: AdaptiveWeights) -> None:
         """Apply time-based decay to all signal scores.
@@ -1051,6 +1081,32 @@ class UnifiedIPProfile:
     def mark_persisted(self) -> None:
         """Mark this profile as persisted (reset event counter)."""
         self._events_since_persist = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the entire profile to a JSON-serializable dict for API responses.
+
+        Combines all profile data, computed behavioral score, derived threat level,
+        baselines, and active signals into a single API-ready structure.
+
+        Returns:
+            Dict with all profile fields suitable for JSON responses.
+        """
+        score = self.compute_behavioral_score()
+        threat_level = self.get_threat_level()
+
+        return {
+            "ip": self.ip,
+            "first_seen": self.first_seen.isoformat(),
+            "last_seen": self.last_seen.isoformat(),
+            "total_events": self.total_events,
+            "behavioral_score": score,
+            "threat_level": threat_level.name,
+            "threat_level_value": int(threat_level),
+            "profile": self.to_profile_data(),
+            "baselines": self.to_baseline_data(),
+            "signals": self.to_signals_data(),
+            "baseline_deviations": list(self.baseline_deviations[-20:]),
+        }
 
 
 # ============================================================
