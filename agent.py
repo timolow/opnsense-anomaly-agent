@@ -1137,8 +1137,8 @@ class OPNsenseAgent:
         # Service monitor — process all events
         self.service_monitor.process_events(events)
 
-        # Statistical model — batch add
-        self.stat_model.add_events(events)
+        # Statistical model — now handled by UnifiedBehavioralEngine.ingest_batch()
+        # (stat_model kept for backward compat during transition)
 
         # Pre-filter firewall events for downstream consumers
         fw_events = [e for e in events if e.get("log_type") in ("firewall", "filterlog")]
@@ -1177,21 +1177,10 @@ class OPNsenseAgent:
             elif log_type == "nginx":
                 self.nginx_monitor.process_event(event)
 
-        # IP-level baseline engine — batch update grouped by source IP
-        # Replaces rule-level baseline_engine.update_baseline() from baseline_engine.py
-        # (rule_baselines table kept for backward compat but deprecated)
-        if self.behavior_profiler and events:
-            # Group events by source IP for baseline updates
-            ip_events: Dict[str, list] = {}
-            for e in events:
-                ip = e.get("src_ip")
-                if ip:
-                    ip_events.setdefault(ip, []).append(e)
-            for ip, ip_event_list in ip_events.items():
-                self.behavior_profiler.update_ip_baseline(ip, ip_event_list)
-
         # Behavior profiler — ingest all events for behavioral profiling
-        if self.behavior_profiler:
+        # UnifiedBehavioralEngine.ingest_batch() handles IP baselines internally,
+        # so the explicit update_ip_baseline loop below is no longer needed.
+        if self.behavior_profiler and events:
             behavior_signals = self.behavior_profiler.ingest_batch(events)
             # Emit behavior signals to signal bus
             for ip, signals in behavior_signals.items():
@@ -1523,7 +1512,13 @@ class OPNsenseAgent:
         """Log periodic status."""
         uptime = int(time.time() - self.start_time)
         mode = "syslog" if self.config.syslog_enabled else "direct"
-        stats = self.stat_model.get_stats()
+
+        # Prefer unified engine stats; fall back to stat_model for backward compat
+        if self.behavior_profiler:
+            stats = self.behavior_profiler.get_stats()
+        else:
+            stats = self.stat_model.get_stats()
+
         dns_stats = self.reverse_dns.get_stats() if self.reverse_dns.enabled else None
         net_parts = []
         if self.network_classifier is not None:
@@ -1536,6 +1531,10 @@ class OPNsenseAgent:
             f" | reverse_dns: resolves={dns_stats['resolve_count']} misses={dns_stats['miss_count']}"
             if dns_stats else ""
         )
+
+        # Country events from geo_lookup regardless of stats source
+        country_events = getattr(self.geo_lookup, 'country_events', {})
+
         logger.info(
             "Status: %s events, %s anomalies, uptime: %ds | mode: %s | "
             "unique_ips: %s | ports_tracked: %s | country_events: %s%s",
@@ -1545,7 +1544,7 @@ class OPNsenseAgent:
             mode,
             stats.get("unique_ips", 0),
             stats.get("unique_ports", 0),
-            stats.get("country_events", 0),
+            len(country_events),
             f" | {extra}" if extra else "",
         )
 
@@ -1603,11 +1602,15 @@ class OPNsenseAgent:
 
                 if events:
                     now = time.time()
-                    # Learn patterns
+                    # Learn patterns — use unified engine when available
                     if now - self.last_learn >= self.config.learn_interval:
-                        self.stat_model.learn(events)
+                        if self.behavior_profiler:
+                            learn_result = self.behavior_profiler.learn(events)
+                            logger.info("Learned from %s events (total: %s, profiles: %s)",
+                                        len(events), self.event_count, learn_result.get("total_profiles", 0))
+                        else:
+                            self.stat_model.learn(events)
                         self.last_learn = now
-                        logger.info("Learned from %s events (total: %s)", len(events), self.event_count)
 
                         # Periodic adaptation: every 3 learn cycles, re-analyze raw patterns
                         self._adapt_cycle += 1
@@ -1692,8 +1695,11 @@ class OPNsenseAgent:
                     # Save state periodically (every learn_interval, alongside baseline save)
                     if now - self.last_save >= self.config.learn_interval:
                         self.last_save = now
-                        # Get baseline summary to persist
-                        baseline_summary = self.stat_model.get_baseline_summary()
+                        # Get baseline summary from unified engine when available
+                        if self.behavior_profiler:
+                            baseline_summary = self.behavior_profiler.get_baseline_summary()
+                        else:
+                            baseline_summary = self.stat_model.get_baseline_summary()
                         self.db._save_baselines(baseline_summary)
                         # Persist all ML/tracking state to consolidated state.json
                         self.persistence.save(self)
@@ -1754,7 +1760,11 @@ class OPNsenseAgent:
 
         # Save final state
         try:
-            baseline_summary = self.stat_model.get_baseline_summary()
+            # Get baseline summary from unified engine when available
+            if self.behavior_profiler:
+                baseline_summary = self.behavior_profiler.get_baseline_summary()
+            else:
+                baseline_summary = self.stat_model.get_baseline_summary()
             if self.db:
                 self.db._save_baselines(baseline_summary)
             self.persistence.save(self)
