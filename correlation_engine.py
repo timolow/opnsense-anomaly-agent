@@ -161,6 +161,11 @@ class Incident:
         if chain:
             return f"Attack chain detected: {' -> '.join(chain)} ({self.signal_count} signals from {len(self.sources)} sources)"
 
+        # Cross-source correlation description
+        security_sources = self.sources & {"firewall", "nginx", "ids", "attack_detector", "anomaly_detector"}
+        if len(security_sources) >= 2:
+            return f"Cross-source correlation: {', '.join(sorted(security_sources))} ({self.signal_count} signals, {len(self.signal_types)} types)"
+
         # Single-phase descriptions
         if "recon" in self.phases:
             return f"Reconnaissance activity: {', '.join(sorted(self.signal_types))} ({self.signal_count} signals)"
@@ -211,8 +216,18 @@ class Incident:
             self.severity_rank = SEVERITY_RANK["critical"]
             self.severity = "critical"
 
+        # Cross-source correlation: signals from 3+ security sources = strong evidence
+        security_sources = self.sources & {"firewall", "nginx", "ids", "attack_detector", "anomaly_detector"}
+        if len(security_sources) >= 3:
+            if self.severity_rank < SEVERITY_RANK["critical"]:
+                self.severity_rank = SEVERITY_RANK["critical"]
+                self.severity = "critical"
+        elif len(security_sources) >= 2 and self.severity_rank < SEVERITY_RANK["high"]:
+            self.severity_rank = SEVERITY_RANK["high"]
+            self.severity = "high"
+
         # Multiple sources = escalation
-        if len(self.sources) >= 3 and self.severity_rank < SEVERITY_RANK["high"]:
+        if len(self.sources) >= 3 and self.severity_rank < SEVERITY_RANK["medium"]:
             self.severity_rank = SEVERITY_RANK["medium"]
             self.severity = "medium"
 
@@ -229,14 +244,14 @@ class CorrelationEngine:
     Thread-safe: uses locks for incident dictionary access.
     """
 
-    def __init__(self, db: Any = None, signal_bus: Any = None, correlation_window: int = 3600,
+    def __init__(self, db: Any = None, signal_bus: Any = None, correlation_window: int = 300,
                  auto_resolve_after: int = 86400, min_signals_escalate: int = 3):
         """Initialize correlation engine.
 
         Args:
             db: EventDatabase instance for persistence.
             signal_bus: SignalBus instance for emitting correlation signals.
-            correlation_window: Seconds to group signals from same IP (default 3600s).
+            correlation_window: Seconds to group signals from same IP (default 300s/5min).
             auto_resolve_after: Seconds without new signals before auto-resolving (default 86400s/24h).
             min_signals_escalate: Minimum signals needed before escalation kicks in.
         """
@@ -277,7 +292,7 @@ class CorrelationEngine:
 
         with self._lock:
             # Find or create active incident for this IP
-            incident = self._find_or_create_incident(ip, signal)
+            incident = self._group_signals(ip, signal)
 
         # Notify callbacks
         for cb in self._callbacks:
@@ -368,7 +383,52 @@ class CorrelationEngine:
             logger.info("Auto-resolved %d stale incidents", resolved)
         return resolved
 
-    def _find_or_create_incident(self, ip: str, signal: Any) -> Incident:
+    def group_signals(self, signals: List[Any]) -> List[Incident]:
+        """Batch-process a list of signals and group them by IP + time window.
+
+        Optimized for bulk ingestion: acquires the lock once, groups signals
+        by IP, processes them sequentially within the batch, and emits a single
+        correlation signal per IP at the end.
+
+        Args:
+            signals: List of Signal objects from SignalBus.
+
+        Returns:
+            List of Incidents created or updated during this batch.
+        """
+        if not signals:
+            return []
+
+        # Pre-group by IP outside the lock for analysis
+        by_ip: Dict[str, List[Any]] = defaultdict(list)
+        for sig in signals:
+            if sig and sig.ip and sig.severity != "info":
+                by_ip[sig.ip].append(sig)
+
+        with self._lock:
+            created_or_updated: List[Incident] = []
+            for ip, ip_signals in by_ip.items():
+                # Sort by timestamp within the batch
+                ip_signals.sort(key=lambda s: s.timestamp)
+                for sig in ip_signals:
+                    self._total_signals_processed += 1
+                    inc = self._group_signals(ip, sig)
+                    if inc not in created_or_updated:
+                        created_or_updated.append(inc)
+
+        # Notify callbacks once per incident after batch
+        for inc in created_or_updated:
+            for cb in self._callbacks:
+                try:
+                    cb(inc)
+                except Exception as e:
+                    logger.error("Correlation callback error: %s", e)
+
+        logger.info("group_signals: processed %d signals into %d incidents (%d unique IPs)",
+                    len(signals), len(created_or_updated), len(by_ip))
+        return created_or_updated
+
+    def _group_signals(self, ip: str, signal: Any) -> Incident:
         """Find an active incident for this IP or create a new one.
 
         Must be called with self._lock held.
