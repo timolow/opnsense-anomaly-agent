@@ -1215,6 +1215,14 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+    {
+        "version": 25,
+        "description": "Add feature_alpha_multipliers to adaptive_weights (baseline adaptation rates)",
+        "sql": [],
+        "alter_columns": [
+            ("adaptive_weights", "feature_alpha_multipliers", "JSONB DEFAULT NULL"),
+        ],
+    },
 ]
 
 # =============================================================================

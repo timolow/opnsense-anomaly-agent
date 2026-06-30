@@ -140,6 +140,16 @@ FP_ALPHA_BOOST_FACTOR = 2.5
 # Maximum alpha after false-positive boost (prevent runaway adaptation).
 FP_ALPHA_MAX = 0.4
 
+# ── Baseline adaptation rate settings (global, per-feature) ──
+# AdaptiveWeights stores per-feature alpha_multipliers that scale the default EMA alpha.
+# multiplier > 1.0 → baseline adapts faster (learned from false positives)
+# multiplier < 1.0 → baseline adapts slower / stays strict (learned from true positives)
+BASELINE_ALPHA_MULTIPLIER_MIN = 0.3     # floor: baseline still adapts, just slowly
+BASELINE_ALPHA_MULTIPLIER_MAX = 4.0     # cap: prevent runaway adaptation
+BASELINE_ALPHA_LEARNING_RATE = 0.15     # step size for multiplier adjustment
+BASELINE_ALPHA_FP_BOOST = 0.5           # how much to increase multiplier per FP
+BASELINE_ALPHA_TP_REDUCE = 0.3          # how much to decrease multiplier per TP
+
 # ── Signal type → feature dimension mapping (for false positive baseline adjustment) ──
 # Maps each signal type to the FEATURE_DIMENSIONS it influences.
 # When a false positive is recorded, we boost the EMA alpha for these features
@@ -374,6 +384,10 @@ class AdaptiveWeights:
 
     def __init__(self, db: Any = None):
         self._feedback: Dict[str, SignalFeedback] = {}
+        # Per-feature baseline adaptation multipliers.
+        # multiplier > 1.0 -> faster baseline adaptation (learned from FPs)
+        # multiplier < 1.0 -> slower baseline adaptation (learned from TPs)
+        self._feature_alpha_multipliers: Dict[str, float] = {}
         self.db = db
         if db:
             self._ensure_table()
@@ -399,28 +413,41 @@ class AdaptiveWeights:
                     current_weight=row[5],
                     decay_multiplier=row[6] or 1.0,
                 )
-            logger.info("Loaded %d adaptive weight entries from DB", len(self._feedback))
+                # Load feature alpha multipliers (column 7, JSONB -> dict)
+                raw_multipliers = row[7] if len(row) > 7 else None
+                if raw_multipliers:
+                    if isinstance(raw_multipliers, str):
+                        raw_multipliers = json.loads(raw_multipliers)
+                    self._feature_alpha_multipliers.update(raw_multipliers)
+            logger.info(
+                "Loaded %d adaptive weight entries, %d feature alpha multipliers from DB",
+                len(self._feedback), len(self._feature_alpha_multipliers),
+            )
         except Exception as e:
             logger.debug("No adaptive weights in DB yet: %s", e)
 
     def save_to_db(self) -> None:
-        """Persist current adaptive weights to database."""
+        """Persist current adaptive weights and feature alpha multipliers to database."""
         if not self.db:
             return
         try:
+            # Serialize feature alpha multipliers once (shared across all rows)
+            multipliers_json = json.dumps(self._feature_alpha_multipliers) if self._feature_alpha_multipliers else None
+
             for st, fb in self._feedback.items():
                 self.db.execute("""
                     INSERT INTO adaptive_weights
                         (signal_type, attack_count, benign_count, last_attack,
-                         last_benign, weight, decay_multiplier)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                         last_benign, weight, decay_multiplier, feature_alpha_multipliers)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (signal_type) DO UPDATE SET
                         attack_count = EXCLUDED.attack_count,
                         benign_count = EXCLUDED.benign_count,
                         last_attack = EXCLUDED.last_attack,
                         last_benign = EXCLUDED.last_benign,
                         weight = EXCLUDED.weight,
-                        decay_multiplier = EXCLUDED.decay_multiplier
+                        decay_multiplier = EXCLUDED.decay_multiplier,
+                        feature_alpha_multipliers = EXCLUDED.feature_alpha_multipliers
                 """, (
                     st,
                     fb.attack_count,
@@ -429,6 +456,7 @@ class AdaptiveWeights:
                     fb.last_benign.isoformat() if fb.last_benign else None,
                     fb.current_weight,
                     fb.decay_multiplier,
+                    multipliers_json,
                 ))
             self.db.commit()
         except Exception as e:
@@ -445,6 +473,51 @@ class AdaptiveWeights:
         """Get decay multiplier: >1 means faster decay for stale/benign signals."""
         fb = self._feedback.get(signal_type)
         return fb.decay_multiplier if fb else 1.0
+
+    # ── Per-feature baseline adaptation multipliers ──
+
+    def get_feature_alpha_multiplier(self, feature: str) -> float:
+        """Get the alpha multiplier for a feature dimension.
+
+        Returns 1.0 (no scaling) when no multiplier has been learned.
+        multiplier > 1.0 means the baseline adapts faster (FP history).
+        multiplier < 1.0 means the baseline adapts slower (TP history).
+        """
+        return self._feature_alpha_multipliers.get(feature, 1.0)
+
+    def adjust_feature_alpha(self, feature: str, direction: str) -> None:
+        """Adjust the baseline adaptation multiplier for a feature.
+
+        Args:
+            feature: Feature dimension name (e.g. 'conn_rate').
+            direction: 'increase' to speed up adaptation (false positive),
+                       'decrease' to slow down adaptation (true positive).
+        """
+        current = self._feature_alpha_multipliers.get(feature, 1.0)
+        if direction == "increase":
+            new = min(
+                current + BASELINE_ALPHA_FP_BOOST,
+                BASELINE_ALPHA_MULTIPLIER_MAX,
+            )
+        elif direction == "decrease":
+            new = max(
+                current - BASELINE_ALPHA_TP_REDUCE,
+                BASELINE_ALPHA_MULTIPLIER_MIN,
+            )
+        else:
+            logger.warning("Unknown alpha direction '%s' for feature '%s'", direction, feature)
+            return
+
+        if new != current:
+            self._feature_alpha_multipliers[feature] = new
+            logger.debug(
+                "Feature alpha multiplier: %s %.3f -> %.3f (%s)",
+                feature, current, new, direction,
+            )
+
+    def get_feature_alpha_summary(self) -> Dict[str, float]:
+        """Return current feature alpha multipliers for monitoring."""
+        return dict(self._feature_alpha_multipliers)
 
     def record_attack(self, signal_types: List[str], timestamp: Optional[datetime] = None) -> None:
         """Record that a confirmed attack contained these signal types.
@@ -477,6 +550,9 @@ class AdaptiveWeights:
                 st, fb.current_weight, fb.decay_multiplier,
                 fb.attack_count, fb.benign_count,
             )
+            # True positive -> decrease alpha multiplier (keep baseline strict)
+            for feature in SIGNAL_TYPE_TO_FEATURES.get(st, []):
+                self.adjust_feature_alpha(feature, "decrease")
 
     def record_benign(self, signal_types: List[str], timestamp: Optional[datetime] = None) -> None:
         """Record that a confirmed-benign IP contained these signal types.
@@ -508,6 +584,9 @@ class AdaptiveWeights:
                 st, fb.current_weight, fb.decay_multiplier,
                 fb.attack_count, fb.benign_count,
             )
+            # False positive -> increase alpha multiplier (baseline adapts faster)
+            for feature in SIGNAL_TYPE_TO_FEATURES.get(st, []):
+                self.adjust_feature_alpha(feature, "increase")
 
     def get_feedback_summary(self) -> Dict[str, Dict[str, Any]]:
         """Return current state of all adaptive weights for monitoring."""
@@ -529,8 +608,12 @@ class AdaptiveWeights:
             if signal_type in self._feedback:
                 self._feedback[signal_type].current_weight = None
                 self._feedback[signal_type].decay_multiplier = 1.0
+            # Also reset feature alpha multipliers for this signal's features
+            for feature in SIGNAL_TYPE_TO_FEATURES.get(signal_type, []):
+                self._feature_alpha_multipliers.pop(feature, None)
         else:
             self._feedback.clear()
+            self._feature_alpha_multipliers.clear()
 
 
 # ============================================================
@@ -2409,7 +2492,18 @@ class UnifiedBehavioralEngine:
             The UnifiedIPProfile instance.
         """
         if ip not in self._profiles:
-            self._profiles[ip] = UnifiedIPProfile(ip)
+            profile = UnifiedIPProfile(ip)
+            # Apply global feature alpha multipliers to new profile baselines
+            for window in profile.baselines:
+                for feature, baseline in profile.baselines[window].items():
+                    multiplier = self.adaptive_weights.get_feature_alpha_multiplier(feature)
+                    if multiplier != 1.0:
+                        baseline.alpha *= multiplier
+                        logger.debug(
+                            "New profile %s: %s/%s alpha scaled %.3f -> %.3f (mult=%.3f)",
+                            ip, window, feature, baseline.alpha / multiplier, baseline.alpha, multiplier,
+                        )
+            self._profiles[ip] = profile
         return self._profiles[ip]
 
     def _add_signal(self, ip: str, signal: UnifiedSignal) -> None:
