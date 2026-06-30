@@ -3993,6 +3993,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(api_behavior_profile_by_ip(profile_ip))
             elif path == "/api/behavior-overview":
                 self._send_json(api_behavior_overview())
+            elif path == "/api/feedback-history":
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                ip_filter = query.get("ip", [None])[0]
+                limit = int(query.get("limit", ["50"])[0])
+                self._send_json(api_feedback_history(ip_filter, limit))
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -4339,6 +4344,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 import traceback
                 self._send_json({"success": False, "error": str(e), "traceback": traceback.format_exc()}, 500)
+        # ─── P6-T2: IP-level incident feedback ──────────────────────
+        elif path == "/api/incident-feedback":
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl) if cl else b"{}"
+            data = json.loads(body)
+            try:
+                result = api_ip_feedback(data)
+                if isinstance(result, tuple):
+                    payload, status_code = result
+                else:
+                    payload, status_code = result, 200
+                self._send_json(payload, status_code)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
         else:
             self.send_response(405)
             self.end_headers()
@@ -4596,6 +4615,26 @@ def query_wan_flaps():
 _incident_manager_instance = None
 _incident_manager_lock = threading_lib.Lock()
 
+# ─── Behavioral Engine Singleton ────────────────────────────────────
+_behavioral_engine_instance = None
+_behavioral_engine_lock = threading_lib.Lock()
+
+
+def _get_behavioral_engine():
+    """Get or create the singleton UnifiedBehavioralEngine instance."""
+    global _behavioral_engine_instance
+    if _behavioral_engine_instance is None:
+        with _behavioral_engine_lock:
+            if _behavioral_engine_instance is None:
+                try:
+                    db = EventDatabase()
+                    _behavioral_engine_instance = __import__(
+                        "unified_behavioral_engine", fromlist=["UnifiedBehavioralEngine"]
+                    ).UnifiedBehavioralEngine(db)
+                except Exception as e:
+                    logger.warning("Failed to create UnifiedBehavioralEngine: %s", e)
+    return _behavioral_engine_instance
+
 
 def _get_incident_manager():
     """Get or create the singleton IncidentManager instance."""
@@ -4782,6 +4821,124 @@ def api_bulk_transition(data: dict):
         "failed": len(inc_ids) - success_count,
         "results": {k: {"success": s, "message": m} for k, (s, m) in results.items()},
     }
+
+
+# ─── P6-T2: IP-level feedback endpoints ──────────────────────────
+
+def api_ip_feedback(data: dict):
+    """POST /api/incident-feedback — Record feedback for an IP address.
+
+    label: 'attack' (true positive) or 'benign' (false positive).
+    signal_types: list of signal type strings (optional).
+    notes: free-form notes (optional).
+
+    Routes to UnifiedBehavioralEngine.record_true_positive / record_false_positive.
+    """
+    ip = data.get("ip", "")
+    label = data.get("label", "").lower()
+    signal_types = data.get("signal_types", [])
+    notes = data.get("notes", "")
+
+    if not ip:
+        return {"success": False, "message": "Missing required field: ip"}, 400
+    if label not in ("attack", "benign"):
+        return {"success": False, "message": "label must be 'attack' or 'benign'"}, 400
+
+    try:
+        engine = _get_behavioral_engine()
+        if engine is None:
+            return {"success": False, "message": "Behavioral engine not available"}, 503
+        if label == "attack":
+            engine.record_true_positive(ip, signal_types or None, notes=notes if notes else None)
+        else:
+            engine.record_false_positive(ip, signal_types or None, notes=notes if notes else None)
+        return {
+            "success": True,
+            "message": f"{label} feedback recorded for {ip}",
+            "ip": ip,
+            "label": label,
+        }, 201
+    except Exception as e:
+        logger.error("api_ip_feedback failed: %s", e)
+        return {"success": False, "message": str(e)}, 500
+
+
+def api_feedback_history(ip: str | None = None, limit: int = 50):
+    """GET /api/feedback-history — Return feedback history, optionally filtered by IP."""
+    try:
+        conn = get_db()
+        if not conn:
+            return {"error": "No database connection", "feedback": [], "count": 0}
+
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)  # type: ignore[union-attr]
+        try:
+            if ip:
+                cur.execute(
+                    """
+                    SELECT
+                        fb.id,
+                        fb.incident_id,
+                        i.ip,
+                        fb.feedback_type,
+                        fb.confidence,
+                        fb.timestamp,
+                        fb.notes,
+                        i.severity,
+                        i.signal_types,
+                        i.signal_count
+                    FROM incident_feedback fb
+                    JOIN incidents i ON i.id = fb.incident_id
+                    WHERE i.ip = %s
+                    ORDER BY fb.timestamp DESC
+                    LIMIT %s
+                    """,
+                    (ip, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT
+                        fb.id,
+                        fb.incident_id,
+                        i.ip,
+                        fb.feedback_type,
+                        fb.confidence,
+                        fb.timestamp,
+                        fb.notes,
+                        i.severity,
+                        i.signal_types,
+                        i.signal_count
+                    FROM incident_feedback fb
+                    JOIN incidents i ON i.id = fb.incident_id
+                    ORDER BY fb.timestamp DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+
+            rows = cur.fetchall()
+            feedback = []
+            for row in rows:
+                feedback.append({
+                    "id": row["id"],
+                    "incident_id": row["incident_id"],
+                    "ip": row["ip"],
+                    "feedback_type": row["feedback_type"],
+                    "confidence": row["confidence"],
+                    "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                    "notes": row["notes"],
+                    "severity": row["severity"],
+                    "signal_types": row["signal_types"] or [],
+                    "signal_count": row["signal_count"] or 0,
+                })
+
+            return {"feedback": feedback, "count": len(feedback)}
+        finally:
+            cur.close()
+
+    except Exception as e:
+        logger.error("api_feedback_history failed: %s", e)
+        return {"error": str(e), "feedback": [], "count": 0}
 
 
 def query_opnsense_firewall_rules():
