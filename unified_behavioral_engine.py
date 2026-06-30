@@ -1235,6 +1235,14 @@ class UnifiedBehavioralEngine:
         # ── Global statistical baselines (from statistical_model.py) ──
         self._global_baselines: Dict[str, RunningStats] = {}
 
+        # ── Unique tracking (from statistical_model.py) ──
+        self._src_ips_per_min: Dict[str, set] = defaultdict(set)
+        self._dst_ips_per_min: Dict[str, set] = defaultdict(set)
+        self._ports_per_min: Dict[str, set] = defaultdict(set)
+
+        # ── Temporal tracking: per-hour-of-day event counts (z-score temporal anomaly) ──
+        self._hourly_counts: Dict[int, int] = Counter()
+
         # ── Counters for stats ──
         self._total_ingested = 0
         self._total_signals = 0
@@ -1249,6 +1257,9 @@ class UnifiedBehavioralEngine:
         self._global_baselines["unique_dst_per_minute"] = RunningStats()
         self._global_baselines["unique_dst_ports_per_minute"] = RunningStats()
         self._global_baselines["packets_per_minute"] = RunningStats()
+
+        # ── Per-minute update tracking ──
+        self._last_per_minute_update: Optional[str] = None
 
         logger.info("UnifiedBehavioralEngine initialized")
 
@@ -1565,10 +1576,12 @@ class UnifiedBehavioralEngine:
     def get_stats(self) -> Dict[str, Any]:
         """Get engine statistics for dashboard.
 
+        Replaces: StatisticalModel.get_stats() + UnifiedBehavioralEngine.get_stats()
+
         Returns:
             Dict with total_profiles, total_ingested, total_signals,
-            threat_level_counts, adaptive_weights_summary, and
-            global baseline summaries.
+            threat_level_counts, adaptive_weights_summary, global baselines,
+            unique_ips, unique_ports, hourly_counts.
         """
         with self._lock:
             total_profiles = len(self._profiles)
@@ -1582,6 +1595,14 @@ class UnifiedBehavioralEngine:
                 level = p.get_threat_level()
                 threat_counts[level.name] += 1
 
+        now = datetime.now(timezone.utc)
+        bucket = self._bucket_key(now)
+        unique_ips = (
+            len(self._src_ips_per_min.get(bucket, set()))
+            + len(self._dst_ips_per_min.get(bucket, set()))
+        )
+        unique_ports = len(self._ports_per_min.get(bucket, set()))
+
         return {
             "total_profiles": total_profiles,
             "total_ingested": total_ingested,
@@ -1589,6 +1610,9 @@ class UnifiedBehavioralEngine:
             "threat_level_counts": dict(threat_counts),
             "adaptive_weights_summary": self.adaptive_weights.get_feedback_summary(),
             "global_baselines": self.get_baseline_summary(),
+            "unique_ips": unique_ips,
+            "unique_ports": unique_ports,
+            "hourly_counts": dict(self._hourly_counts),
         }
 
     def get_baseline_summary(self) -> Dict[str, Any]:
@@ -1638,7 +1662,116 @@ class UnifiedBehavioralEngine:
                 })
         return anomalies
 
-    # ── Persistence ──
+    # ── Agent.py compatibility methods ──
+
+    def add_events(self, events: List[Dict[str, Any]]) -> None:
+        """Process a batch of events (agent.py compatibility alias for ingest_batch).
+
+        Replaces: StatisticalModel.add_events()
+        """
+        self.ingest_batch(events)
+
+    def learn(self, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Learn from a batch of events — ingest, update baselines, check anomalies.
+
+        Replaces: StatisticalModel.learn()
+
+        Args:
+            events: List of parsed event dicts.
+
+        Returns:
+            Dict with learning summary including events processed, baselines,
+            and any detected anomalies.
+        """
+        # Ingest all events
+        signals_by_ip = self.ingest_batch(events)
+
+        # Check for statistical anomalies in current rates
+        current_rates = self._current_rates_snapshot()
+        anomalies = self.get_all_anomaly_checks(current_rates)
+
+        # Check for temporal anomalies (hourly distribution z-scores)
+        temporal_anomalies = self._check_temporal_anomalies()
+
+        total_signals = sum(len(sigs) for sigs in signals_by_ip.values())
+
+        return {
+            "events_processed": len(events),
+            "events_learned": len(events),
+            "signals_generated": total_signals,
+            "statistical_anomalies": len(anomalies),
+            "temporal_anomalies": len(temporal_anomalies),
+            "baselines_count": len(self._global_baselines),
+            "summary": self.get_baseline_summary(),
+        }
+
+    def _current_rates_snapshot(self) -> Dict[str, float]:
+        """Take a snapshot of current global rates for anomaly checking.
+
+        Returns:
+            Dict mapping metric_name -> current estimated rate.
+        """
+        now = datetime.now(timezone.utc)
+        bucket = self._bucket_key(now)
+
+        # Use per-minute unique counts as proxy for current rates
+        src_count = len(self._src_ips_per_min.get(bucket, set()))
+        dst_count = len(self._dst_ips_per_min.get(bucket, set()))
+        port_count = len(self._ports_per_min.get(bucket, set()))
+
+        # Current bucket counts from RunningStats latest values
+        rates: Dict[str, float] = {}
+        rates["unique_src_per_minute"] = float(src_count)
+        rates["unique_dst_per_minute"] = float(dst_count)
+        rates["unique_dst_ports_per_minute"] = float(port_count)
+
+        # Use the latest values from running stats as current rates
+        for name, stats in self._global_baselines.items():
+            if stats.count > 0 and name not in rates:
+                latest = stats.latest_values(1)
+                if latest:
+                    rates[name] = latest[0]
+
+        return rates
+
+    def _check_temporal_anomalies(self) -> List[Dict[str, Any]]:
+        """Check hourly distribution for temporal anomalies using z-scores.
+
+        Compares each hour's event count against the overall hourly distribution.
+        If a particular hour has significantly more/fewer events than expected,
+        flag it as a temporal anomaly.
+
+        Replaces: StatisticalModel temporal anomaly detection (embedded in Baseline.is_anomalous)
+
+        Returns:
+            List of temporal anomaly dicts.
+        """
+        if len(self._hourly_counts) < 12:  # Need enough hours to detect patterns
+            return []
+
+        hourly_values = list(self._hourly_counts.values())
+        hourly_stats = RunningStats()
+        for v in hourly_values:
+            hourly_stats.update(float(v))
+
+        anomalies = []
+        if hourly_stats.count < 12 or hourly_stats.stddev == 0:
+            return anomalies
+
+        for hour, count in self._hourly_counts.items():
+            z = hourly_stats.z_score(float(count))
+            if abs(z) > DEFAULT_ANOMALY_THRESHOLD:
+                anomalies.append({
+                    "type": "TEMPORAL_ANOMALY",
+                    "hour": hour,
+                    "z_score": round(z, 2),
+                    "count": count,
+                    "baseline_mean": round(hourly_stats.mean, 2),
+                    "baseline_stddev": round(hourly_stats.stddev, 2),
+                    "severity": "CRITICAL" if abs(z) >= 5.0 else "HIGH" if abs(z) >= 4.0 else "MEDIUM",
+                })
+
+        return anomalies
 
     def periodic_persist(self) -> int:
         """Persist all dirty profiles and adaptive weights to DB.
@@ -2251,6 +2384,9 @@ class UnifiedBehavioralEngine:
         Updates running stats for: events_per_minute, syn_per_minute,
         blocked_per_minute, icmp_per_minute, udp_per_minute, etc.
 
+        Also tracks unique IPs/ports per minute and hourly distributions
+        for temporal anomaly detection.
+
         Replaces: StatisticalModel.record_event()
 
         Args:
@@ -2278,3 +2414,62 @@ class UnifiedBehavioralEngine:
         # Action tracking
         if action in ("BLOCK", "block"):
             self._global_baselines["blocked_per_minute"].update(1)
+
+        # ── Unique tracking (from statistical_model.py) ──
+        ts = event.get("timestamp")
+        bucket = self._bucket_key(ts) if ts else self._bucket_key(datetime.now(timezone.utc))
+
+        src_ip = event.get("src_ip")
+        dst_ip = event.get("dst_ip")
+        dst_port = event.get("dport") or event.get("dst_port")
+
+        if src_ip:
+            self._src_ips_per_min[bucket].add(src_ip)
+        if dst_ip:
+            self._dst_ips_per_min[bucket].add(dst_ip)
+        if dst_port is not None:
+            self._ports_per_min[bucket].add(dst_port)
+
+        # ── Hourly distribution tracking ──
+        if isinstance(ts, datetime):
+            self._hourly_counts[ts.hour] += 1
+        elif isinstance(ts, str):
+            try:
+                self._hourly_counts[datetime.fromisoformat(ts.replace("Z", "+00:00")).hour] += 1
+            except (ValueError, AttributeError):
+                pass
+
+        # ── Update per-minute unique counts (once per minute bucket) ──
+        if bucket != self._last_per_minute_update:
+            self._update_per_minute_rates(bucket)
+            self._last_per_minute_update = bucket
+
+    def _update_per_minute_rates(self, bucket: str) -> None:
+        """Update per-minute unique counts baselines.
+
+        Replaces: StatisticalModel.update_per_minute_rates()
+
+        Args:
+            bucket: The minute-level bucket key string.
+        """
+        src_count = len(self._src_ips_per_min.get(bucket, set()))
+        dst_count = len(self._dst_ips_per_min.get(bucket, set()))
+        port_count = len(self._ports_per_min.get(bucket, set()))
+
+        if src_count > 0:
+            self._global_baselines["unique_src_per_minute"].update(src_count)
+        if dst_count > 0:
+            self._global_baselines["unique_dst_per_minute"].update(dst_count)
+        if port_count > 0:
+            self._global_baselines["unique_dst_ports_per_minute"].update(port_count)
+
+    def _bucket_key(self, ts: datetime) -> str:
+        """Create a minute-level bucket key.
+
+        Args:
+            ts: Timestamp to bucket.
+
+        Returns:
+            String in YYYY-MM-DD HH:MM format.
+        """
+        return ts.strftime("%Y-%m-%d %H:%M")
