@@ -94,7 +94,6 @@ from zenarmor_classifier import ZenArmorClassifier
 from ids_signature_analyzer import IDSSignatureAnalyzer
 from nginx_monitor import NginxMonitor
 from unifi_monitor import UniFiMonitor
-from threat_engine import ThreatEngine
 from baseline_engine import BaselineEngine
 from anomaly_detector import AnomalyDetector
 from threshold_tuner import ThresholdTuner
@@ -622,10 +621,9 @@ class OPNsenseAgent:
         self.backup_interval = int(os.getenv("BACKUP_INTERVAL_SECONDS", "86400"))
 
         try:
-            # Unified threat engine + baseline engine
+            # Unified behavioral engine replaces ThreatEngine + BehaviorProfiler + BaselineEngine + StatisticalModel
             self.baseline_engine = BaselineEngine(self.db)
-            self.threat_engine = ThreatEngine(self.db, baseline_engine=self.baseline_engine)
-            logger.info("Initialized threat_engine and baseline_engine")
+            logger.info("Initialized baseline_engine")
             # Initialize threshold auto-tuner (Phase 5)
             self.threshold_tuner = ThresholdTuner(self.db)
             logger.info("Threshold auto-tuner initialized")
@@ -637,7 +635,6 @@ class OPNsenseAgent:
         except Exception as e:
             logger.warning("Failed to initialize threat/baseline engines: %s", e)
             self.baseline_engine = None
-            self.threat_engine = None
             self.threshold_tuner = None
             self.anomaly_detector = None
         self._adapt_cycle = 0
@@ -1151,8 +1148,8 @@ class OPNsenseAgent:
             threat_score = 0.0
             country = ""
             if src_ip:
-                if self.threat_engine:
-                    threat_score = self.threat_engine.score_ip(src_ip)
+                if self.behavior_profiler:
+                    threat_score = self.behavior_profiler.get_behavioral_score(src_ip)
                 try:
                     cc = self.geo_lookup._detector.lookup_country(src_ip)
                     if cc:
@@ -1188,10 +1185,6 @@ class OPNsenseAgent:
                 rules.setdefault(rule, []).append(e)
             for rule, rule_events in rules.items():
                 self.baseline_engine.update_baseline(rule, rule_events)
-
-        # Threat engine — batch ingest firewall events
-        if self.threat_engine and fw_events:
-            self.threat_engine.ingest_firewall_events(fw_events)
 
         # Behavior profiler — ingest all events for behavioral profiling
         if self.behavior_profiler:
