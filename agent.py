@@ -31,19 +31,6 @@ import threading
 from threading import Thread, Event, Condition, Lock
 from typing import Dict, Any, Optional, List, Tuple
 
-try:
-    import redis as redis_lib
-    HAS_REDIS = True
-except ImportError:
-    HAS_REDIS = False
-
-try:
-    import redis
-    redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), socket_timeout=2, decode_responses=True)
-    redis_client.ping()
-except Exception:
-    redis_client = None
-
 import requests
 
 # Structured JSON logging
@@ -58,6 +45,32 @@ LOG_FILE_PATH = os.environ.get("LOG_FILE", str(DATA_DIR / "agent.log"))
 setup_json_logging(level=logging.INFO, log_file=LOG_FILE_PATH)
 logger = logging.getLogger(__name__)
 slogger = get_structured_logger(__name__)
+
+# ── Lazy Redis client ──────────────────────────────────────────────────
+_redis_client = None
+_redis_available = False
+
+
+def _get_redis_client():
+    """Return a Redis client, initializing lazily. Returns None if unavailable."""
+    global _redis_client, _redis_available
+    if _redis_available and _redis_client is not None:
+        return _redis_client
+    try:
+        import redis
+        _redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"),
+                                       socket_timeout=3, decode_responses=True)
+        _redis_client.ping()
+        _redis_available = True
+        return _redis_client
+    except Exception:
+        _redis_available = False
+        _redis_client = None
+        return None
+
+
+redis_client = _get_redis_client()  # Initial attempt (cached for backward compat)
+
 
 # Import submodules
 from adaptive_parser import AdaptiveParser
@@ -159,6 +172,11 @@ class Config:
         self.reverse_dns_cache_ttl = int(os.getenv("REVERSE_DNS_CACHE_TTL", "3600"))
         self.reverse_dns_static_map = os.getenv("REVERSE_DNS_STATIC_MAP", "")
         self.redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        # Redis Stream consumer group configuration
+        self.redis_stream_enabled = os.getenv("REDIS_STREAM_ENABLED", "false").lower() in ("true", "1", "yes")
+        self.redis_stream_name = os.getenv("REDIS_STREAM_NAME", "event_ingest")
+        self.redis_stream_group = os.getenv("REDIS_STREAM_GROUP", "agent_group")
+        self.redis_stream_consumer = os.getenv("REDIS_STREAM_CONSUMER", f"consumer_{os.getpid()}")
         # Polling
         self.poll_interval = int(os.getenv("POLL_INTERVAL", "2"))
         self.batch_size = int(os.getenv("BATCH_SIZE", "50"))
@@ -689,6 +707,13 @@ class OPNsenseAgent:
         # Load consolidated state (covers zenarmor, ids, nginx, unifi + all other modules)
         self.persistence.load(self)
         
+        # Redis Stream consumer group — primary event source (P1-T4)
+        self._redis_stream_ready = False
+        if self.config.redis_stream_enabled:
+            self._init_redis_stream()
+        else:
+            logger.info("Redis Stream consumer disabled (set REDIS_STREAM_ENABLED=true)")
+        
         # Startup health checks
         self._check_startup_health()
         self._start_maintenance_thread()
@@ -893,6 +918,95 @@ class OPNsenseAgent:
                 logger.error(f"Scheduled backup failed: {result.get('error', 'unknown')}")
         except Exception as e:
             logger.error(f"Scheduled backup error: {e}")
+
+    # ── Redis Stream consumer group ────────────────────────────────────
+    def _init_redis_stream(self):
+        """Initialize Redis Stream consumer group. Creates group if missing."""
+        rc = _get_redis_client()
+        if rc is None:
+            logger.warning("Redis unavailable — agent will fall back to in-memory buffer")
+            return
+
+        stream = self.config.redis_stream_name
+        group = self.config.redis_stream_group
+        consumer = self.config.redis_stream_consumer
+
+        try:
+            # Create consumer group if it doesn't exist (MKSTREAM=False so we don't
+            # blow up if the stream was already created by syslog_listener)
+            rc.xgroup_create(stream, group, id="0", mkstream=False)
+        except Exception:
+            # Group already exists — that's fine
+            pass
+
+        self._redis_stream_ready = True
+        logger.info(
+            "Redis Stream consumer initialized: stream=%s group=%s consumer=%s",
+            stream, group, consumer,
+        )
+
+    def _read_redis_batch(self, block_ms: int = 2000, count: int = 50) -> list[dict]:
+        """Read a batch of events from the Redis Stream consumer group.
+
+        Returns a list of parsed event dicts.  Falls back to the in-memory
+        buffer if Redis is unavailable.
+        """
+        # Fast-path: try Redis first if enabled
+        if self._redis_stream_ready:
+            rc = _get_redis_client()
+            if rc is not None:
+                stream = self.config.redis_stream_name
+                group = self.config.redis_stream_group
+                consumer = self.config.redis_stream_consumer
+                try:
+                    # XREADGROUP returns: [(stream_name, [(msg_id, {field: value}), ...])]
+                    response = rc.xreadgroup(
+                        group,
+                        consumer,
+                        {stream: ">"},  # '>' = only new messages
+                        count=count,
+                        block=block_ms,
+                    )
+                    if not response:
+                        return []
+
+                    _, messages = response[0]
+                    events: list[dict] = []
+                    for _msg_id, fields in messages:
+                        # syslog_listener pushes { "event": json_str }
+                        event_json = fields.get("event", "{}")
+                        try:
+                            event = json.loads(event_json) if isinstance(event_json, str) else event_json
+                            if not isinstance(event, dict):
+                                event = {"raw": str(event)}
+                        except (json.JSONDecodeError, TypeError):
+                            event = {"raw": str(event_json)}
+                        events.append(event)
+
+                        # ACK each message individually
+                        try:
+                            rc.xack(stream, group, _msg_id)
+                        except Exception:
+                            pass
+
+                    if events:
+                        logger.debug("Read %d events from Redis Stream", len(events))
+                    return events
+
+                except Exception as e:
+                    # Redis connection dropped — fall through to in-memory buffer
+                    if self._redis_stream_ready:
+                        logger.warning("Redis XREADGROUP failed (falling back to buffer): %s", e)
+                        self._redis_stream_ready = False
+
+        # Fallback: read from in-memory buffer (legacy path)
+        with self._event_cond:
+            if not self._event_buffer:
+                self._event_cond.wait(timeout=block_ms / 1000)
+            batch = self._event_buffer[:count]
+            del self._event_buffer[:len(batch)]
+
+        return batch
 
     # ── event callback (from syslog listener thread) ─────────────────
     def _on_event(self, event: dict):
@@ -1459,11 +1573,11 @@ class OPNsenseAgent:
 
         while not self._shutdown.is_set():
             try:
-                with self._event_cond:
-                    if not self._event_buffer:
-                        self._event_cond.wait(timeout=self.config.poll_interval)
-                    events = self._event_buffer[:self.config.batch_size]
-                    del self._event_buffer[:len(events)]
+                # P1-T4: Read from Redis Stream consumer group (falls back to in-memory buffer)
+                events = self._read_redis_batch(
+                    block_ms=int(self.config.poll_interval * 1000),
+                    count=self.config.batch_size,
+                )
 
                 if events:
                     now = time.time()
@@ -1586,7 +1700,7 @@ class OPNsenseAgent:
                         except Exception as e:
                             logger.warning("Status log failed: %s", e)
 
-                time.sleep(self.config.poll_interval)
+                # _read_redis_batch already blocks via BLOCK or cond.wait — no extra sleep
 
             except KeyboardInterrupt:
                 logger.info("\nShutting down...")
