@@ -2395,11 +2395,11 @@ def query_health():
             has_ts = cur.fetchone()[0]
             ts_info = {"timescaledb_enabled": has_ts, "hypertable": False, "chunks": 0}
             if has_ts:
-                # Check hypertable status
+                # Check hypertable status (normalized_events is the hypertable)
                 cur.execute("""
                     SELECT hypertable_schema, hypertable_name
                     FROM timescaledb_information.hypertables
-                    WHERE hypertable_name = 'events'
+                    WHERE hypertable_schema = 'public' AND hypertable_name = 'normalized_events'
                 """)
                 ht = cur.fetchone()
                 ts_info["hypertable"] = ht is not None
@@ -2407,7 +2407,7 @@ def query_health():
                     cur.execute("""
                         SELECT count(*)
                         FROM timescaledb_information.chunks
-                        WHERE hypertable_name = 'events'
+                        WHERE table_name = 'normalized_events'
                     """)
                     ts_info["chunks"] = cur.fetchone()[0]
                     # Version info
@@ -2417,7 +2417,7 @@ def query_health():
                 if ts_info["hypertable"]:
                     msg_parts.append(f"hypertable with {ts_info['chunks']} chunks")
                 else:
-                    msg_parts.append("events table NOT converted to hypertable")
+                    msg_parts.append("normalized_events table NOT converted to hypertable")
                 subsystems["timescaledb"] = {
                     "status": "active",
                     "message": "; ".join(msg_parts),

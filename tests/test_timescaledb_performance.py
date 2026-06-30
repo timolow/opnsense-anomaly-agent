@@ -4,9 +4,9 @@ Measures the three critical dashboard queries under realistic data volumes
 and documents hypertable status (chunks, compression, index strategy).
 
 Queries benchmarked:
-  1. SELECT count(*) FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
-  2. SELECT src_ip, count(*) FROM events WHERE timestamp > NOW() - INTERVAL '1 hour' GROUP BY src_ip
-  3. SELECT action, count(*) FROM events WHERE timestamp > NOW() - INTERVAL '6 hours' GROUP BY action
+  1. SELECT count(*) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
+  2. SELECT src_ip, count(*) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '1 hour' GROUP BY src_ip
+  3. SELECT action, count(*) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '6 hours' GROUP BY action
 
 Target: <100ms for 24h range queries on hypertable (vs 2-14s on plain table).
 
@@ -49,17 +49,17 @@ for mod in list(sys.modules):
 BENCHMARK_QUERIES = {
     "count_24h": {
         "name": "Event count (24h window)",
-        "sql": "SELECT count(*) FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'",
+        "sql": "SELECT count(*) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'",
         "target_ms": 100,
     },
     "groupby_srcip_1h": {
         "name": "Source IP distribution (1h window)",
-        "sql": "SELECT src_ip, count(*) FROM events WHERE timestamp > NOW() - INTERVAL '1 hour' GROUP BY src_ip",
+        "sql": "SELECT src_ip, count(*) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '1 hour' GROUP BY src_ip",
         "target_ms": 100,
     },
     "groupby_action_6h": {
         "name": "Action distribution (6h window)",
-        "sql": "SELECT action, count(*) FROM events WHERE timestamp > NOW() - INTERVAL '6 hours' GROUP BY action",
+        "sql": "SELECT action, count(*) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '6 hours' GROUP BY action",
         "target_ms": 100,
     },
 }
@@ -100,7 +100,7 @@ def _is_timescaledb_available(conn):
         cur.close()
 
 
-def _is_hypertable(conn, table="events"):
+def _is_hypertable(conn, table="normalized_events"):
     """Check if the table is a TimescaleDB hypertable."""
     cur = conn.cursor()
     try:
@@ -116,7 +116,7 @@ def _is_hypertable(conn, table="events"):
         cur.close()
 
 
-def _get_hypertable_info(conn, table="events"):
+def _get_hypertable_info(conn, table="normalized_events"):
     """Get hypertable metadata: chunks, compression, retention."""
     cur = conn.cursor()
     info = {}
@@ -127,7 +127,7 @@ def _get_hypertable_info(conn, table="events"):
                 count(*) AS num_chunks,
                 pg_size_pretty(sum(pg_total_relation_size(chunk_schema || '.' || chunk_name))) AS total_size
             FROM timescaledb_information.chunks
-            WHERE hypertable_name = %s
+            WHERE table_name = %s
         """, (table,))
         row = cur.fetchone()
         info["num_chunks"] = row[0] if row else 0
@@ -144,7 +144,7 @@ def _get_hypertable_info(conn, table="events"):
                 count(*) AS compressed_chunks,
                 pg_size_pretty(sum(pg_total_relation_size(chunk_schema || '.' || chunk_name))) AS compressed_size
             FROM timescaledb_information.chunks
-            WHERE hypertable_name = %s AND compressed = true
+            WHERE table_name = %s AND compressed = true
         """, (table,))
         row = cur.fetchone()
         info["compressed_chunks"] = row[0] if row else 0
@@ -158,20 +158,20 @@ def _get_hypertable_info(conn, table="events"):
 
 
 def _get_table_stats(conn):
-    """Get basic stats about the events table."""
+    """Get basic stats about the normalized_events table."""
     cur = conn.cursor()
     stats = {}
     try:
-        cur.execute("SELECT count(*) FROM events")
+        cur.execute("SELECT count(*) FROM normalized_events")
         stats["total_events"] = cur.fetchone()[0]
         cur.execute("""
-            SELECT min(timestamp), max(timestamp) FROM events
+            SELECT min(timestamp), max(timestamp) FROM normalized_events
         """)
         row = cur.fetchone()
         stats["earliest"] = str(row[0]) if row[0] else None
         stats["latest"] = str(row[1]) if row[1] else None
         cur.execute("""
-            SELECT pg_size_pretty(pg_total_relation_size('events'::regclass))
+            SELECT pg_size_pretty(pg_total_relation_size('normalized_events'::regclass))
         """)
         stats["table_size"] = cur.fetchone()[0]
     except Exception as e:
@@ -185,11 +185,12 @@ def _seed_test_data(conn, count=10000):
     """Insert test events spread over 48 hours for benchmarking.
 
     Uses marker IP 192.168.100.200 so cleanup is straightforward.
+    Inserts into normalized_events with correct schema.
     """
     cur = conn.cursor()
     try:
-        # Ensure events table exists
-        cur.execute("SELECT 1 FROM events LIMIT 1")
+        # Ensure normalized_events table exists
+        cur.execute("SELECT 1 FROM normalized_events LIMIT 1")
 
         # Generate realistic events
         actions = ["PASS", "BLOCK", "MATCH"]
@@ -200,39 +201,37 @@ def _seed_test_data(conn, count=10000):
         events = []
         for i in range(count):
             ts = now - timedelta(seconds=random.randint(0, 48 * 3600))
+            import json
+            payload = {
+                "tcp_flags": "SA",
+                "ip_ttl": random.randint(32, 128),
+                "ip_total_length": random.randint(40, 1500),
+            }
             events.append((
-                ts,
-                SEED_MARKER_IP,
-                f"10.0.{random.randint(0, 255)}.{random.randint(1, 254)}",
-                None, None,
-                random.randint(1024, 65535),
-                random.choice([22, 53, 80, 443, 8080, 3389]),
-                random.choice(protos),
-                random.choice(actions),
-                random.choice(interfaces),
-                "inbound",
-                4,
-                random.randint(32, 128),
-                random.randint(40, 1500),
-                "SA",
-                random.randint(0, 2**32),
-                random.randint(0, 2**32),
-                random.randint(16384, 65535),
-                None,
-                None,
-                None,
-                f"{SEED_MARKER_RAW} benchmark event {i}",
-                f"BENCH_RULE_{random.randint(1, 5)}",
-                "filterlog",
+                ts,                          # timestamp
+                SEED_MARKER_IP,              # src_ip
+                f"10.0.{random.randint(0, 255)}.{random.randint(1, 254)}",  # dst_ip
+                random.randint(1024, 65535), # src_port
+                random.choice([22, 53, 80, 443, 8080, 3389]),  # dst_port
+                random.choice(protos),       # protocol
+                random.choice(actions),      # action
+                random.choice(interfaces),   # interface
+                "inbound",                   # direction
+                None,                        # src_hostname
+                None,                        # dst_hostname
+                json.dumps(payload),         # payload_context (JSONB)
+                "firewall",                  # source
+                "filterlog",                 # log_type
+                f"BENCH_RULE_{random.randint(1, 5)}",  # rule_name
+                f"{SEED_MARKER_RAW} benchmark event {i}",  # raw_message
             ))
 
         cur.execute("""
-            INSERT INTO events
-            (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
-             src_port, dst_port, proto, action, interface,
-             direction, version, ip_ttl, ip_total_length, tcp_flags,
-             tcp_seq, tcp_ack, tcp_window, tcp_options,
-             udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
+            INSERT INTO normalized_events
+            (timestamp, src_ip, dst_ip, src_port, dst_port,
+             protocol, action, interface, direction,
+             src_hostname, dst_hostname, payload_context,
+             source, log_type, rule_name, raw_message)
             VALUES %s
         """, [events])
         conn.commit()
@@ -249,7 +248,7 @@ def _cleanup_seed_data(conn):
     cur = conn.cursor()
     try:
         cur.execute(
-            "DELETE FROM events WHERE src_ip = %s",
+            "DELETE FROM normalized_events WHERE src_ip = %s",
             (SEED_MARKER_IP,)
         )
         conn.commit()
@@ -318,15 +317,15 @@ def run_full_benchmark():
         result = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "timescaledb_available": _is_timescaledb_available(conn),
-            "events_is_hypertable": False,
+            "normalized_events_is_hypertable": False,
             "hypertable_info": {},
             "table_stats": {},
             "benchmarks": {},
         }
 
         if result["timescaledb_available"]:
-            result["events_is_hypertable"] = _is_hypertable(conn)
-            if result["events_is_hypertable"]:
+            result["normalized_events_is_hypertable"] = _is_hypertable(conn)
+            if result["normalized_events_is_hypertable"]:
                 result["hypertable_info"] = _get_hypertable_info(conn)
 
         result["table_stats"] = _get_table_stats(conn)
@@ -395,11 +394,11 @@ class TestTimescaleDBStatus(unittest.TestCase):
         )
 
     def test_events_is_hypertable(self):
-        """events table should be a TimescaleDB hypertable."""
+        """normalized_events table should be a TimescaleDB hypertable."""
         is_ht = _is_hypertable(self.conn)
         self.assertTrue(
             is_ht,
-            "events table is not a hypertable — V20 migration (create_hypertable) has not been applied",
+            "normalized_events table is not a hypertable — V21 migration (create_hypertable) has not been applied",
         )
 
     def test_hypertable_has_chunks(self):
@@ -484,7 +483,7 @@ class TestBenchmarkReport(unittest.TestCase):
         print("=" * 72)
         print(f"Timestamp:           {report['timestamp']}")
         print(f"TimescaleDB enabled: {report['timescaledb_available']}")
-        print(f"Hypertable (events): {report['events_is_hypertable']}")
+        print(f"Hypertable (normalized_events): {report['normalized_events_is_hypertable']}")
 
         if report["hypertable_info"]:
             info = report["hypertable_info"]
