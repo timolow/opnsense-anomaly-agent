@@ -134,6 +134,33 @@ TEMPORAL_DRIFT_THRESHOLD = 0.5
 BASELINE_WINDOW_HOURS = 24
 HOURS_IN_DAY = 24
 
+# ── Feedback settings ──
+# How much to increase EMA alpha for false-positive features (faster baseline adaptation).
+FP_ALPHA_BOOST_FACTOR = 2.5
+# Maximum alpha after false-positive boost (prevent runaway adaptation).
+FP_ALPHA_MAX = 0.4
+
+# ── Signal type → feature dimension mapping (for false positive baseline adjustment) ──
+# Maps each signal type to the FEATURE_DIMENSIONS it influences.
+# When a false positive is recorded, we boost the EMA alpha for these features
+# so the baseline adapts faster and accepts the previously-anomalous behaviour.
+SIGNAL_TYPE_TO_FEATURES: Dict[str, List[str]] = {
+    "deviation_conn_rate":          ["conn_rate"],
+    "deviation_unique_dst_ports":   ["unique_dst_ports"],
+    "deviation_unique_dst_ips":     ["unique_dst_ips"],
+    "deviation_bytes_per_conn":     ["bytes_per_conn"],
+    "deviation_packet_count":       ["packet_count"],
+    "firewall_port_scan":           ["unique_dst_ports", "conn_rate"],
+    "firewall_dest_scan":           ["unique_dst_ips", "conn_rate"],
+    "firewall_block_ratio":         ["conn_rate"],
+    "volume_anomaly":               ["bytes_per_conn", "packet_count"],
+    "temporal_anomaly":             ["conn_rate"],
+    "statistical_anomaly":          ["conn_rate", "packet_count"],
+    # Signal types with no direct baseline feature impact:
+    #   ids_signature, zenarmor_threat, nginx_attack, http_anomaly, geo_anomaly
+    # (these are content/geo signals, not behavioural-volume signals)
+}
+
 # ── Statistical model settings (from statistical_model.py) ──
 DEFAULT_ANOMALY_THRESHOLD = 3.0
 DEFAULT_MIN_SAMPLES = 30
@@ -1570,6 +1597,191 @@ class UnifiedBehavioralEngine:
     def reset_adaptive_weights(self, signal_type: Optional[str] = None) -> None:
         """Reset adaptive weights back to defaults."""
         self.adaptive_weights.reset(signal_type)
+
+    # ── Incident feedback API ──
+
+    def record_false_positive(self, ip: str, signal_types: Optional[List[str]] = None,
+                               timestamp: Optional[datetime] = None,
+                               notes: Optional[str] = None) -> None:
+        """Record that an IP alert was a false positive.
+
+        Two effects:
+        1) Baseline adjustment — increase EMA alpha for affected feature dimensions
+           so the baseline adapts faster and accepts the previously-anomalous behaviour.
+        2) Adaptive weight reduction — delegates to record_benign() which reduces signal
+           weights and increases decay for the false-positive signal types.
+
+        Replaces the missing feedback path in the original threat_engine.py.
+
+        Args:
+            ip: The IP whose alert was a false positive.
+            signal_types: Signal types to adjust.  If None, inferred from the IP profile.
+            timestamp: Optional timestamp; defaults to now.
+            notes: Optional free-form notes persisted alongside the feedback record.
+        """
+        ts = timestamp or datetime.now(timezone.utc)
+
+        # Infer signal types from profile if not provided
+        if signal_types is None:
+            with self._lock:
+                profile = self._profiles.get(ip)
+            if profile and profile.signals:
+                signal_types = list({s.signal_type for s in profile.signals})
+            else:
+                logger.warning("record_false_positive: no signals for %s — skipping", ip)
+                return
+
+        # ── 1) Baseline adjustment: boost EMA alpha for affected features ──
+        with self._lock:
+            profile = self._profiles.get(ip)
+        if profile:
+            adjusted_features: set = set()
+            for st in signal_types:
+                for feature in SIGNAL_TYPE_TO_FEATURES.get(st, []):
+                    adjusted_features.add(feature)
+
+            if adjusted_features:
+                for window in profile.baselines:
+                    for feature in adjusted_features:
+                        baseline = profile.baselines[window].get(feature)
+                        if baseline:
+                            old_alpha = baseline.alpha
+                            new_alpha = min(
+                                old_alpha * FP_ALPHA_BOOST_FACTOR,
+                                FP_ALPHA_MAX,
+                            )
+                            if new_alpha > old_alpha:
+                                baseline.alpha = new_alpha
+                                logger.debug(
+                                    "FP feedback: %s/%s alpha %.3f → %.3f",
+                                    ip, feature, old_alpha, new_alpha,
+                                )
+
+        # ── 2) Adaptive weight reduction (reuses existing benign path) ──
+        self.adaptive_weights.record_benign(signal_types, ts)
+        logger.info(
+            "False positive recorded for %s: %d signal types (%s)",
+            ip, len(signal_types), ", ".join(signal_types),
+        )
+
+        # ── 3) Persist to incident_feedback table ──
+        self._persist_feedback(ip, "false_positive", signal_types, ts, notes)
+
+    def record_true_positive(self, ip: str, signal_types: Optional[List[str]] = None,
+                              timestamp: Optional[datetime] = None,
+                              notes: Optional[str] = None) -> None:
+        """Record that an IP alert was a confirmed true positive (real threat).
+
+        Two effects:
+        1) Signal weight reinforcement — delegates to record_attack() which boosts
+           weights for correlated signal types and keeps decay at baseline.
+        2) No baseline change — the current baselines are appropriate; we only
+           strengthen detection of these signal patterns.
+
+        Args:
+            ip: The confirmed attacker IP.
+            signal_types: Signal types to reinforce.  If None, inferred from the IP profile.
+            timestamp: Optional timestamp; defaults to now.
+            notes: Optional free-form notes persisted alongside the feedback record.
+        """
+        ts = timestamp or datetime.now(timezone.utc)
+
+        # Infer signal types from profile if not provided
+        if signal_types is None:
+            with self._lock:
+                profile = self._profiles.get(ip)
+            if profile and profile.signals:
+                signal_types = list({s.signal_type for s in profile.signals})
+            else:
+                logger.warning("record_true_positive: no signals for %s — skipping", ip)
+                return
+
+        # ── 1) Signal weight reinforcement (reuses existing attack path) ──
+        self.adaptive_weights.record_attack(signal_types, ts)
+        logger.info(
+            "True positive recorded for %s: %d signal types (%s)",
+            ip, len(signal_types), ", ".join(signal_types),
+        )
+
+        # ── 2) Persist to incident_feedback table ──
+        self._persist_feedback(ip, "true_positive", signal_types, ts, notes)
+
+    def _persist_feedback(self, ip: str, feedback_type: str,
+                          signal_types: List[str], timestamp: datetime,
+                          notes: Optional[str] = None) -> None:
+        """Persist a feedback record to the incident_feedback table.
+
+        Looks up the most recent active incident for the IP.  If none exists,
+        creates an incident first so the feedback has a valid foreign key.
+
+        Args:
+            ip: IP address the feedback concerns.
+            feedback_type: 'false_positive' or 'true_positive'.
+            signal_types: Signal types involved in the feedback.
+            timestamp: When the feedback was recorded.
+            notes: Optional user-supplied notes.
+        """
+        if not self.db:
+            return
+        try:
+            conn = self.db.connect()
+            try:
+                cur = conn.cursor()
+                try:
+                    # Find the most recent active incident for this IP
+                    cur.execute(
+                        "SELECT id FROM incidents WHERE ip = %s AND is_active = TRUE "
+                        "ORDER BY last_seen DESC LIMIT 1",
+                        (ip,),
+                    )
+                    row = cur.fetchone()
+                    incident_id = row[0] if row else None
+
+                    # If no active incident, create one
+                    if incident_id is None:
+                        severity = "high" if feedback_type == "true_positive" else "low"
+                        cur.execute(
+                            "INSERT INTO incidents (ip, severity, signal_types, "
+                            "signal_count, is_active, description, metadata) "
+                            "VALUES (%s, %s, %s, %s, TRUE, %s, %s) RETURNING id",
+                            (
+                                ip,
+                                severity,
+                                signal_types,  # PG ARRAY
+                                len(signal_types),
+                                f"Auto-created for {feedback_type} feedback",
+                                json.dumps({"feedback_type": feedback_type, "signal_types": signal_types}),
+                            ),
+                        )
+                        incident_id = cur.fetchone()[0]
+                        logger.info(
+                            "Created incident %d for %s feedback on %s",
+                            incident_id, feedback_type, ip,
+                        )
+
+                    cur.execute(
+                        "INSERT INTO incident_feedback "
+                        "(incident_id, feedback_type, confidence, timestamp, notes) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (
+                            incident_id,
+                            feedback_type,
+                            1.0,
+                            timestamp,
+                            notes,
+                        ),
+                    )
+                    conn.commit()
+                    logger.debug(
+                        "Persisted %s feedback for %s (incident=%d)",
+                        feedback_type, ip, incident_id,
+                    )
+                finally:
+                    cur.close()
+            finally:
+                self.db.putconn(conn)
+        except Exception as e:
+            logger.error("Failed to persist feedback for %s: %s", ip, e)
 
     # ── Global statistics ──
 
