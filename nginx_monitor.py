@@ -57,7 +57,9 @@ DDOS_THRESHOLD = 100  # requests per minute from single IP
 class NginxMonitor:
     """Monitors nginx web traffic for anomalies."""
 
-    def __init__(self):
+    def __init__(self, signal_bus=None):
+        self.db = None
+        self.signal_bus = signal_bus
         self.db = None
         self.vllm_client = None
         
@@ -241,7 +243,7 @@ class NginxMonitor:
         self, timestamp: str, attack_type: str, severity: str,
         src_ip: str, path: str, status_code: int, description: str
     ):
-        """Store a nginx anomaly in the database."""
+        """Store a nginx anomaly in the database and emit to signal bus."""
         if not self.db:
             return
         
@@ -260,6 +262,27 @@ class NginxMonitor:
             logger.info("Nginx anomaly: %s — %s", attack_type, description[:80])
         except Exception as e:
             logger.warning("Failed to store nginx anomaly: %s", e)
+        
+        # Emit to signal bus
+        if self.signal_bus:
+            nginx_signal_map = {
+                'PATH_TRAVERSAL': 'path_traversal',
+                'BRUTE_FORCE': 'http_brute_force',
+                'SCAN': 'http_scan',
+                'DDOS': 'http_ddos',
+                'INVALID_UA': 'invalid_ua',
+            }
+            self.signal_bus.emit(
+                source="nginx",
+                signal_type=nginx_signal_map.get(attack_type, attack_type.lower().replace(' ', '_')),
+                severity=severity.lower(),
+                ip=src_ip,
+                metadata={
+                    "path": path,
+                    "status_code": status_code,
+                    "description": description,
+                },
+            )
     
     def get_summary(self, since_hours: int = 24) -> Dict[str, Any]:
         """Get nginx traffic summary from database."""
