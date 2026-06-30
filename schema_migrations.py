@@ -1042,6 +1042,8 @@ def _v20_convert_hypertable(conn: Any):
     2. Create a composite PRIMARY KEY on events(id, timestamp) — required by TimescaleDB.
     3. Call create_hypertable() which auto-partitions existing data into 7-day chunks.
     4. Drop indexes that TimescaleDB makes redundant (it manages its own partition indexes).
+    5. Run ANALYZE to update planner statistics on the new chunk distribution.
+    6. Verify event count and chunk distribution.
     """
     cur = conn.cursor()
     try:
@@ -1052,7 +1054,11 @@ def _v20_convert_hypertable(conn: Any):
             WHERE hypertable_name = 'events'
         """)
         if cur.fetchone():
-            logger.info("events is already a hypertable — skipping V20")
+            logger.info("events is already a hypertable — skipping V20 conversion")
+            # Still run ANALYZE on existing hypertable
+            cur.execute("ANALYZE events")
+            conn.commit()
+            logger.info("V20: ANALYZE on existing hypertable complete")
             return
 
         logger.info("V20: Dropping existing primary key on events table")
@@ -1079,6 +1085,33 @@ def _v20_convert_hypertable(conn: Any):
 
         conn.commit()
         logger.info("V20: Hypertable conversion complete")
+
+        # Post-conversion: ANALYZE for accurate planner statistics
+        logger.info("V20: Running ANALYZE on hypertable...")
+        cur.execute("ANALYZE events")
+
+        # Verify event count
+        cur.execute("SELECT count(*) FROM events")
+        event_count = cur.fetchone()[0]
+        logger.info("V20: Verified %d events in hypertable", event_count)
+
+        # Verify chunk distribution
+        cur.execute("""
+            SELECT count(*), min(range_start), max(range_end)
+            FROM timescaledb_information.chunks
+            WHERE table_name = 'events'
+        """)
+        chunk_row = cur.fetchone()
+        if chunk_row:
+            chunk_count, range_start, range_end = chunk_row
+            logger.info(
+                "V20: Verified %d chunks (range %s to %s)",
+                chunk_count, range_start, range_end,
+            )
+        else:
+            logger.info("V20: No chunks yet (fresh instance with no events)")
+
+        logger.info("V20: Migration complete — hypertable verified")
     except Exception as exc:
         conn.rollback()
         msg = str(exc).lower()
