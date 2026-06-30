@@ -169,27 +169,20 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
       legend: {
         show: true,
         live: false,
-        spec: function(spec: any) {
-          // Show summary stats instead of "--"
-          const events = spec.series[1]?.values;
-          if (events && events.length > 0) {
-            spec.table.innerHTML = `
-              <tr class="u-series">
-                <th><div class="u-marker" style="border: 2px solid ${COLORS.events}; background: ${COLORS.eventsFill}"></div><div class="u-label">Events</div></th>
-                <td class="u-value">${events.reduce((a: number, b: number) => a + b, 0).toLocaleString()} total</td>
-              </tr>
-            `;
-          }
-          return spec;
-        },
       },
     };
 
     if (chartRef.current) {
       chartRef.current.setData(seriesData);
-      // Resize in case container changed
       chartRef.current.resize(width, height, true);
+      // Update series label with total count for legend
+      if (chartRef.current.series[1]) {
+        const total = Array.from(values).reduce((a: number, b: number) => a + b, 0);
+        chartRef.current.series[1].label = `Events (${total.toLocaleString()})`;
+      }
     } else {
+      const total = Array.from(values).reduce((a: number, b: number) => a + b, 0);
+      opts.series[1].label = `Events (${total.toLocaleString()})`;
       chartRef.current = new uPlot(opts, seriesData, containerRef.current);
     }
 
