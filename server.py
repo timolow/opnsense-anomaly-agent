@@ -5879,6 +5879,137 @@ def api_behavior_overview():
             for p in sorted_profiles
         ]
 
+        # Map severity to behavior level
+        sev_map = {
+            'info': 'benign', 'low': 'benign',
+            'medium': 'suspicious',
+            'high': 'hostile', 'critical': 'hostile',
+        }
+
+        # ── Build behavior_timeline from ip_behavior_signals ──
+        behavior_timeline = []
+        try:
+            conn = get_db()
+            if conn:
+                import psycopg2.extras
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                # Get signals grouped into 1-hour buckets for the last 24 hours
+                cur.execute("""
+                    SELECT
+                        date_trunc('hour', timestamp) as bucket,
+                        severity,
+                        COUNT(*) as cnt
+                    FROM ip_behavior_signals
+                    WHERE timestamp >= NOW() - INTERVAL '24 hours'
+                    GROUP BY date_trunc('hour', timestamp), severity
+                    ORDER BY bucket DESC
+                    LIMIT 50
+                """)
+                rows = cur.fetchall()
+
+                # Group by bucket
+                buckets: Dict[str, Dict[str, int]] = defaultdict(lambda: {'benign': 0, 'suspicious': 0, 'hostile': 0})
+                for row in rows:
+                    bucket_ts = row["bucket"]
+                    sev = (row["severity"] or "low").lower()
+                    level = sev_map.get(sev, 'benign')
+                    buckets[bucket_ts.isoformat() if bucket_ts else ""][level] += row["cnt"]
+
+                # Build timeline points, sorted chronologically
+                timeline_points = []
+                for ts in sorted(buckets.keys()):
+                    b = buckets[ts]
+                    total_signals = b['benign'] + b['suspicious'] + b['hostile']
+                    avg_score = 0
+                    if total_signals > 0:
+                        avg_score = (b['suspicious'] * 50 + b['hostile'] * 85) / total_signals
+
+                    timeline_points.append({
+                        "time": ts,
+                        "benign": b['benign'],
+                        "suspicious": b['suspicious'],
+                        "hostile": b['hostile'],
+                        "avg_score": round(avg_score, 1),
+                    })
+
+                cur.close()
+                behavior_timeline = timeline_points
+        except Exception as e:
+            logger.warning("Failed to build behavior_timeline: %s", e)
+
+        # ── Build behavioral_changes from incidents ──
+        behavioral_changes = {
+            "new_suspicious_ips": [],
+            "escalated_incidents": [],
+            "resolved_threats": [],
+        }
+        try:
+            conn = get_db()
+            if conn:
+                import psycopg2.extras
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+                # Recent escalated incidents (high/critical, active)
+                cur.execute("""
+                    SELECT id, ip, severity, signal_types, first_seen, last_seen, description, is_active
+                    FROM incidents
+                    WHERE severity IN ('high', 'critical')
+                    ORDER BY last_seen DESC
+                    LIMIT 10
+                """)
+                for row in cur.fetchall():
+                    behavioral_changes["escalated_incidents"].append({
+                        "type": (row.get("signal_types") or [None])[0] if isinstance(row.get("signal_types"), list) else str(row.get("signal_types", "")),
+                        "severity": row.get("severity", "high"),
+                    })
+
+                # Recently resolved
+                cur.execute("""
+                    SELECT id, ip, severity, signal_types, last_seen, description
+                    FROM incidents
+                    WHERE is_active = FALSE
+                    ORDER BY last_seen DESC
+                    LIMIT 5
+                """)
+                for row in cur.fetchall():
+                    ts = row.get("last_seen")
+                    behavioral_changes["resolved_threats"].append({
+                        "type": (row.get("signal_types") or [None])[0] if isinstance(row.get("signal_types"), list) else str(row.get("signal_types", "")),
+                        "timestamp": ts.isoformat() if ts else "",
+                    })
+
+                cur.close()
+        except Exception as e:
+            logger.warning("Failed to build behavioral_changes: %s", e)
+
+        # ── Build traffic_flows from signal sources ──
+        traffic_flows = []
+        try:
+            conn = get_db()
+            if conn:
+                import psycopg2.extras
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur.execute("""
+                    SELECT source, severity, COUNT(*) as cnt
+                    FROM ip_behavior_signals
+                    WHERE timestamp >= NOW() - INTERVAL '24 hours'
+                    GROUP BY source, severity
+                    ORDER BY cnt DESC
+                    LIMIT 10
+                """)
+                for row in cur.fetchall():
+                    sev = (row["severity"] or "low").lower()
+                    level = sev_map.get(sev, "benign")
+                    traffic_flows.append({
+                        "src_category": row["source"],
+                        "dst_category": level,
+                        "behavior_level": level,
+                        "event_count": row["cnt"],
+                    })
+                cur.close()
+        except Exception as e:
+            logger.warning("Failed to build traffic_flows: %s", e)
+
         return {
             "active_ips_24h": total,
             "ip_breakdown": {
@@ -5902,13 +6033,9 @@ def api_behavior_overview():
                 "db_connected": True,
                 "anomaly_rate": 0,
             },
-            "behavior_timeline": [],
-            "behavioral_changes": {
-                "new_suspicious_ips": [],
-                "escalated_incidents": [],
-                "resolved_threats": [],
-            },
-            "traffic_flows": [],
+            "behavior_timeline": behavior_timeline,
+            "behavioral_changes": behavioral_changes,
+            "traffic_flows": traffic_flows,
             "data_source_status": "configured",
         }
     except Exception as e:
