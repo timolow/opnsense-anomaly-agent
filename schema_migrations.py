@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -1171,6 +1171,47 @@ MIGRATIONS: List[Dict[str, Any]] = [
                 ON ip_baselines(last_updated DESC);
             CREATE INDEX IF NOT EXISTS idx_ip_baselines_sample_count
                 ON ip_baselines(sample_count DESC);
+            """,
+        ],
+    },
+
+
+        # V24: Feedback persistence table (replaces V17 incident_feedback)
+    #      New schema keyed by ip + timestamp for direct correlation
+    #      with incidents without requiring incident_id lookups.
+    # ------------------------------------------------------------------
+    {
+        "version": 24,
+        "description": "Create feedback persistence table keyed by ip + timestamp",
+        "sql": [
+            """
+            DROP TABLE IF EXISTS incident_feedback CASCADE;
+            """,
+            """
+            CREATE TABLE incident_feedback (
+                id SERIAL PRIMARY KEY,
+                ip TEXT NOT NULL,
+                timestamp TIMESTAMPTZ NOT NULL,
+                label TEXT NOT NULL CHECK (label IN ('attack', 'benign', 'false_positive', 'true_positive')),
+                signal_types TEXT[],
+                notes TEXT,
+                user_id TEXT,
+                behavioral_adjustment JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """,
+            """
+            CREATE INDEX idx_incident_feedback_ip ON incident_feedback(ip);
+            CREATE INDEX idx_incident_feedback_timestamp ON incident_feedback(timestamp);
+            CREATE INDEX idx_incident_feedback_label ON incident_feedback(label);
+            CREATE INDEX idx_incident_feedback_ip_ts ON incident_feedback(ip, timestamp);
+            """,
+            """
+            COMMENT ON TABLE incident_feedback IS
+                'User feedback on incident classification. Linked to incidents table via ip + timestamp.';
+            """,
+            """
+            ANALYZE incident_feedback;
             """,
         ],
     },
