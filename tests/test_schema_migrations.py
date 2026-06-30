@@ -13,7 +13,9 @@ from schema_migrations import (
     _get_current_version,
     _safe_add_column,
     _safe_drop_constraint,
+    _safe_create_hypertable,
     _v3_finalize,
+    _v20_convert_hypertable,
     CURRENT_SCHEMA_VERSION,
     MIGRATIONS,
 )
@@ -211,8 +213,8 @@ class TestRunMigrations:
         conn.cursor.return_value = cur
         # schema_versions table exists, current version
         # Provide enough values for fetchone calls from _get_current_version + hooks
-        cur.fetchone.side_effect = [(True,), (current_version,), None, None, None, None, None]
-        cur.fetchall.return_value = []
+        cur.fetchone.side_effect = [(True,), (current_version,), None, None, None, None, None, None, None, (0,), None] + [None] * 50
+        cur.fetchall.return_value = [("events_pkey",)]
         db.connect.return_value = conn
         return db, conn, cur
 
@@ -430,3 +432,156 @@ class TestBaselineEngineMigrationIntegration:
         hook_source = inspect.getsource(_v3_finalize)
         assert "rule_baselines_rule_key" in hook_source
         assert "UNIQUE (rule, ip, hour)" in hook_source
+
+
+class TestSafeCreateHypertable:
+    """Test _safe_create_hypertable helper — the generic hypertable conversion."""
+
+    def _make_mock_conn(self, is_hypertable=False, pk_names=("events_pkey",)):
+        """Build a mock connection with configurable behavior."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        if is_hypertable:
+            # Already a hypertable — first query returns a row
+            cur.fetchone.return_value = ("public", "events")
+        else:
+            # Not a hypertable, then return PK names, then event count, then chunk info
+            cur.fetchone.side_effect = [
+                None,  # hypertable check -> not found
+                ("events_pkey",),  # PK name
+                (1000,),  # event count
+                (5, "2025-01-01", "2026-06-30"),  # chunk info
+                None, None, None, None, None,  # extra padding
+            ]
+            cur.fetchall.return_value = [(pk,) for pk in pk_names]
+        return conn, cur
+
+    def test_skips_when_already_hypertable(self):
+        conn, cur = self._make_mock_conn(is_hypertable=True)
+
+        result = _safe_create_hypertable(conn, "events", "timestamp")
+
+        assert result is False
+        # Should not have run create_hypertable
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "create_hypertable" not in calls_str
+
+    def test_converts_regular_table(self):
+        conn, cur = self._make_mock_conn(is_hypertable=False)
+
+        result = _safe_create_hypertable(conn, "events", "timestamp")
+
+        assert result is True
+        # Verify the sequence: hypertable check -> PK lookup -> DROP PK -> ADD PK -> create_hypertable
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "DROP CONSTRAINT" in calls_str
+        assert "ADD PRIMARY KEY" in calls_str
+        assert "create_hypertable" in calls_str
+        conn.commit.assert_called()
+
+    def test_uses_parameterized_queries(self):
+        """Ensure table name and column params are passed via %s placeholders."""
+        conn, cur = self._make_mock_conn(is_hypertable=False)
+
+        _safe_create_hypertable(conn, "my_table", "created_at", "1 day", ("id", "created_at"))
+
+        # First execute: hypertable lookup — should use %s with "my_table"
+        first_call = cur.execute.call_args_list[0]
+        assert "my_table" in str(first_call)
+        # Primary key lookup should use "my_table"
+        second_call = cur.execute.call_args_list[1]
+        assert "my_table" in str(second_call)
+
+    def test_raises_on_non_idempotent_error(self):
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.return_value = None  # not a hypertable
+        cur.fetchall.side_effect = Exception("connection lost")
+
+        with pytest.raises(Exception, match="connection lost"):
+            _safe_create_hypertable(conn, "events", "timestamp")
+
+        conn.rollback.assert_called()
+
+
+class TestV20ConvertHypertable:
+    """Test _v20_convert_hypertable — the V20-specific hook."""
+
+    def test_v20_creates_hypertable(self):
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        # _safe_create_hypertable uses fetchone for hypertable check,
+        # then fetchall for PK lookup.
+        # _v20_convert_hypertable uses fetchone for event count and chunk info.
+        cur.fetchone.side_effect = [
+            None,  # _safe_create_hypertable: hypertable check -> not found
+            (42,),  # _v20: event count
+            (3, "2025-06-01", "2026-06-01"),  # _v20: chunk info
+            None, None, None,
+        ]
+        cur.fetchall.return_value = [("events_pkey",)]
+
+        _v20_convert_hypertable(conn)
+
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "DROP CONSTRAINT" in calls_str
+        assert "ADD PRIMARY KEY" in calls_str
+        assert "create_hypertable" in calls_str
+        assert "ANALYZE events" in calls_str
+        assert "DROP INDEX" in calls_str
+        assert "idx_events_timestamp" in calls_str
+
+    def test_v20_skips_when_already_hypertable(self):
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.return_value = ("public", "events")  # already a hypertable
+
+        _v20_convert_hypertable(conn)
+
+        # Should only do ANALYZE, no DROP/ADD/create_hypertable
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "ANALYZE events" in calls_str
+        assert "DROP CONSTRAINT" not in calls_str
+        assert "create_hypertable" not in calls_str
+
+    def test_v20_handles_no_chunks(self):
+        """Fresh instance with no events — chunk query returns no rows."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            None,  # hypertable check
+            (0,),  # event count (empty)
+            None,  # no chunk row
+            None, None, None,
+        ]
+        cur.fetchall.return_value = [("events_pkey",)]
+
+        # Should not raise — handles empty chunk result gracefully
+        _v20_convert_hypertable(conn)
+
+        # Verify create_hypertable was still called
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "create_hypertable" in calls_str
+
+
+class TestV20MigrationEntry:
+    """Verify V20 migration definition is well-formed."""
+
+    def test_v20_has_hook(self):
+        v20 = next(m for m in MIGRATIONS if m["version"] == 20)
+        assert "hook" in v20
+        assert callable(v20["hook"])
+
+    def test_v20_creates_extension(self):
+        v20 = next(m for m in MIGRATIONS if m["version"] == 20)
+        extension_sql = " ".join(v20["sql"])
+        assert "CREATE EXTENSION IF NOT EXISTS timescaledb" in extension_sql
+
+    def test_v20_description_mentions_hypertable(self):
+        v20 = next(m for m in MIGRATIONS if m["version"] == 20)
+        assert "hypertable" in v20["description"].lower()
