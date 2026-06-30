@@ -231,16 +231,18 @@ const TimelineChart: React.FC<TimelineChartProps> = ({
   }
 
   return (
-    <div className={`cyber-card p-4 overflow-visible ${className}`}>
-      <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
-        <Activity size={14} /> {title}
-        {isLive && (
-          <span className="flex items-center gap-1.5 ml-2 px-2 py-0.5 rounded text-xs font-mono bg-cyber-green/10 text-cyber-green border border-cyber-green/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyber-green animate-pulse" />
-            LIVE
-          </span>
-        )}
-      </h3>
+    <div className={`${className}`}>
+      <div className="cyber-card p-4">
+        <h3 className="text-sm font-semibold text-cyber-textMuted uppercase tracking-wider mb-4 flex items-center gap-2">
+          <Activity size={14} /> {title}
+          {isLive && (
+            <span className="flex items-center gap-1.5 ml-2 px-2 py-0.5 rounded text-xs font-mono bg-cyber-green/10 text-cyber-green border border-cyber-green/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyber-green animate-pulse" />
+              LIVE
+            </span>
+          )}
+        </h3>
+      </div>
       <div ref={containerRef} className="w-full" style={{ height }} />
     </div>
   );
