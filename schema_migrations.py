@@ -1103,7 +1103,7 @@ MIGRATIONS: List[Dict[str, Any]] = [
                 WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
             """,
         ],
-        "hook": lambda conn: _v21_convert_hypertable(conn),
+        "hook": lambda conn: (_v21_backfill(conn), _v21_convert_hypertable(conn)),
     },
 ]
 
@@ -1306,6 +1306,234 @@ def _v20_convert_hypertable(conn: Any):
             logger.warning("V20: Could not verify hypertable stats (possibly mocked context)")
 
         logger.info("V20: Migration complete — hypertable verified")
+    finally:
+        cur.close()
+
+
+def _v21_backfill(conn: Any):
+    """Backfill normalized_events from legacy source tables (idempotent).
+
+    Maps data from three source tables into the unified normalized_events schema:
+    - events (firewall/ids/zenarmor/nginx from syslog)
+    - nginx_events (Nginx access log events)
+    - unifi_events (UniFi controller events)
+
+    Idempotency: skips entirely if normalized_events already has rows, so
+    re-running V21 on a database that was manually seeded is safe.
+
+    Uses bulk INSERT ... SELECT for performance (6.8M+ events). The
+    hypertable conversion runs AFTER this so TimescaleDB distributes
+    backfilled data into chunks in one pass.
+    """
+    cur = conn.cursor()
+    try:
+        # Idempotency gate: skip if normalized_events already populated
+        cur.execute("SELECT count(*) FROM normalized_events")
+        existing = cur.fetchone()[0]
+        if existing > 0:
+            logger.info("V21: normalized_events already has %d rows — skipping backfill", existing)
+            return
+
+        logger.info("V21: Starting backfill into normalized_events...")
+        total_backfilled = 0
+
+        # ---------------------------------------------------------------
+        # 1. Backfill from events table (firewall / ids / zenarmor / nginx via syslog)
+        # ---------------------------------------------------------------
+        try:
+            cur.execute("""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'events'
+            """)
+            if cur.fetchone():
+                cur.execute("""
+                    INSERT INTO normalized_events (
+                        timestamp,
+                        src_ip, dst_ip,
+                        src_port, dst_port,
+                        protocol, action, interface, direction,
+                        src_hostname, dst_hostname,
+                        payload_context,
+                        source, log_type, rule_name, severity, raw_message,
+                        ingested_at
+                    )
+                    SELECT
+                        events.timestamp,
+                        events.src_ip,
+                        events.dst_ip,
+                        events.src_port,
+                        events.dst_port,
+                        events.proto AS protocol,
+                        events.action,
+                        events.interface,
+                        events.direction,
+                        events.src_hostname,
+                        events.dst_hostname,
+                        jsonb_build_object(
+                            'tcp_flags', events.tcp_flags,
+                            'ip_ttl', events.ip_ttl,
+                            'ip_total_length', events.ip_total_length,
+                            'tcp_seq', events.tcp_seq,
+                            'tcp_ack', events.tcp_ack,
+                            'tcp_window', events.tcp_window,
+                            'tcp_options', events.tcp_options,
+                            'udp_datalen', events.udp_datalen,
+                            'icmp_datalen', events.icmp_datalen
+                        ) AS payload_context,
+                        CASE
+                            WHEN events.log_type = 'nginx'     THEN 'nginx'
+                            WHEN events.log_type = 'ids'       THEN 'ids'
+                            WHEN events.log_type = 'zenarmor'  THEN 'zenarmor'
+                            ELSE 'firewall'
+                        END AS source,
+                        COALESCE(events.log_type, '') AS log_type,
+                        events.rule_name,
+                        NULL AS severity,
+                        events.raw_message,
+                        COALESCE(events.ingested_at, events.timestamp) AS ingested_at
+                    FROM events
+                """)
+                row_count = cur.rowcount
+                total_backfilled += row_count
+                logger.info("V21: Backfilled %d rows from events table", row_count)
+        except Exception as exc:
+            logger.warning("V21: Could not backfill from events table: %s", exc)
+
+        # ---------------------------------------------------------------
+        # 2. Backfill from nginx_events table
+        # ---------------------------------------------------------------
+        try:
+            cur.execute("""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'nginx_events'
+            """)
+            if cur.fetchone():
+                cur.execute("""
+                    INSERT INTO normalized_events (
+                        timestamp,
+                        src_ip, dst_ip,
+                        src_port, dst_port,
+                        protocol, action, interface, direction,
+                        src_hostname, dst_hostname,
+                        payload_context,
+                        source, log_type, rule_name, severity, raw_message,
+                        ingested_at
+                    )
+                    SELECT
+                        ne.timestamp,
+                        ne.src_ip,
+                        NULL AS dst_ip,
+                        NULL AS src_port,
+                        NULL AS dst_port,
+                        'HTTP' AS protocol,
+                        ne.method AS action,
+                        ne.interface,
+                        NULL AS direction,
+                        NULL AS src_hostname,
+                        NULL AS dst_hostname,
+                        jsonb_build_object(
+                            'method', ne.method,
+                            'path', ne.path,
+                            'status_code', ne.status_code,
+                            'response_size', ne.response_size,
+                            'user_agent', ne.user_agent,
+                            'request_time', ne.request_time
+                        ) AS payload_context,
+                        'nginx' AS source,
+                        'nginx' AS log_type,
+                        NULL AS rule_name,
+                        NULL AS severity,
+                        NULL AS raw_message,
+                        COALESCE(ne.ingested_at, ne.timestamp) AS ingested_at
+                    FROM nginx_events ne
+                """)
+                row_count = cur.rowcount
+                total_backfilled += row_count
+                logger.info("V21: Backfilled %d rows from nginx_events table", row_count)
+        except Exception as exc:
+            logger.warning("V21: Could not backfill from nginx_events table: %s", exc)
+
+        # ---------------------------------------------------------------
+        # 3. Backfill from unifi_events table
+        # ---------------------------------------------------------------
+        try:
+            cur.execute("""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'unifi_events'
+            """)
+            if cur.fetchone():
+                cur.execute("""
+                    INSERT INTO normalized_events (
+                        timestamp,
+                        src_ip, dst_ip,
+                        src_port, dst_port,
+                        protocol, action, interface, direction,
+                        src_hostname, dst_hostname,
+                        payload_context,
+                        source, log_type, rule_name, severity, raw_message,
+                        ingested_at
+                    )
+                    SELECT
+                        ue.timestamp,
+                        ue.ip AS src_ip,
+                        NULL AS dst_ip,
+                        NULL AS src_port,
+                        NULL AS dst_port,
+                        NULL AS protocol,
+                        ue.event_type AS action,
+                        NULL AS interface,
+                        NULL AS direction,
+                        NULL AS src_hostname,
+                        NULL AS dst_hostname,
+                        jsonb_build_object(
+                            'event_key', ue.event_key,
+                            'mac', ue.mac,
+                            'device', ue.device,
+                            'ap', ue.ap,
+                            'ssid', ue.ssid,
+                            'message', ue.message
+                        ) AS payload_context,
+                        'unifi' AS source,
+                        'unifi' AS log_type,
+                        NULL AS rule_name,
+                        ue.severity AS severity,
+                        ue.message AS raw_message,
+                        COALESCE(ue.created_at, ue.timestamp) AS ingested_at
+                    FROM unifi_events ue
+                """)
+                row_count = cur.rowcount
+                total_backfilled += row_count
+                logger.info("V21: Backfilled %d rows from unifi_events table", row_count)
+        except Exception as exc:
+            logger.warning("V21: Could not backfill from unifi_events table: %s", exc)
+
+        conn.commit()
+        logger.info("V21: Backfill complete — %d total rows inserted into normalized_events", total_backfilled)
+
+        # Verify against source table counts
+        try:
+            source_counts = {}
+            for tbl in ['events', 'nginx_events', 'unifi_events']:
+                cur.execute(f"SELECT count(*) FROM {tbl}")
+                source_counts[tbl] = cur.fetchone()[0]
+
+            cur.execute("SELECT count(*) FROM normalized_events")
+            norm_count = cur.fetchone()[0]
+
+            # Note: events table may contain nginx events (log_type='nginx') that
+            # are also in nginx_events, so norm_count >= sum of sources is expected
+            # in some deployments. Report actual counts for operator review.
+            logger.info(
+                "V21: Backfill verification — normalized_events: %d, "
+                "events: %d, nginx_events: %d, unifi_events: %d",
+                norm_count,
+                source_counts.get('events', -1),
+                source_counts.get('nginx_events', -1),
+                source_counts.get('unifi_events', -1),
+            )
+        except Exception:
+            logger.warning("V21: Could not verify backfill counts (possibly mocked context)")
+
     finally:
         cur.close()
 
