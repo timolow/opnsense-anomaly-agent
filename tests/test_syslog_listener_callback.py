@@ -162,3 +162,169 @@ def test_sysloglistener_callback_mode():
     source = inspect.getsource(listener._run)
     assert "event_callback" in source, "_run should check event_callback"
     assert "self.event_callback(event)" in source, "_run should call callback directly"
+
+
+# ============================================================
+# Redis Stream push tests
+# ============================================================
+
+class TestRedisStreamConfig:
+    """Test REDIS_STREAM_ENABLED configuration parsing."""
+
+    def test_redis_stream_disabled_by_default(self):
+        """REDIS_STREAM_ENABLED defaults to false."""
+        import syslog_listener as sl
+        # Module-level value depends on env at import time.
+        # In test env it should be false (no env var set).
+        env_val = os.getenv("REDIS_STREAM_ENABLED", "false")
+        expected = env_val.lower() in ("true", "1", "yes")
+        assert sl.REDIS_STREAM_ENABLED == expected
+
+    def test_redis_stream_name_default(self):
+        """REDIS_STREAM_NAME defaults to 'event_ingest'."""
+        import syslog_listener as sl
+        assert sl.REDIS_STREAM_NAME == "event_ingest"
+
+    def test_redis_url_default(self):
+        """REDIS_URL defaults to redis://redis:6379/0."""
+        import syslog_listener as sl
+        assert sl.REDIS_URL == "redis://redis:6379/0"
+
+
+class TestRedisStreamPush:
+    """Test push_to_redis_stream with mocked Redis client."""
+
+    def test_push_to_redis_stream_success(self):
+        """Successful XADD pushes event JSON to stream."""
+        import syslog_listener as sl
+        from unittest.mock import MagicMock, patch
+
+        mock_client = MagicMock()
+        mock_client.ping.return_value = True
+        mock_client.xadd.return_value = "1782793000000-0"
+
+        # Force Redis available
+        with patch.object(sl, "_get_redis_client", return_value=mock_client):
+            event = {
+                "timestamp": "2026-06-29T12:00:00",
+                "src_ip": "10.0.0.1",
+                "dst_ip": "10.0.0.2",
+                "action": "block",
+            }
+            result = sl.push_to_redis_stream(event)
+            assert result is True
+
+            # Verify XADD was called with correct args
+            mock_client.xadd.assert_called_once()
+            call_args = mock_client.xadd.call_args
+            assert call_args[0][0] == sl.REDIS_STREAM_NAME
+            # Second arg is {"event": json_string}
+            payload = call_args[0][1]
+            assert "event" in payload
+            imported_json = __import__("json")
+            parsed = imported_json.loads(payload["event"])
+            assert parsed["src_ip"] == "10.0.0.1"
+            assert parsed["action"] == "block"
+
+    def test_push_to_redis_stream_client_none(self):
+        """When Redis client is None, push returns False immediately."""
+        import syslog_listener as sl
+        from unittest.mock import patch
+
+        with patch.object(sl, "_get_redis_client", return_value=None):
+            result = sl.push_to_redis_stream({"action": "block"})
+            assert result is False
+
+    def test_push_to_redis_stream_xadd_failure(self):
+        """When XADD raises, push returns False and marks redis unavailable."""
+        import syslog_listener as sl
+        from unittest.mock import MagicMock, patch
+
+        mock_client = MagicMock()
+        mock_client.xadd.side_effect = Exception("connection lost")
+
+        old_available = sl._redis_available
+        old_client = sl._redis_client
+        try:
+            sl._redis_available = True
+            sl._redis_client = mock_client
+
+            with patch.object(sl, "_get_redis_client", return_value=mock_client):
+                result = sl.push_to_redis_stream({"action": "block"})
+                assert result is False
+
+                # After failure, redis is marked unavailable
+                assert sl._redis_available is False
+                assert sl._redis_client is None
+        finally:
+            sl._redis_available = old_available
+            sl._redis_client = old_client
+
+
+class TestRedisClientInit:
+    """Test lazy Redis client initialization."""
+
+    def test_get_redis_client_disabled(self):
+        """_get_redis_client returns None when REDIS_STREAM_ENABLED is false."""
+        import syslog_listener as sl
+        from unittest.mock import patch
+
+        with patch.object(sl, "REDIS_STREAM_ENABLED", False):
+            result = sl._get_redis_client()
+            assert result is None
+
+    def test_get_redis_client_import_error(self):
+        """_get_redis_client returns None when redis module not available."""
+        import syslog_listener as sl
+        from unittest.mock import patch
+
+        with patch.object(sl, "REDIS_STREAM_ENABLED", True):
+            with patch.dict(sys.modules, {"redis": None}):
+                # Reset state
+                old_available = sl._redis_available
+                old_client = sl._redis_client
+                try:
+                    sl._redis_available = False
+                    sl._redis_client = None
+
+                    result = sl._get_redis_client()
+                    assert result is None
+                    assert sl._redis_available is False
+                finally:
+                    sl._redis_available = old_available
+                    sl._redis_client = old_client
+
+    def test_get_redis_client_cached(self):
+        """Second call returns cached client without re-connecting."""
+        import syslog_listener as sl
+        from unittest.mock import MagicMock, patch
+
+        mock_client = MagicMock()
+        mock_client.ping.return_value = True
+
+        call_count = 0
+        def fake_from_url(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return mock_client
+
+        with patch.object(sl, "REDIS_STREAM_ENABLED", True):
+            with patch.dict(sys.modules, {"redis": MagicMock(from_url=fake_from_url)}):
+                # Reset
+                old_available = sl._redis_available
+                old_client = sl._redis_client
+                try:
+                    sl._redis_available = False
+                    sl._redis_client = None
+
+                    # First call initializes
+                    result1 = sl._get_redis_client()
+                    assert call_count == 1
+
+                    # Second call returns cached
+                    result2 = sl._get_redis_client()
+                    assert call_count == 1  # No re-initialization
+                    assert result1 is result2
+                finally:
+                    sl._redis_available = old_available
+                    sl._redis_client = old_client

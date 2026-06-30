@@ -26,6 +26,11 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Redis Stream configuration (overridable via environment variables)
+REDIS_STREAM_ENABLED = os.getenv("REDIS_STREAM_ENABLED", "false").lower() in ("true", "1", "yes")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+REDIS_STREAM_NAME = os.getenv("REDIS_STREAM_NAME", "event_ingest")
+
 # Configuration (overridable via environment variables)
 UDP_PORT = int(os.getenv("SYSLOG_UDP_PORT", "1514"))
 DATA_DIR = os.getenv("DATA_DIR", str(Path(__file__).parent / "agent_data"))
@@ -182,7 +187,49 @@ class RotatingJSONLWriter:
                 self._file = None
 
 
-# Global JSONL writer instance (lazy init)
+# Lazy Redis Stream client (only initialized when REDIS_STREAM_ENABLED)
+_redis_client = None
+_redis_available = False
+
+
+def _get_redis_client():
+    """Return a Redis client, initializing lazily. Returns None if unavailable."""
+    global _redis_client, _redis_available
+    if _redis_available and _redis_client is not None:
+        return _redis_client
+
+    if not REDIS_STREAM_ENABLED:
+        return None
+
+    try:
+        import redis
+        _redis_client = redis.from_url(REDIS_URL, socket_timeout=3, decode_responses=True)
+        _redis_client.ping()
+        _redis_available = True
+        logger().info("Redis Stream client connected (%s, stream=%s)", REDIS_URL, REDIS_STREAM_NAME)
+        return _redis_client
+    except Exception as e:
+        logger().warning("Redis Stream unavailable (will fall back to callback): %s", e)
+        _redis_available = False
+        _redis_client = None
+        return None
+
+
+def push_to_redis_stream(event: dict) -> bool:
+    """Push a parsed event to the Redis Stream. Returns True on success."""
+    global _redis_available, _redis_client
+    client = _get_redis_client()
+    if client is None:
+        return False
+    try:
+        # XADD with auto-generated ID (*), field 'event' -> JSON payload
+        client.xadd(REDIS_STREAM_NAME, {"event": json.dumps(event)}, id="*")
+        return True
+    except Exception as e:
+        logger().warning("Redis XADD failed (falling back to callback): %s", e)
+        _redis_available = False
+        _redis_client = None
+        return False
 _jsonl_writer: RotatingJSONLWriter | None = None
 
 
@@ -346,10 +393,15 @@ def run_syslog_listener(event_callback=None):
                 if event:
                     count += 1
                     if callback_mode:
-                        # Direct callback — skip all file I/O
-                        event_callback(event)
-                        logger().debug("Event #%d: %s -> %s", count,
-                                     event.get('src_ip'), event.get('dst_ip'))
+                        # Try Redis Stream first, fall back to callback
+                        if REDIS_STREAM_ENABLED and push_to_redis_stream(event):
+                            logger().debug("Event #%d pushed to Redis Stream: %s -> %s", count,
+                                         event.get('src_ip'), event.get('dst_ip'))
+                        else:
+                            # Fallback: direct callback
+                            event_callback(event)
+                            logger().debug("Event #%d (fallback callback): %s -> %s", count,
+                                         event.get('src_ip'), event.get('dst_ip'))
                     else:
                         # Legacy JSONL file mode
                         if write_event(event):
@@ -462,7 +514,11 @@ class SyslogListener:
                     event = parse_syslog_line(line)
                     if event:
                         count += 1
-                        if self.event_callback:
+                        # Try Redis Stream first when enabled, fall back to callback
+                        if REDIS_STREAM_ENABLED and push_to_redis_stream(event):
+                            logger().debug("Event #%d pushed to Redis Stream: %s -> %s", count,
+                                         event.get('src_ip'), event.get('dst_ip'))
+                        elif self.event_callback:
                             # Direct callback — no JSONL file
                             self.event_callback(event)
                             logger().debug("Event #%d: %s -> %s", count,
