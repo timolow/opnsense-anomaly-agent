@@ -170,7 +170,7 @@ export default function App() {
       )}
       
       <main
-        className={`flex-1 flex flex-col overflow-y-auto transition-all duration-300
+        className={`flex-1 flex flex-col overflow-hidden transition-all duration-300
           ${sidebarOffset}`}
       >
         {/* Top Header */}
