@@ -507,7 +507,7 @@ export default function OverviewTab() {
       // First visit — fetch current stats to show as "new"
       setWhatChangedLoading(true);
       Promise.all([
-        api.getStats(),
+        api.stats(),
         api.events(100),
       ]).then(([stats, events]) => {
         if (!cancelled) {
