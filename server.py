@@ -2379,7 +2379,65 @@ def query_health():
             }
     except Exception:
         subsystems["pool"] = {"status": "unknown", "message": "Could not read pool metrics"}
-    
+
+    # --- TimescaleDB ---
+    ts_conn = None
+    try:
+        ts_conn = get_db()
+        if ts_conn:
+            cur = ts_conn.cursor()
+            # Check extension
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'
+                )
+            """)
+            has_ts = cur.fetchone()[0]
+            ts_info = {"timescaledb_enabled": has_ts, "hypertable": False, "chunks": 0}
+            if has_ts:
+                # Check hypertable status
+                cur.execute("""
+                    SELECT hypertable_schema, hypertable_name
+                    FROM timescaledb_information.hypertables
+                    WHERE hypertable_name = 'events'
+                """)
+                ht = cur.fetchone()
+                ts_info["hypertable"] = ht is not None
+                if ht:
+                    cur.execute("""
+                        SELECT count(*)
+                        FROM timescaledb_information.chunks
+                        WHERE hypertable_name = 'events'
+                    """)
+                    ts_info["chunks"] = cur.fetchone()[0]
+                    # Version info
+                    cur.execute("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
+                    ts_info["version"] = cur.fetchone()[0]
+                msg_parts = ["TimescaleDB enabled"]
+                if ts_info["hypertable"]:
+                    msg_parts.append(f"hypertable with {ts_info['chunks']} chunks")
+                else:
+                    msg_parts.append("events table NOT converted to hypertable")
+                subsystems["timescaledb"] = {
+                    "status": "active",
+                    "message": "; ".join(msg_parts),
+                    **ts_info,
+                }
+            else:
+                subsystems["timescaledb"] = {
+                    "status": "disabled",
+                    "message": "TimescaleDB extension not installed",
+                    **ts_info,
+                }
+            cur.close()
+            close_db(ts_conn)
+        else:
+            subsystems["timescaledb"] = {"status": "disconnected", "message": "Cannot check TimescaleDB"}
+    except Exception as e:
+        subsystems["timescaledb"] = {"status": "error", "message": str(e)}
+        if ts_conn:
+            close_db(ts_conn)
+
     # --- Redis ---
     r = get_redis()
     if r:
