@@ -504,47 +504,21 @@ export default function OverviewTab() {
     const lastViewed = localStorage.getItem(LOCAL_STORAGE_KEY);
 
     if (!lastViewed) {
-      // First visit — fetch current stats to show as "new"
-      setWhatChangedLoading(true);
-      Promise.all([
-        api.stats(),
-        api.events(100),
-      ]).then(([stats, events]) => {
-        if (!cancelled) {
-          // Count unique IPs and blocked from current data
-          const uniqueIps = [...new Set(events.events.map(e => e.src_ip).filter(Boolean))];
-          const blocked = events.events.filter(e => e.action === 'blocked' || e.action === 'block').length;
-          setWhatChangedData({
-            since_ts: null,
-            hours_since: null,
-            new_events: stats.events_24h || 0,
-            new_anomalies: stats.anomalies_detected || 0,
-            new_blocked: blocked || 0,
-            new_unique_ips: uniqueIps,
-            new_rule_matches: [],
-            new_baseline_breaches: [],
-            first_time: true,
-          });
-          setWhatChangedVisible(true);
-          setWhatChangedLoading(false);
-        }
-      }).catch(() => {
-        if (!cancelled) {
-          setWhatChangedData({
-            since_ts: null,
-            hours_since: null,
-            new_events: 0,
-            new_anomalies: 0,
-            new_blocked: 0,
-            new_unique_ips: [],
-            new_rule_matches: [],
-            new_baseline_breaches: [],
-            first_time: true,
-          });
-          setWhatChangedVisible(true);
-          setWhatChangedLoading(false);
-        }
-      });
+      // First visit — mark all data as "new"
+      if (!cancelled) {
+        setWhatChangedData({
+          since_ts: null,
+          hours_since: null,
+          new_events: 0,
+          new_anomalies: 0,
+          new_blocked: 0,
+          new_unique_ips: [],
+          new_rule_matches: [],
+          new_baseline_breaches: [],
+          first_time: true,
+        });
+        setWhatChangedVisible(true);
+      }
       return;
     }
 
