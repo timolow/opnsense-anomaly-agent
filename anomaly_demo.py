@@ -49,7 +49,7 @@ def main():
         baselines[key] = {
             "rule": row[0], "ip": row[1],
             "avg": row[2] or 0, "std": row[3] or 0,
-            "proto": row[4] if isinstance(row[4], dict) else json.loads(row[4]) if isinstance(row[4], str) else {},
+            "protocol": row[4] if isinstance(row[4], dict) else json.loads(row[4]) if isinstance(row[4], str) else {},
             "hourly": row[5] if isinstance(row[5], list) else json.loads(row[5]) if isinstance(row[5], str) else [],
             "samples": row[6] or 0
         }
@@ -63,7 +63,7 @@ def main():
 
     print("\n--- TOP BASELINES ---")
     for b in top:
-        protos = ", ".join(f"{k}={v:.0%}" for k, v in sorted(b["proto"].items(), key=lambda x: -x[1])[:3]) if b["proto"] else "N/A"
+        protos = ", ".join(f"{k}={v:.0%}" for k, v in sorted(b["protocol"].items(), key=lambda x: -x[1])[:3]) if b["protocol"] else "N/A"
         peak_h = max(range(24), key=lambda h: b["hourly"][h]) if b["hourly"] and max(b["hourly"]) > 0 else 0
         print(f"Rule {b['rule']:6s}: {b['samples']:6,} samples | avg={b['avg']:7.0f}/hr std={b['std']:6.0f}")
         print(f"         Protocols: {protos}")
@@ -72,10 +72,10 @@ def main():
     # Pull recent events (last 10K)
     cur = db.connect().cursor()
     cur.execute("""
-        SELECT rule_name, src_ip, dst_port, proto, action
-        FROM events ORDER BY id DESC LIMIT 10000
+        SELECT rule_name, src_ip, dst_port, protocol, action
+        FROM normalized_events ORDER BY id DESC LIMIT 10000
     """)
-    events = [{"rule": r[0] or "", "src_ip": r[1] or "", "dst_port": r[2], "proto": r[3] or "", "action": r[4] or ""} for r in cur.fetchall()]
+    events = [{"rule": r[0] or "", "src_ip": r[1] or "", "dst_port": r[2], "protocol": r[3] or "", "action": r[4] or ""} for r in cur.fetchall()]
     cur.close()
 
     print(f"\n--- ANALYZING {len(events)} RECENT EVENTS ---")

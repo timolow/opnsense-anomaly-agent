@@ -484,7 +484,7 @@ def query_stats():
     if conn:
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute("SELECT COUNT(*) as cnt FROM events")
+            cur.execute("SELECT COUNT(*) as cnt FROM normalized_events")
             row = cur.fetchone()
             if row:
                 db_event_count = row["cnt"]
@@ -492,10 +492,10 @@ def query_stats():
                 SELECT src_ip, COUNT(*) as event_count,
                        COUNT(DISTINCT dst_ip) as unique_destinations,
                        COUNT(DISTINCT dst_port) as unique_ports,
-                       interface, proto
-                FROM events
+                       interface, protocol
+                FROM normalized_events
                 WHERE timestamp > NOW() - INTERVAL '24 hours'
-                GROUP BY src_ip, interface, proto
+                GROUP BY src_ip, interface, protocol
                 ORDER BY event_count DESC
                 LIMIT 100
             """)
@@ -504,7 +504,7 @@ def query_stats():
                 ip = row["src_ip"] or "0.0.0.0"
                 cnt = row["event_count"]
                 iface = row["interface"]
-                proto = row["proto"] or "ip"
+                protocol = row["protocol"] or "ip"
                 total_events += cnt
                 category = classify_interface(iface)
                 if category == "UNKNOWN" and ip and not ip.startswith(("10.", "192.168.", "172.")):
@@ -517,7 +517,7 @@ def query_stats():
                 top_sources.append({
                     "ip": ip, "count": cnt, "category": category,
                     "interface": iface, "unique_destinations": row["unique_destinations"],
-                    "unique_ports": row["unique_ports"], "protocol": proto,
+                    "unique_ports": row["unique_ports"], "protocol": protocol,
                 })
             by_severity = {
                 "CRITICAL": sum(1 for s in top_sources if s["count"] > 10000),
@@ -539,11 +539,11 @@ def query_stats():
     if conn:
         try:
             cur2 = conn.cursor()
-            cur2.execute("SELECT COUNT(*) FROM events WHERE action = 'BLOCK' AND timestamp > NOW() - INTERVAL '24 hours'")
+            cur2.execute("SELECT COUNT(*) FROM normalized_events WHERE action = 'BLOCK' AND timestamp > NOW() - INTERVAL '24 hours'")
             blocked_24h = cur2.fetchone()[0]
-            cur2.execute("SELECT COUNT(*) FROM events WHERE action = 'PASS' AND timestamp > NOW() - INTERVAL '24 hours'")
+            cur2.execute("SELECT COUNT(*) FROM normalized_events WHERE action = 'PASS' AND timestamp > NOW() - INTERVAL '24 hours'")
             passed_24h = cur2.fetchone()[0]
-            cur2.execute("SELECT COUNT(DISTINCT src_ip) FROM events WHERE timestamp > NOW() - INTERVAL '24 hours' AND src_ip IS NOT NULL AND src_ip != ''")
+            cur2.execute("SELECT COUNT(DISTINCT src_ip) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours' AND src_ip IS NOT NULL AND src_ip != ''")
             unique_ips = cur2.fetchone()[0]
             cur2.close()
         except Exception:
@@ -581,7 +581,7 @@ def query_stats():
                 COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE action = 'BLOCK') AS blocked,
                 COUNT(*) FILTER (WHERE action = 'PASS') AS passed
-            FROM events
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY hour
             ORDER BY hour
@@ -594,7 +594,7 @@ def query_stats():
         # Unique IPs per hour
         cur3.execute("""
             SELECT DATE_TRUNC('hour', timestamp)::text AS hour, COUNT(DISTINCT src_ip) AS uc
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
                 AND src_ip IS NOT NULL AND src_ip != ''
             GROUP BY hour ORDER BY hour
         """)
@@ -656,7 +656,7 @@ def query_heatmap():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT src_ip, EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as event_count
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY src_ip, EXTRACT(HOUR FROM timestamp)
             ORDER BY src_ip, hour
         """)
@@ -708,7 +708,7 @@ def query_ip_flow(ip_version: str = None):
             SELECT src_ip, dst_ip, COUNT(*) as connection_count,
                    ARRAY_AGG(DISTINCT dst_port) as ports,
                    ARRAY_AGG(DISTINCT interface) as interfaces
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
             """ + ip_filter + """
             GROUP BY src_ip, dst_ip
@@ -719,7 +719,7 @@ def query_ip_flow(ip_version: str = None):
         links = cur.fetchall()
         cur.execute("""
             SELECT src_ip, interface
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL
             """ + ip_filter.replace(" AND (dst_ip", "") + """
             GROUP BY src_ip, interface
@@ -840,7 +840,7 @@ def query_ip_flow_clusters(expand_cluster: str = None, edge_threshold: int = 0):
         cur.execute("""
             SELECT src_ip, dst_ip, COUNT(*) as connection_count,
                    ARRAY_AGG(DISTINCT dst_port) as ports
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
             GROUP BY src_ip, dst_ip
             HAVING COUNT(*) > 1
@@ -852,7 +852,7 @@ def query_ip_flow_clusters(expand_cluster: str = None, edge_threshold: int = 0):
         # Get interface mapping for classification
         cur.execute("""
             SELECT src_ip, interface
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL
             GROUP BY src_ip, interface
         """)
@@ -1026,7 +1026,7 @@ def query_geo():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT src_ip, COUNT(*) as cnt
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL
             GROUP BY src_ip
             ORDER BY cnt DESC
@@ -1109,7 +1109,7 @@ def query_events():
                    COUNT(DISTINCT dst_ip) as unique_dst,
                    COUNT(DISTINCT dst_port) as unique_ports,
                    interface
-            FROM events
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
             AND src_ip IS NOT NULL
             GROUP BY src_ip, interface
@@ -1514,7 +1514,7 @@ def query_alerts():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT src_ip, COUNT(*) as cnt, COUNT(DISTINCT dst_ip) as unique_dst, interface, MAX(timestamp) as latest_timestamp
-            FROM events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY src_ip, interface
             HAVING COUNT(*) > 1000
             ORDER BY cnt DESC
@@ -1589,7 +1589,7 @@ def query_flows():
     """Return IP flow data aggregated as {flows, total_flows, protocols}.
 
     UI expects:
-      - flows: list of {src_ip, dst_ip, events, proto, dst_port}
+      - flows: list of {src_ip, dst_ip, events, protocol, dst_port}
       - total_flows: int
       - protocols: {PROTO: count}
     """
@@ -1602,9 +1602,9 @@ def query_flows():
         # Top IP pair flows (last 24h)
         cur.execute("""
             SELECT src_ip, dst_ip, COUNT(*) AS events,
-                   MODE() WITHIN GROUP (ORDER BY proto) AS proto,
+                   MODE() WITHIN GROUP (ORDER BY protocol) AS protocol,
                    MODE() WITHIN GROUP (ORDER BY dst_port) AS dst_port
-            FROM events
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
               AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
             GROUP BY src_ip, dst_ip
@@ -1617,27 +1617,27 @@ def query_flows():
                 "src_ip": row["src_ip"],
                 "dst_ip": row["dst_ip"],
                 "events": row["events"],
-                "proto": row["proto"] or "",
+                "protocol": row["protocol"] or "",
                 "dst_port": row["dst_port"],
             })
 
         # Protocol distribution
         cur.execute("""
-            SELECT proto, COUNT(*) AS cnt
-            FROM events
+            SELECT protocol, COUNT(*) AS cnt
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
-              AND proto IS NOT NULL
-            GROUP BY proto
+              AND protocol IS NOT NULL
+            GROUP BY protocol
             ORDER BY cnt DESC
         """)
         protocols = {}
         for row in cur.fetchall():
-            protocols[row["proto"]] = row["cnt"]
+            protocols[row["protocol"]] = row["cnt"]
 
         # Total flow count
         cur.execute("""
             SELECT COUNT(DISTINCT (src_ip, dst_ip)) AS total_flows
-            FROM events
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
               AND src_ip IS NOT NULL AND dst_ip IS NOT NULL
         """)
@@ -1651,7 +1651,7 @@ def query_flows():
 
 
 def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
-    """Return raw log entries as {logs: [{timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name}]}.
+    """Return raw log entries as {logs: [{timestamp, src_ip, dst_ip, dst_port, protocol, action, rule_name}]}.
 
     Supports optional query params: days, limit, src_ip.
     """
@@ -1661,8 +1661,8 @@ def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         query = """
-            SELECT timestamp, src_ip, dst_ip, dst_port, proto, action, rule_name
-            FROM events
+            SELECT timestamp, src_ip, dst_ip, dst_port, protocol, action, rule_name
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '%s days'
         """ % days
         params: list = []
@@ -1682,7 +1682,7 @@ def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
                 "src_ip": row["src_ip"] or "",
                 "dst_ip": row["dst_ip"] or "",
                 "dst_port": row["dst_port"],
-                "proto": row["proto"] or "",
+                "protocol": row["protocol"] or "",
                 "action": row["action"] or "",
                 "rule_name": row["rule_name"] or "",
             })
@@ -1718,7 +1718,7 @@ def query_system_logs():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         # Total events classified
-        cur.execute("SELECT COUNT(*) AS cnt FROM events")
+        cur.execute("SELECT COUNT(*) AS cnt FROM normalized_events")
         total_events_classified = cur.fetchone()["cnt"]
 
         # Firewall vs system log events (based on log_type)
@@ -1726,7 +1726,7 @@ def query_system_logs():
             SELECT
                 SUM(CASE WHEN log_type = 'firewall' THEN 1 ELSE 0 END) AS firewall_events,
                 SUM(CASE WHEN log_type != 'firewall' AND log_type != '' THEN 1 ELSE 0 END) AS system_log_events
-            FROM events
+            FROM normalized_events
         """)
         row = cur.fetchone()
         firewall_events = row["firewall_events"] or 0
@@ -1737,7 +1737,7 @@ def query_system_logs():
             SELECT
                 COALESCE(rule_name, interface, 'unknown') AS service,
                 COUNT(*) AS cnt
-            FROM events
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY service
             ORDER BY cnt DESC
@@ -1754,7 +1754,7 @@ def query_system_logs():
         cur.execute("""
             SELECT timestamp, log_type, src_ip AS source, interface,
                    LEFT(raw_message, 200) AS message
-            FROM events
+            FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '24 hours'
               AND raw_message IS NOT NULL
             ORDER BY timestamp DESC
@@ -1843,14 +1843,14 @@ def query_new_since(since_ts: str):
 
         # New events since timestamp
         cur.execute(
-            "SELECT COUNT(*) as cnt FROM events WHERE timestamp > %s",
+            "SELECT COUNT(*) as cnt FROM normalized_events WHERE timestamp > %s",
             (since_dt,),
         )
         new_events = cur.fetchone()["cnt"]
 
         # New blocked since timestamp
         cur.execute(
-            "SELECT COUNT(*) as cnt FROM events WHERE timestamp > %s AND action = 'BLOCK'",
+            "SELECT COUNT(*) as cnt FROM normalized_events WHERE timestamp > %s AND action = 'BLOCK'",
             (since_dt,),
         )
         new_blocked = cur.fetchone()["cnt"]
@@ -1866,10 +1866,10 @@ def query_new_since(since_ts: str):
         cur.execute(
             """
             SELECT e.src_ip, COUNT(*) as cnt
-            FROM events e
+            FROM normalized_events e
             WHERE e.timestamp > %s AND e.src_ip IS NOT NULL AND e.src_ip != ''
               AND NOT EXISTS (
-                SELECT 1 FROM events e2
+                SELECT 1 FROM normalized_events e2
                 WHERE e2.src_ip = e.src_ip AND e2.timestamp <= %s
               )
             GROUP BY e.src_ip
@@ -1887,10 +1887,10 @@ def query_new_since(since_ts: str):
         cur.execute(
             """
             SELECT e.rule_name, COUNT(*) as cnt, MAX(e.timestamp) as last_seen
-            FROM events e
+            FROM normalized_events e
             WHERE e.timestamp > %s AND e.rule_name IS NOT NULL AND e.rule_name != ''
               AND NOT EXISTS (
-                SELECT 1 FROM events e2
+                SELECT 1 FROM normalized_events e2
                 WHERE e2.rule_name = e.rule_name AND e2.timestamp <= %s
               )
             GROUP BY e.rule_name
@@ -2002,7 +2002,7 @@ def query_ip_detail(ip: str):
                 SELECT COUNT(*) as total,
                        SUM(CASE WHEN action = 'block' THEN 1 ELSE 0 END) as blocked,
                        SUM(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) as passed
-                FROM events
+                FROM normalized_events
                 WHERE src_ip = %s OR dst_ip = %s
                 AND timestamp > NOW() - INTERVAL '24 hours'
             """, (ip, ip))
@@ -2014,7 +2014,7 @@ def query_ip_detail(ip: str):
             # Unique sources/destinations
             cur.execute("""
                 SELECT COUNT(DISTINCT src_ip) as src_count, COUNT(DISTINCT dst_ip) as dst_count, COUNT(DISTINCT dst_port) as port_count
-                FROM events
+                FROM normalized_events
                 WHERE src_ip = %s OR dst_ip = %s
                 AND timestamp > NOW() - INTERVAL '24 hours'
             """, (ip, ip))
@@ -2025,18 +2025,18 @@ def query_ip_detail(ip: str):
 
             # Protocol distribution
             cur.execute("""
-                SELECT proto, COUNT(*) as cnt
-                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                SELECT protocol, COUNT(*) as cnt
+                FROM normalized_events WHERE (src_ip = %s OR dst_ip = %s)
                 AND timestamp > NOW() - INTERVAL '24 hours'
-                AND proto IS NOT NULL AND proto != ''
-                GROUP BY proto ORDER BY cnt DESC
+                AND protocol IS NOT NULL AND protocol != ''
+                GROUP BY protocol ORDER BY cnt DESC
             """, (ip, ip))
-            result["protocols"] = [{"proto": r["proto"], "count": r["cnt"]} for r in cur.fetchall()]
+            result["protocols"] = [{"protocol": r["protocol"], "count": r["cnt"]} for r in cur.fetchall()]
 
             # Top destination ports
             cur.execute("""
                 SELECT dst_port, COUNT(*) as cnt
-                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                FROM normalized_events WHERE (src_ip = %s OR dst_ip = %s)
                 AND timestamp > NOW() - INTERVAL '24 hours'
                 AND dst_port IS NOT NULL
                 GROUP BY dst_port ORDER BY cnt DESC LIMIT 10
@@ -2046,7 +2046,7 @@ def query_ip_detail(ip: str):
             # Top counterpart IPs (if this is source, show dests; if dest, show sources)
             cur.execute("""
                 SELECT dst_ip as ip, COUNT(*) as cnt
-                FROM events WHERE src_ip = %s
+                FROM normalized_events WHERE src_ip = %s
                 AND timestamp > NOW() - INTERVAL '24 hours'
                 GROUP BY dst_ip ORDER BY cnt DESC LIMIT 10
             """, (ip,))
@@ -2055,7 +2055,7 @@ def query_ip_detail(ip: str):
             # Also top sources targeting this IP
             cur.execute("""
                 SELECT src_ip as ip, COUNT(*) as cnt
-                FROM events WHERE dst_ip = %s
+                FROM normalized_events WHERE dst_ip = %s
                 AND timestamp > NOW() - INTERVAL '24 hours'
                 GROUP BY src_ip ORDER BY cnt DESC LIMIT 10
             """, (ip,))
@@ -2065,7 +2065,7 @@ def query_ip_detail(ip: str):
             # Interfaces
             cur.execute("""
                 SELECT interface, COUNT(*) as cnt
-                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                FROM normalized_events WHERE (src_ip = %s OR dst_ip = %s)
                 AND timestamp > NOW() - INTERVAL '24 hours'
                 AND interface IS NOT NULL
                 GROUP BY interface ORDER BY cnt DESC
@@ -2074,15 +2074,15 @@ def query_ip_detail(ip: str):
 
             # Recent events (last 20)
             cur.execute("""
-                SELECT timestamp, action, proto, src_ip, dst_ip, dst_port, rule_name, interface
-                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                SELECT timestamp, action, protocol, src_ip, dst_ip, dst_port, rule_name, interface
+                FROM normalized_events WHERE (src_ip = %s OR dst_ip = %s)
                 AND timestamp > NOW() - INTERVAL '24 hours'
                 ORDER BY timestamp DESC LIMIT 20
             """, (ip, ip))
             result["recent_events"] = [{
                 "timestamp": str(r["timestamp"]),
                 "action": r["action"] or "",
-                "protocol": r["proto"] or "",
+                "protocol": r["protocol"] or "",
                 "src_ip": r["src_ip"] or "",
                 "dst_ip": r["dst_ip"] or "",
                 "dst_port": r["dst_port"],
@@ -2093,7 +2093,7 @@ def query_ip_detail(ip: str):
             # Timeline (hourly for 24h)
             cur.execute("""
                 SELECT DATE_TRUNC('hour', timestamp) as hour, COUNT(*) as cnt
-                FROM events WHERE (src_ip = %s OR dst_ip = %s)
+                FROM normalized_events WHERE (src_ip = %s OR dst_ip = %s)
                 AND timestamp > NOW() - INTERVAL '24 hours'
                 GROUP BY DATE_TRUNC('hour', timestamp)
                 ORDER BY hour
@@ -2346,7 +2346,7 @@ def query_health():
     if db_conn:
         try:
             cur = db_conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM events")
+            cur.execute("SELECT COUNT(*) FROM normalized_events")
             event_count = (cur.fetchone() or (0,))[0]
             cur.execute("SELECT COUNT(*) FROM anomalies")
             anomaly_count = (cur.fetchone() or (0,))[0]
@@ -2696,9 +2696,9 @@ def query_zenarmor_events(limit=100, offset=0):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT timestamp, src_ip, dst_ip, dst_port, proto, action,
+            SELECT timestamp, src_ip, dst_ip, dst_port, protocol, action,
                    rule_name, log_type
-            FROM events
+            FROM normalized_events
             WHERE log_type = 'zenarmor'
             ORDER BY timestamp DESC
             LIMIT %s OFFSET %s
@@ -2759,7 +2759,7 @@ def query_ids_summary():
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE timestamp > NOW() - INTERVAL '24 hours') as last_24h,
                 COUNT(DISTINCT rule_name) FILTER (WHERE rule_name IS NOT NULL AND rule_name != '') as distinct_sigs
-            FROM events
+            FROM normalized_events
             WHERE log_type = 'ids'
         """)
         row = cur.fetchone()
@@ -2802,7 +2802,7 @@ def query_ids_signatures():
         # Group events by rule_name (signature name)
         cur.execute("""
             SELECT rule_name, COUNT(*) as cnt, MAX(timestamp) as last_seen
-            FROM events
+            FROM normalized_events
             WHERE log_type = 'ids' AND rule_name IS NOT NULL AND rule_name != ''
             GROUP BY rule_name
             ORDER BY cnt DESC
@@ -2853,9 +2853,9 @@ def query_ids_events(limit=100, offset=0):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT timestamp, src_ip, dst_ip, dst_port, proto, action,
+            SELECT timestamp, src_ip, dst_ip, dst_port, protocol, action,
                    rule_name, log_type
-            FROM events
+            FROM normalized_events
             WHERE log_type = 'ids'
             ORDER BY timestamp DESC
             LIMIT %s OFFSET %s
@@ -2918,7 +2918,7 @@ def query_nginx_summary():
 
         # Total HTTP/HTTPS requests (port 80, 443, 8080, 8443)
         cur.execute("""
-            SELECT COUNT(*) FROM events
+            SELECT COUNT(*) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
         """, (cutoff,))
         total_requests = cur.fetchone()[0]
@@ -2937,7 +2937,7 @@ def query_nginx_summary():
         # By port (as proxy for method breakdown)
         by_method = {}
         cur.execute("""
-            SELECT dst_port, COUNT(*) FROM events
+            SELECT dst_port, COUNT(*) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
             GROUP BY dst_port ORDER BY COUNT(*) DESC
         """, (cutoff,))
@@ -2948,7 +2948,7 @@ def query_nginx_summary():
         # By action (as proxy for status)
         by_status = {}
         cur.execute("""
-            SELECT action, COUNT(*) FROM events
+            SELECT action, COUNT(*) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
             GROUP BY action ORDER BY COUNT(*) DESC
         """, (cutoff,))
@@ -2961,21 +2961,21 @@ def query_nginx_summary():
                 COUNT(CASE WHEN action = 'PASS' THEN 1 END),
                 COUNT(CASE WHEN action = 'BLOCK' THEN 1 END),
                 0
-            FROM events
+            FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443)
         """, (cutoff,))
         ok, client_err, server_err = cur.fetchone()
 
         # Unique source IPs
         cur.execute("""
-            SELECT COUNT(DISTINCT src_ip) FROM events
+            SELECT COUNT(DISTINCT src_ip) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND src_ip IS NOT NULL
         """, (cutoff,))
         unique_ips = cur.fetchone()[0]
 
         # Top source IPs
         cur.execute("""
-            SELECT src_ip, COUNT(*) FROM events
+            SELECT src_ip, COUNT(*) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND src_ip IS NOT NULL
             GROUP BY src_ip ORDER BY COUNT(*) DESC LIMIT 10
         """, (cutoff,))
@@ -2983,7 +2983,7 @@ def query_nginx_summary():
 
         # Top destination IPs (as proxy for paths)
         cur.execute("""
-            SELECT dst_ip, COUNT(*) FROM events
+            SELECT dst_ip, COUNT(*) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND dst_ip IS NOT NULL
             GROUP BY dst_ip ORDER BY COUNT(*) DESC LIMIT 10
         """, (cutoff,))
@@ -2991,7 +2991,7 @@ def query_nginx_summary():
 
         # Blocked count as proxy for 404s
         cur.execute("""
-            SELECT COUNT(*) FROM events
+            SELECT COUNT(*) FROM normalized_events
             WHERE timestamp > %s AND dst_port IN (80, 443, 8080, 8443) AND action = 'BLOCK'
         """, (cutoff,))
         not_found = cur.fetchone()[0]
@@ -3043,7 +3043,7 @@ def query_dns_queries():
 
         # DNS events: traffic on port 53 (UDP/TCP DNS)
         cur.execute("""
-            SELECT COUNT(*) FROM events WHERE dst_port = 53
+            SELECT COUNT(*) FROM normalized_events WHERE dst_port = 53
               AND timestamp > NOW() - INTERVAL '24 hours'
         """)
         total = cur.fetchone()[0]
@@ -3059,8 +3059,8 @@ def query_dns_queries():
         cur.execute("""
             SELECT timestamp, src_ip, COALESCE(src_hostname, src_ip) AS src_host,
                    dst_ip, COALESCE(dst_hostname, dst_ip) AS dst_host,
-                   action, proto, interface, rule_name
-            FROM events
+                   action, protocol, interface, rule_name
+            FROM normalized_events
             WHERE dst_port = 53
               AND timestamp > NOW() - INTERVAL '24 hours'
             ORDER BY timestamp DESC LIMIT 200
@@ -3075,7 +3075,7 @@ def query_dns_queries():
                 'server_ip': r[3] or '',
                 'server_hostname': r[4] or r[3] or '',
                 'action': r[5] or '',
-                'proto': r[6] or 'UDP',
+                "protocol": r["protocol": r[6][-6:]] or 'UDP',
                 'interface': r[7] or '',
                 'rule': r[8] or '',
             })
@@ -3083,7 +3083,7 @@ def query_dns_queries():
         # Top queried domains (dst_hostname from reverse DNS)
         cur.execute("""
             SELECT COALESCE(dst_hostname, dst_ip) AS domain, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE dst_port = 53 AND timestamp > NOW() - INTERVAL '24 hours'
               AND dst_hostname IS NOT NULL AND dst_hostname != ''
             GROUP BY domain ORDER BY cnt DESC LIMIT 20
@@ -3094,7 +3094,7 @@ def query_dns_queries():
         if not top_domains:
             cur.execute("""
                 SELECT dst_ip AS domain, COUNT(*) as cnt
-                FROM events
+                FROM normalized_events
                 WHERE dst_port = 53 AND timestamp > NOW() - INTERVAL '24 hours'
                 GROUP BY domain ORDER BY cnt DESC LIMIT 20
             """)
@@ -3103,7 +3103,7 @@ def query_dns_queries():
         # Top DNS clients (src_ip)
         cur.execute("""
             SELECT COALESCE(src_hostname, src_ip) AS client, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE dst_port = 53 AND timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY client ORDER BY cnt DESC LIMIT 20
         """)
@@ -3178,7 +3178,7 @@ def query_nginx_top_paths():
             WHERE source = 'nginx' AND payload_context->>'path' IS NOT NULL
             GROUP BY path ORDER BY cnt DESC LIMIT 20
         """)
-        return [{"path": r[0], "requests": r[1], "errors": r[2]} for r in cur.fetchall()]
+        return [{"path": r[0], "requests": r[1], "errors": r[2]} for r in cur.fetchall() if r[0]]
     except Exception as e:
         close_db(conn)
         return []
@@ -4242,7 +4242,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 pre_stats = {}
                 cur = db._new_cursor()
                 try:
-                    cur.execute("SELECT COUNT(*) FROM events")
+                    cur.execute("SELECT COUNT(*) FROM normalized_events")
                     pre_stats["events"] = cur.fetchone()[0]
                     cur.execute("SELECT COUNT(*) FROM anomalies")
                     pre_stats["anomalies"] = cur.fetchone()[0]
@@ -4275,7 +4275,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 # 2. Events
                 cur = db._new_cursor()
                 try:
-                    cur.execute("DELETE FROM events WHERE timestamp < NOW() - INTERVAL %s", (f"{retention_days} days",))
+                    cur.execute("DELETE FROM normalized_events WHERE timestamp < NOW() - INTERVAL %s", (f"{retention_days} days",))
                     deleted["events"] = cur.rowcount or 0
                 finally:
                     cur.close()
@@ -4895,7 +4895,7 @@ def query_rule_detail(rule_name):
         # Basic rule stats
         cur.execute("""
             SELECT action, COUNT(*)
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s
             GROUP BY action
         """, (rule_name,))
@@ -4904,7 +4904,7 @@ def query_rule_detail(rule_name):
         # Top source IPs
         cur.execute("""
             SELECT src_ip, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s AND src_ip IS NOT NULL AND src_ip != ''
             GROUP BY src_ip ORDER BY cnt DESC LIMIT 20
         """, (rule_name,))
@@ -4913,7 +4913,7 @@ def query_rule_detail(rule_name):
         # Top destination IPs
         cur.execute("""
             SELECT dst_ip, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s AND dst_ip IS NOT NULL AND dst_ip != ''
             GROUP BY dst_ip ORDER BY cnt DESC LIMIT 20
         """, (rule_name,))
@@ -4922,7 +4922,7 @@ def query_rule_detail(rule_name):
         # Top destination ports
         cur.execute("""
             SELECT dst_port, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s AND dst_port IS NOT NULL
             GROUP BY dst_port ORDER BY cnt DESC LIMIT 20
         """, (rule_name,))
@@ -4931,7 +4931,7 @@ def query_rule_detail(rule_name):
         # Top source ports
         cur.execute("""
             SELECT src_port, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s AND src_port IS NOT NULL
             GROUP BY src_port ORDER BY cnt DESC LIMIT 20
         """, (rule_name,))
@@ -4939,17 +4939,17 @@ def query_rule_detail(rule_name):
         
         # Protocol distribution
         cur.execute("""
-            SELECT proto, COUNT(*) as cnt
-            FROM events
-            WHERE rule_name = %s AND proto IS NOT NULL AND proto != ''
-            GROUP BY proto ORDER BY cnt DESC
+            SELECT protocol, COUNT(*) as cnt
+            FROM normalized_events
+            WHERE rule_name = %s AND protocol IS NOT NULL AND protocol != ''
+            GROUP BY protocol ORDER BY cnt DESC
         """, (rule_name,))
-        protocols = [{"proto": r[0], "count": r[1]} for r in cur.fetchall()]
+        protocols = [{"protocol": r[0], "count": r[1]} for r in cur.fetchall()]
         
         # Interface distribution
         cur.execute("""
             SELECT interface, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s AND interface IS NOT NULL AND interface != ''
             GROUP BY interface ORDER BY cnt DESC
         """, (rule_name,))
@@ -4958,7 +4958,7 @@ def query_rule_detail(rule_name):
         # Direction distribution
         cur.execute("""
             SELECT direction, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s AND direction IS NOT NULL AND direction != ''
             GROUP BY direction ORDER BY cnt DESC
         """, (rule_name,))
@@ -4967,7 +4967,7 @@ def query_rule_detail(rule_name):
         # Time distribution (by hour of day)
         cur.execute("""
             SELECT EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s
             GROUP BY hour ORDER BY hour
         """, (rule_name,))
@@ -4976,7 +4976,7 @@ def query_rule_detail(rule_name):
         # Daily count (last 7 days)
         cur.execute("""
             SELECT DATE(timestamp) as day, COUNT(*) as cnt
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s
             GROUP BY day ORDER BY day DESC LIMIT 7
         """, (rule_name,))
@@ -4985,7 +4985,7 @@ def query_rule_detail(rule_name):
         # Top 10 recent events
         cur.execute("""
             SELECT timestamp, src_ip, dst_ip, dst_port, src_port, action
-            FROM events
+            FROM normalized_events
             WHERE rule_name = %s
             ORDER BY timestamp DESC LIMIT 10
         """, (rule_name,))
@@ -5002,12 +5002,12 @@ def query_rule_detail(rule_name):
         
         # Unique IPs count
         cur.execute("""
-            SELECT COUNT(DISTINCT src_ip) FROM events
+            SELECT COUNT(DISTINCT src_ip) FROM normalized_events
             WHERE rule_name = %s AND src_ip IS NOT NULL AND src_ip != ''
         """, (rule_name,))
         unique_src = cur.fetchone()[0]
         cur.execute("""
-            SELECT COUNT(DISTINCT dst_ip) FROM events
+            SELECT COUNT(DISTINCT dst_ip) FROM normalized_events
             WHERE rule_name = %s AND dst_ip IS NOT NULL AND dst_ip != ''
         """, (rule_name,))
         unique_dst = cur.fetchone()[0]
@@ -5098,10 +5098,10 @@ def query_rules_classified():
                 COUNT(DISTINCT dst_ip) as unique_dst_ips,
                 COUNT(DISTINCT dst_port) as unique_ports,
                 COUNT(DISTINCT src_port) as unique_src_ports,
-                COUNT(CASE WHEN proto IS NOT NULL AND proto != ''
-                    AND UPPER(proto) NOT IN ('TCP', 'UDP', 'ICMP', 'GRE', 'ESP', 'AH', 'IPV6')
+                COUNT(CASE WHEN protocol IS NOT NULL AND protocol != ''
+                    AND UPPER(protocol) NOT IN ('TCP', 'UDP', 'ICMP', 'GRE', 'ESP', 'AH', 'IPV6')
                     THEN 1 END) as unusual_proto_count
-            FROM events
+            FROM normalized_events
             WHERE timestamp > %s
               AND action IN ('PASS', 'BLOCK')
               AND rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A'
@@ -6214,7 +6214,7 @@ def query__traffic_flow(hours=24, limit=50):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT src_ip, dst_ip, COUNT(*) as event_count
-            FROM events
+            FROM normalized_events
             WHERE src_ip IS NOT NULL AND dst_ip IS NOT NULL
               AND src_ip != '' AND dst_ip != ''
               AND timestamp > NOW() - INTERVAL '24 hours'
@@ -6243,18 +6243,18 @@ def query__protocol_distribution(hours=24):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT proto, COUNT(*) as event_count
-            FROM events
-            WHERE proto IS NOT NULL AND proto != ''
+            SELECT protocol, COUNT(*) as event_count
+            FROM normalized_events
+            WHERE protocol IS NOT NULL AND protocol != ''
               AND timestamp > NOW() - INTERVAL '24 hours'
-            GROUP BY proto
+            GROUP BY protocol
             ORDER BY event_count DESC
         """)
         rows = cur.fetchall()
         total = sum(r["event_count"] for r in rows)
         cur.close()
         protocols = [{
-            "protocol": r["proto"],
+            "protocol": r["protocol"],
             "count": r["event_count"],
             "percent": round(r["event_count"] / total * 100, 1) if total > 0 else 0
         } for r in rows]
@@ -6273,7 +6273,7 @@ def query__action_distribution(hours=24):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT action, COUNT(*) as event_count
-            FROM events
+            FROM normalized_events
             WHERE action IS NOT NULL AND action != ''
               AND timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY action
@@ -6337,7 +6337,7 @@ def query__timeline(period="7d", granularity="hour", start=None, end=None):
             SELECT {truncate_fn} as bucket,
                    COUNT(*) as total_count,
                    COUNT(*) FILTER (WHERE action = 'BLOCK') as blocked_count
-            FROM events
+            FROM normalized_events
             WHERE timestamp >= %s AND timestamp <= %s
             GROUP BY bucket
             ORDER BY bucket
@@ -6366,7 +6366,7 @@ def query__blocked_ips(hours=24, limit=20):
             SELECT src_ip, COUNT(*) as block_count,
                    COUNT(DISTINCT dst_ip) as unique_targets,
                    COUNT(DISTINCT dst_port) as unique_ports
-            FROM events
+            FROM normalized_events
             WHERE src_ip IS NOT NULL AND src_ip != ''
               AND action = 'BLOCK'
               AND timestamp > NOW() - INTERVAL '24 hours'
@@ -6400,7 +6400,7 @@ def query__top_ports(hours=24, limit=20):
             SELECT dst_port, COUNT(*) as event_count,
                    COUNT(DISTINCT src_ip) as unique_sources,
                    COUNT(DISTINCT CASE WHEN action = 'BLOCK' THEN 1 END) as block_count
-            FROM events
+            FROM normalized_events
             WHERE dst_port IS NOT NULL
               AND timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY dst_port
@@ -6445,7 +6445,7 @@ def query__rule_heatmap(hours=24, limit=30):
         # Get top rules by event count
         cur.execute("""
             SELECT rule_name, COUNT(*) as total_events
-            FROM events
+            FROM normalized_events
             WHERE rule_name IS NOT NULL AND rule_name != ''
               AND timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY rule_name
@@ -6459,7 +6459,7 @@ def query__rule_heatmap(hours=24, limit=30):
         for rule in top_rules:
             cur.execute("""
                 SELECT date_trunc('hour', timestamp) as hour, COUNT(*) as event_count
-                FROM events
+                FROM normalized_events
                 WHERE rule_name = %s AND timestamp > NOW() - INTERVAL '24 hours'
                 GROUP BY hour
                 ORDER BY hour
@@ -6486,7 +6486,7 @@ def query__direction_distribution(hours=24):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT direction, COUNT(*) as event_count
-            FROM events
+            FROM normalized_events
             WHERE direction IS NOT NULL AND direction != ''
               AND timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY direction
@@ -6515,7 +6515,7 @@ def query__rule_action_breakdown(hours=24, limit=30):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT rule_name, action, COUNT(*) as event_count
-            FROM events
+            FROM normalized_events
             WHERE rule_name IS NOT NULL AND rule_name != ''
               AND timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY rule_name, action

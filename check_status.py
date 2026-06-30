@@ -8,7 +8,7 @@ cur = db.connect().cursor()
 
 # Recent events
 cur.execute("""
-    SELECT COUNT(*) FROM events 
+    SELECT COUNT(*) FROM normalized_events 
     WHERE timestamp > NOW() - INTERVAL '5 minutes'
 """)
 recent = cur.fetchone()[0]
@@ -19,7 +19,7 @@ cur.execute("""
     SELECT rule_name, COUNT(*) as cnt,
            COUNT(DISTINCT src_ip) as ips,
            COUNT(DISTINCT dst_port) as ports
-    FROM events
+    FROM normalized_events
     WHERE timestamp > NOW() - INTERVAL '5 minutes'
     GROUP BY rule_name
     ORDER BY cnt DESC
@@ -60,9 +60,9 @@ cur.execute("""
 """)
 print("\nBaseline stats (top 5 rules):")
 for row in cur.fetchall():
-    rule, samples, avg_hr, std_hr, proto, hourly = row
+    rule, samples, avg_hr, std_hr, protocol, hourly = row
     print(f"  Rule {rule}: {samples:,} samples | avg={avg_hr:.0f}/hr std={std_hr:.0f}")
-    print(f"    Protocols: {proto}")
+    print(f"    Protocols: {protocol}")
     if hourly:
         peak = max(range(24), key=lambda h: hourly[h])
         print(f"    Peak hour: {peak}:00 ({hourly[peak]:.0f} events)")

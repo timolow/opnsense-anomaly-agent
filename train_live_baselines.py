@@ -12,8 +12,8 @@ def main():
     # Get recent events (last 7 days for training)
     print("Training baselines from live events...")
     cur.execute("""
-        SELECT rule_name, proto, action, timestamp
-        FROM events
+        SELECT rule_name, protocol, action, timestamp
+        FROM normalized_events
         WHERE timestamp > NOW() - INTERVAL '7 days'
           AND rule_name IS NOT NULL
         ORDER BY timestamp ASC
@@ -42,7 +42,7 @@ def main():
         for e in evts:
             if e[3]:  # timestamp
                 hours[e[3].hour] += 1
-            if e[1]:  # proto
+            if e[1]:  # protocol
                 proto_counts[e[1]] += 1
             if e[2] == "block":
                 blocks += 1
