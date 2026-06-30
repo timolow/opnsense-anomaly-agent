@@ -142,45 +142,75 @@ class EventDatabase:
         return self._PoolCursor(conn, EventDatabase._pool, cur)
     
     def insert_event(self, event_data: Dict[str, Any], raw_message: str = "") -> int:
-        """Insert a single parsed event and return its ID."""
+        """Insert a single parsed event into normalized_events and return its ID.
+
+        Auto-detects source from event shape (firewall, nginx, ids, zenarmor, unifi).
+        Source-specific fields go into payload_context JSONB.
+        """
         cur = self._new_cursor()
         try:
+            # Auto-detect source from event shape
+            source = event_data.get('source', '')
+            if not source:
+                if event_data.get('unifi_event_key'):
+                    source = 'unifi'
+                elif event_data.get('method') and event_data.get('path'):
+                    source = 'nginx'
+                elif event_data.get('signature_id') or event_data.get('ids_event'):
+                    source = 'ids'
+                elif event_data.get('policy') or event_data.get('zenarmor'):
+                    source = 'zenarmor'
+                else:
+                    source = 'firewall'
+
+            # Build payload_context from source-specific fields
+            payload: Dict[str, Any] = {}
+            if event_data.get('version'):
+                payload['version'] = event_data['version']
+            for key in ('ip_ttl', 'ip_total_length'):
+                if event_data.get(key) is not None:
+                    payload[key] = event_data[key]
+            for key in ('tcp_flags_raw', 'tcp_seq', 'tcp_ack', 'tcp_window',
+                         'tcp_options', 'udp_datalen', 'icmp_datalen'):
+                val = event_data.get(key)
+                if val is not None:
+                    payload[key] = val
+            # Nginx-specific
+            for key in ('method', 'path', 'status_code', 'response_size',
+                         'user_agent', 'request_time'):
+                if event_data.get(key) is not None:
+                    payload[key] = event_data[key]
+            # IDS-specific
+            for key in ('signature_id', 'signature_msg', 'signature_gen',
+                         'signature_rev', 'classification'):
+                if event_data.get(key):
+                    payload[key] = event_data[key]
+
             cur.execute(
-                """INSERT INTO events
-                   (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
-                    src_port, dst_port, proto, action, interface,
-                    direction, version, ip_ttl, ip_total_length, tcp_flags,
-                    tcp_seq, tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s)
+                """INSERT INTO normalized_events
+                   (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, action,
+                    interface, direction, src_hostname, dst_hostname,
+                    payload_context, source, log_type, rule_name, severity, raw_message)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING id""",
                 (
                     event_data.get('timestamp'),
                     event_data.get('src_ip'),
                     event_data.get('dst_ip'),
-                    event_data.get('src_hostname'),
-                    event_data.get('dst_hostname'),
                     event_data.get('sport'),
                     event_data.get('dport'),
                     event_data.get('proto'),
                     event_data.get('action'),
                     event_data.get('interface'),
                     event_data.get('direction'),
-                    event_data.get('version'),
-                    event_data.get('ip_ttl'),
-                    event_data.get('ip_total_length'),
-                    event_data.get('tcp_flags_raw') or event_data.get('tcp_flags'),
-                    event_data.get('tcp_seq'),
-                    event_data.get('tcp_ack'),
-                    event_data.get('tcp_window'),
-                    event_data.get('tcp_options'),
-                    event_data.get('udp_datalen'),
-                    event_data.get('icmp_datalen'),
-                    raw_message,
-                    event_data.get('rule_name'),
+                    event_data.get('src_hostname'),
+                    event_data.get('dst_hostname'),
+                    json.dumps(payload) if payload else None,
+                    source,
                     event_data.get('log_type', ''),
+                    event_data.get('rule_name'),
+                    event_data.get('severity'),
+                    raw_message,
                 )
             )
             event_id = cur.fetchone()[0]
@@ -189,9 +219,12 @@ class EventDatabase:
             cur.close()
     
     def insert_events_batch(self, events: List[Tuple]) -> int:
-        """Insert a batch of events.
+        """Insert a batch of events into normalized_events.
         
-        events: list of tuples matching the INSERT column order.
+        events: list of tuples matching the INSERT column order:
+          (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, action,
+           interface, direction, src_hostname, dst_hostname, payload_context,
+           source, log_type, rule_name, severity, raw_message)
         """
         if not events:
             return 0
@@ -201,12 +234,10 @@ class EventDatabase:
         try:
             psycopg2.extras.execute_values(
                 cur,
-                """INSERT INTO events
-                   (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
-                    src_port, dst_port, proto, action, interface,
-                    direction, version, ip_ttl, ip_total_length, tcp_flags,
-                    tcp_seq, tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
+                """INSERT INTO normalized_events
+                   (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, action,
+                    interface, direction, src_hostname, dst_hostname, payload_context,
+                    source, log_type, rule_name, severity, raw_message)
                    VALUES %s""",
                 events,
                 page_size=1000
@@ -445,38 +476,69 @@ class EventDatabase:
         finally:
             cur.close()
     
-    def get_event_count_windowed(self, window_minutes: int = 1) -> int:
-        """Count events in the last N minutes."""
+    def get_event_count_windowed(self, window_minutes: int = 1, source: Optional[str] = None) -> int:
+        """Count events in the last N minutes, optionally filtered by source."""
         cur = self._new_cursor()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
-            cur.execute(
-                "SELECT COUNT(*) FROM events WHERE timestamp > %s",
-                (cutoff,)
-            )
+            if source:
+                cur.execute(
+                    "SELECT COUNT(*) FROM normalized_events WHERE timestamp > %s AND source = %s",
+                    (cutoff, source)
+                )
+            else:
+                cur.execute(
+                    "SELECT COUNT(*) FROM normalized_events WHERE timestamp > %s",
+                    (cutoff,)
+                )
             return cur.fetchone()[0]
         finally:
             cur.close()
     
-    def get_new_events_since(self, since_id: int = 0, limit: int = 1000) -> List[Dict]:
-        """Get events with ID > since_id, ordered by ID."""
+    def get_new_events_since(self, since_id: int = 0, limit: int = 1000, source: Optional[str] = None) -> List[Dict]:
+        """Get events with ID > since_id, ordered by ID.
+        
+        Args:
+            since_id: Return events with id > since_id
+            limit: Maximum number of events to return
+            source: Optional source filter (e.g., 'firewall', 'nginx')
+        """
         cur = self._new_cursor()
         try:
-            cur.execute(
-                """SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port,
-                          proto, action, interface, direction, version,
-                          ip_ttl, ip_total_length, tcp_flags, tcp_seq,
-                          tcp_ack, tcp_window, tcp_options,
-                          udp_datalen, icmp_datalen
-                   FROM events
-                   WHERE id > %s
-                   ORDER BY id ASC
-                   LIMIT %s""",
-                (since_id, limit)
-            )
+            if source:
+                cur.execute(
+                    """SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port,
+                              protocol, action, interface, direction,
+                              src_hostname, dst_hostname, payload_context,
+                              source, log_type, rule_name, severity, raw_message
+                       FROM normalized_events
+                       WHERE id > %s AND source = %s
+                       ORDER BY id ASC
+                       LIMIT %s""",
+                    (since_id, source, limit)
+                )
+            else:
+                cur.execute(
+                    """SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port,
+                              protocol, action, interface, direction,
+                              src_hostname, dst_hostname, payload_context,
+                              source, log_type, rule_name, severity, raw_message
+                       FROM normalized_events
+                       WHERE id > %s
+                       ORDER BY id ASC
+                       LIMIT %s""",
+                    (since_id, limit)
+                )
             cols = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
-            return [dict(zip(cols, row)) for row in rows]
+            results = []
+            for row in rows:
+                d = dict(zip(cols, row))
+                # Parse payload_context JSONB
+                if d.get('payload_context') and isinstance(d['payload_context'], str):
+                    d['payload_context'] = json.loads(d['payload_context'])
+                results.append(d)
+            return results
         finally:
             cur.close()
     
@@ -540,15 +602,22 @@ class EventDatabase:
         finally:
             cur.close()
     
-    def prune_events(self, older_than_days: int = 30) -> int:
+    def prune_events(self, older_than_days: int = 30, source: Optional[str] = None) -> int:
         """Delete events older than the specified number of days.
         
+        Args:
+            older_than_days: Delete events older than this many days
+            source: Optional source filter to only prune events from a specific source
+            
         Returns the number of deleted events.
         """
         cur = self._new_cursor()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-            cur.execute("DELETE FROM events WHERE timestamp < %s", (cutoff,))
+            if source:
+                cur.execute("DELETE FROM normalized_events WHERE timestamp < %s AND source = %s", (cutoff, source))
+            else:
+                cur.execute("DELETE FROM normalized_events WHERE timestamp < %s", (cutoff,))
             deleted = cur.rowcount
             return deleted
         finally:
@@ -974,28 +1043,14 @@ class EventDatabase:
     # ── Nginx Monitoring Methods ─────────────────────────────────────────
 
     def insert_nginx_event(self, event_data: Dict[str, Any]):
-        """Insert a single nginx web request event."""
-        cur = self._new_cursor()
-        try:
-            cur.execute(
-                """INSERT INTO nginx_events
-                   (timestamp, src_ip, method, path, status_code, bytes_sent, request, user_agent, raw_message)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (
-                    event_data.get('timestamp'),
-                    event_data.get('src_ip'),
-                    event_data.get('method'),
-                    event_data.get('path'),
-                    event_data.get('status_code'),
-                    event_data.get('bytes'),
-                    event_data.get('request'),
-                    event_data.get('user_agent'),
-                    event_data.get('raw'),
-                )
-            )
-            return cur.fetchone()[0]
-        finally:
-            cur.close()
+        """Insert a single nginx web request event into normalized_events.
+        
+        Delegates to insert_event() which auto-detects source='nginx' from
+        the event shape (method + path fields).
+        """
+        event_data.setdefault('source', 'nginx')
+        event_data.setdefault('log_type', 'nginx')
+        return self.insert_event(event_data, event_data.get('raw', ''))
 
     def insert_nginx_anomaly(self, anomaly_data: Dict[str, Any]) -> int:
         """Insert a detected nginx anomaly."""
@@ -1024,82 +1079,85 @@ class EventDatabase:
             cur.close()
 
     def get_nginx_summary(self, since_hours: int = 24) -> Dict[str, Any]:
-        """Get nginx traffic summary for the given window."""
+        """Get nginx traffic summary from normalized_events."""
         conn = self.connect()
         cur = conn.cursor()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-            
+
             # Total requests
             cur.execute(
-                "SELECT COUNT(*) FROM nginx_events WHERE timestamp > %s",
+                "SELECT COUNT(*) FROM normalized_events WHERE source = 'nginx' AND timestamp > %s",
                 (cutoff,)
             )
             total_requests = cur.fetchone()[0]
-            
-            # Requests by method
+
+            # Requests by method (from payload_context)
             cur.execute(
-                """SELECT method, COUNT(*) as cnt FROM nginx_events 
-                   WHERE timestamp > %s AND method IS NOT NULL 
+                """SELECT payload_context->>'method' as method, COUNT(*) as cnt 
+                   FROM normalized_events 
+                   WHERE source = 'nginx' AND timestamp > %s AND payload_context IS NOT NULL
                    GROUP BY method ORDER BY cnt DESC""",
                 (cutoff,)
             )
-            by_method = {r[0]: r[1] for r in cur.fetchall()}
-            
-            # Requests by status code
+            by_method = {r[0]: r[1] for r in cur.fetchall() if r[0]}
+
+            # Requests by status code (from payload_context)
             cur.execute(
-                """SELECT status_code, COUNT(*) as cnt FROM nginx_events 
-                   WHERE timestamp > %s AND status_code IS NOT NULL 
+                """SELECT payload_context->>'status_code' as status_code, COUNT(*) as cnt 
+                   FROM normalized_events 
+                   WHERE source = 'nginx' AND timestamp > %s AND payload_context IS NOT NULL
                    GROUP BY status_code ORDER BY cnt DESC""",
                 (cutoff,)
             )
-            by_status = {str(r[0]): r[1] for r in cur.fetchall()}
-            
+            by_status = {str(r[0]): r[1] for r in cur.fetchall() if r[0]}
+
             # Status category breakdown
             cur.execute(
                 """SELECT 
-                   COUNT(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 END) as ok,
-                   COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END) as client_err,
-                   COUNT(CASE WHEN status_code >= 500 THEN 1 END) as server_err
-                   FROM nginx_events WHERE timestamp > %s""",
+                   COUNT(CASE WHEN (payload_context->>'status_code')::int >= 200 AND (payload_context->>'status_code')::int < 300 THEN 1 END) as ok,
+                   COUNT(CASE WHEN (payload_context->>'status_code')::int >= 400 AND (payload_context->>'status_code')::int < 500 THEN 1 END) as client_err,
+                   COUNT(CASE WHEN (payload_context->>'status_code')::int >= 500 THEN 1 END) as server_err
+                   FROM normalized_events WHERE source = 'nginx' AND timestamp > %s AND payload_context IS NOT NULL""",
                 (cutoff,)
             )
             row = cur.fetchone()
-            
+
             # Unique source IPs
             cur.execute(
-                "SELECT COUNT(DISTINCT src_ip) FROM nginx_events WHERE timestamp > %s AND src_ip IS NOT NULL",
+                "SELECT COUNT(DISTINCT src_ip) FROM normalized_events WHERE source = 'nginx' AND timestamp > %s AND src_ip IS NOT NULL",
                 (cutoff,)
             )
             unique_ips = cur.fetchone()[0]
-            
+
             # Top source IPs
             cur.execute(
-                """SELECT src_ip, COUNT(*) as cnt FROM nginx_events 
-                   WHERE timestamp > %s AND src_ip IS NOT NULL 
+                """SELECT src_ip, COUNT(*) as cnt FROM normalized_events 
+                   WHERE source = 'nginx' AND timestamp > %s AND src_ip IS NOT NULL 
                    GROUP BY src_ip ORDER BY cnt DESC LIMIT 10""",
                 (cutoff,)
             )
             top_ips = [{"ip": r[0], "requests": r[1]} for r in cur.fetchall()]
-            
-            # Top paths
+
+            # Top paths (from payload_context)
             cur.execute(
-                """SELECT path, COUNT(*) as cnt FROM nginx_events 
-                   WHERE timestamp > %s AND path IS NOT NULL 
+                """SELECT payload_context->>'path' as path, COUNT(*) as cnt FROM normalized_events 
+                   WHERE source = 'nginx' AND timestamp > %s AND payload_context IS NOT NULL
                    GROUP BY path ORDER BY cnt DESC LIMIT 10""",
                 (cutoff,)
             )
-            top_paths = [{"path": r[0], "requests": r[1]} for r in cur.fetchall()]
-            
+            top_paths = [{"path": r[0], "requests": r[1]} for r in cur.fetchall() if r[0]]
+
             # 404 errors (potential scanning)
             cur.execute(
-                """SELECT COUNT(*) FROM nginx_events 
-                   WHERE timestamp > %s AND status_code = 404""",
+                """SELECT COUNT(*) FROM normalized_events 
+                   WHERE source = 'nginx' AND timestamp > %s AND payload_context IS NOT NULL
+                   AND (payload_context->>'status_code')::int = 404""",
                 (cutoff,)
             )
             not_found_count = cur.fetchone()[0]
-            
-            # Recent nginx anomalies
+
+            # Recent nginx anomalies (still from nginx_anomalies table)
             cur.execute(
                 """SELECT attack_type, severity, COUNT(*) as cnt 
                    FROM nginx_anomalies 
@@ -1112,7 +1170,7 @@ class EventDatabase:
                 if at not in anomaly_by_type:
                     anomaly_by_type[at] = {}
                 anomaly_by_type[at][sev] = cnt
-            
+
             return {
                 'total_requests': total_requests,
                 'by_method': by_method,
@@ -1149,21 +1207,21 @@ class EventDatabase:
             cur.close()
 
     def get_nginx_top_paths_timeline(self, hours: int = 24) -> List[Dict]:
-        """Get top path request counts over time (for heatmap)."""
+        """Get top path request counts over time from normalized_events (for heatmap)."""
         conn = self.connect()
         cur = conn.cursor()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
             cur.execute(
                 """SELECT date_trunc('hour', timestamp) as hour, 
-                          path, COUNT(*) as cnt 
-                   FROM nginx_events 
-                   WHERE timestamp > %s AND path IS NOT NULL
+                          payload_context->>'path' as path, COUNT(*) as cnt 
+                   FROM normalized_events 
+                   WHERE source = 'nginx' AND timestamp > %s AND payload_context IS NOT NULL
                    GROUP BY hour, path 
                    ORDER BY hour DESC, cnt DESC""",
                 (cutoff,)
             )
-            return [dict(zip(['hour', 'path', 'count'], r)) for r in cur.fetchall()]
+            return [dict(zip(['hour', 'path', 'count'], r)) for r in cur.fetchall() if r[1]]
         finally:
             cur.close()
             self.putconn(conn)
@@ -1318,111 +1376,32 @@ class EventDatabase:
     # ── UniFi controller monitoring methods ─────────────────────────────
 
     def insert_unifi_event(self, event: Dict) -> Optional[int]:
-        """Insert a UniFi controller event into the unifi_events table.
+        """Insert a UniFi controller event into normalized_events.
+        
+        Delegates to insert_event() which auto-detects source='unifi' from
+        the event shape (unifi_event_key field).
         Returns the row ID or None on failure.
         """
-        cur = self._new_cursor()
         try:
-            cur.execute(
-                """INSERT INTO unifi_events
-                   (timestamp, event_key, event_type, severity, mac, ip, device, ap, ssid, message, metadata)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                   RETURNING id""",
-                (
-                    event.get("timestamp"),
-                    event.get("unifi_event_key", ""),
-                    event.get("event_type", ""),
-                    event.get("severity", "MEDIUM"),
-                    event.get("mac", ""),
-                    event.get("src_ip", ""),
-                    event.get("device", ""),
-                    event.get("ap", ""),
-                    event.get("ssid", ""),
-                    event.get("description", ""),
-                    json.dumps(event.get("metadata", {})),
-                ),
-            )
-            row = cur.fetchone()
-            # autocommit=True via _PoolCursor — no explicit commit needed
-            return row[0] if row else None
+            event.setdefault('source', 'unifi')
+            event.setdefault('log_type', 'unifi')
+            return self.insert_event(event, event.get('raw', ''))
         except Exception as e:
             logger.error("Failed to insert UniFi event: %s", e)
             return None
-        finally:
-            cur.close()
 
-    def insert_unifi_client(self, client: Dict) -> Optional[int]:
-        """Insert a UniFi client snapshot. Returns row ID or None."""
-        cur = self._new_cursor()
-        try:
-            cur.execute(
-                """INSERT INTO unifi_clients
-                   (mac, ip, hostname, is_wired, essid, ap_mac, rssi, rx_bytes, tx_bytes, connected_at, metadata)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                   RETURNING id""",
-                (
-                    client.get("mac", ""),
-                    client.get("ip", ""),
-                    client.get("hostname", ""),
-                    client.get("is_wired", False),
-                    client.get("essid", ""),
-                    client.get("ap_mac", ""),
-                    client.get("rssi"),
-                    client.get("rx_bytes", 0),
-                    client.get("tx_bytes", 0),
-                    client.get("connected_at"),
-                    json.dumps(client.get("metadata", {})),
-                ),
-            )
-            row = cur.fetchone()
-            # autocommit=True via _PoolCursor — no explicit commit needed
-            return row[0] if row else None
-        except Exception as e:
-            logger.error("Failed to insert UniFi client: %s", e)
-            return None
-        finally:
-            cur.close()
-
-    def insert_unifi_device(self, device: Dict) -> Optional[int]:
-        """Insert a UniFi device snapshot. Returns row ID or None."""
-        cur = self._new_cursor()
-        try:
-            cur.execute(
-                """INSERT INTO unifi_devices
-                   (device_id, mac, ip, name, model, type, state, adopted, uptime, channel, num_sta, metadata)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                   RETURNING id""",
-                (
-                    device.get("device_id", ""),
-                    device.get("mac", ""),
-                    device.get("ip", ""),
-                    device.get("name", ""),
-                    device.get("model", ""),
-                    device.get("type", ""),
-                    device.get("state", ""),
-                    device.get("adopted", False),
-                    device.get("uptime"),
-                    device.get("channel"),
-                    device.get("num_sta", 0),
-                    json.dumps(device.get("metadata", {})),
-                ),
-            )
-            row = cur.fetchone()
-            # autocommit=True via _PoolCursor — no explicit commit needed
-            return row[0] if row else None
-        except Exception as e:
-            logger.error("Failed to insert UniFi device: %s", e)
-            return None
-        finally:
-            cur.close()
+    # insert_unifi_client() and insert_unifi_device() removed —
+    # UniFi data now goes through normalized_events via insert_unifi_event().
+    # Client/device snapshots are stored in payload_context JSONB.
 
     def query_unifi_events(self, limit: int = 100) -> List[Dict]:
-        """Get recent UniFi events for dashboard."""
+        """Get recent UniFi events from normalized_events."""
         cur = self._new_cursor()
         try:
             cur.execute(
-                """SELECT id, timestamp, event_key, event_type, severity, mac, ip, device, ap, ssid, message
-                   FROM unifi_events
+                """SELECT id, timestamp, source, action, severity, src_ip, payload_context, raw_message
+                   FROM normalized_events
+                   WHERE source = 'unifi'
                    ORDER BY timestamp DESC LIMIT %s""",
                 (limit,),
             )
@@ -1434,6 +1413,16 @@ class EventDatabase:
                     item = dict(zip(cols, row))
                     if item.get("timestamp"):
                         item["timestamp"] = item["timestamp"].isoformat() if hasattr(item["timestamp"], "isoformat") else str(item["timestamp"])
+                    # Parse payload_context
+                    pc = item.get("payload_context")
+                    if pc and isinstance(pc, str):
+                        item["payload_context"] = json.loads(pc)
+                    # Extract common fields from payload_context for dashboard compat
+                    if pc:
+                        ctx = item.get("payload_context", {})
+                        for key in ("event_key", "mac", "device", "ap", "ssid"):
+                            if key not in item and ctx and key in ctx:
+                                item[key] = ctx[key]
                     result.append(item)
                 return result
             return []
@@ -1444,49 +1433,49 @@ class EventDatabase:
             cur.close()
 
     def query_unifi_summary(self) -> Dict:
-        """Get UniFi monitoring summary stats for the dashboard."""
+        """Get UniFi monitoring summary stats from normalized_events."""
         cur = self._new_cursor()
         try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
             # Event counts by severity
             cur.execute(
-                """SELECT severity, COUNT(*) FROM unifi_events
-                   WHERE timestamp > NOW() - INTERVAL '24 hours'
-                   GROUP BY severity"""
+                """SELECT severity, COUNT(*) FROM normalized_events
+                   WHERE source = 'unifi' AND timestamp > %s AND severity IS NOT NULL
+                   GROUP BY severity""",
+                (cutoff,)
             )
             by_severity = {row[0]: row[1] for row in cur.fetchall()}
 
-            # Event counts by type
+            # Event counts by type (action = event_type in normalized schema)
             cur.execute(
-                """SELECT event_type, COUNT(*) FROM unifi_events
-                   WHERE timestamp > NOW() - INTERVAL '24 hours'
-                   GROUP BY event_type ORDER BY COUNT(*) DESC LIMIT 10"""
+                """SELECT action, COUNT(*) FROM normalized_events
+                   WHERE source = 'unifi' AND timestamp > %s AND action IS NOT NULL
+                   GROUP BY action ORDER BY COUNT(*) DESC LIMIT 10""",
+                (cutoff,)
             )
             by_type = {row[0]: row[1] for row in cur.fetchall()}
 
-            # Unique clients
-            cur.execute(
-                "SELECT COUNT(DISTINCT mac) FROM unifi_clients WHERE last_seen > NOW() - INTERVAL '24 hours'"
-            )
-            unique_clients = cur.fetchone()[0]
-
-            # Unique devices
-            cur.execute(
-                "SELECT COUNT(DISTINCT device_id) FROM unifi_devices WHERE last_seen > NOW() - INTERVAL '24 hours'"
-            )
-            unique_devices = cur.fetchone()[0]
-
             # Total events last 24h
             cur.execute(
-                "SELECT COUNT(*) FROM unifi_events WHERE timestamp > NOW() - INTERVAL '24 hours'"
+                "SELECT COUNT(*) FROM normalized_events WHERE source = 'unifi' AND timestamp > %s",
+                (cutoff,)
             )
             total_events = cur.fetchone()[0]
+
+            # Unique source IPs
+            cur.execute(
+                "SELECT COUNT(DISTINCT src_ip) FROM normalized_events WHERE source = 'unifi' AND timestamp > %s AND src_ip IS NOT NULL",
+                (cutoff,)
+            )
+            unique_ips = cur.fetchone()[0]
 
             return {
                 "total_events_24h": total_events,
                 "by_severity": by_severity,
                 "by_type": by_type,
-                "unique_clients_24h": unique_clients,
-                "unique_devices_24h": unique_devices,
+                "unique_clients_24h": unique_ips,
+                "unique_devices_24h": 0,
             }
         except Exception as e:
             logger.error("Failed to query UniFi summary: %s", e)
