@@ -20,6 +20,28 @@ Usage:
     profile = profiler.get_profile("192.168.1.50")
 """
 
+import warnings
+
+# ── DEPRECATED ─────────────────────────────────────────────────────────
+# This module has been superseded by unified_behavioral_engine.py.
+# All functionality (BehaviorProfiler, IPBehaviorProfile, EMA baselines,
+# deviation signals) has been migrated into UnifiedBehavioralEngine.
+#
+# Migration guide:
+#   OLD:  from ip_behavior_model import BehaviorProfiler
+#   NEW:  from unified_behavioral_engine import UnifiedBehavioralEngine
+#
+# These files are retained until 2026-07-14 as a safety net, then will be
+# removed. Please update any remaining imports.
+# ──────────────────────────────────────────────────────────────────────────
+warnings.warn(
+    "ip_behavior_model is DEPRECATED — functionality migrated to "
+    "unified_behavioral_engine.UnifiedBehavioralEngine. "
+    "This module will be removed after 2026-07-14.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import json
 import logging
 import math

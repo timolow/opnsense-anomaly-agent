@@ -6,6 +6,28 @@ Learns traffic baselines from historical data (Graylog training data + live even
 Tracks per-rule, per-IP, per-time-of-day patterns to establish what is "normal".
 """
 
+import warnings
+
+# ── DEPRECATED ─────────────────────────────────────────────────────────
+# This module has been superseded by unified_behavioral_engine.py.
+# All functionality (BaselineEngine, TrafficBaseline, IP-level baselines,
+# temporal drift detection) has been migrated into UnifiedBehavioralEngine.
+#
+# Migration guide:
+#   OLD:  from baseline_engine import BaselineEngine
+#   NEW:  from unified_behavioral_engine import UnifiedBehavioralEngine
+#
+# These files are retained until 2026-07-14 as a safety net, then will be
+# removed. Please update any remaining imports.
+# ──────────────────────────────────────────────────────────────────────────
+warnings.warn(
+    "baseline_engine is DEPRECATED — functionality migrated to "
+    "unified_behavioral_engine.UnifiedBehavioralEngine. "
+    "This module will be removed after 2026-07-14.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import json
 import logging
 import math
