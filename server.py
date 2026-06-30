@@ -3172,10 +3172,10 @@ def query_nginx_top_paths():
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT path, COUNT(*) as cnt, 
-                   COUNT(CASE WHEN status_code >= 400 THEN 1 END) as errors
-            FROM nginx_events 
-            WHERE path IS NOT NULL
+            SELECT payload_context->>'path' as path, COUNT(*) as cnt,
+                   COUNT(CASE WHEN (payload_context->>'status_code')::int >= 400 THEN 1 END) as errors
+            FROM normalized_events
+            WHERE source = 'nginx' AND payload_context->>'path' IS NOT NULL
             GROUP BY path ORDER BY cnt DESC LIMIT 20
         """)
         return [{"path": r[0], "requests": r[1], "errors": r[2]} for r in cur.fetchall()]
@@ -3195,8 +3195,8 @@ def query_nginx_timeline(hours=24):
         cur = conn.cursor()
         cur.execute("""
             SELECT date_trunc('hour', timestamp)::text as hour, COUNT(*) as count
-            FROM nginx_events 
-            WHERE timestamp > NOW() - INTERVAL '%s hours'
+            FROM normalized_events
+            WHERE source = 'nginx' AND timestamp > NOW() - INTERVAL '%s hours'
             GROUP BY hour ORDER BY hour ASC
         """, (hours,))
         return [{"hour": r[0], "requests": r[1]} for r in cur.fetchall()]

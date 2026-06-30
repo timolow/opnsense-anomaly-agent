@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -1110,6 +1110,32 @@ MIGRATIONS: List[Dict[str, Any]] = [
         ],
         "hook": lambda conn: (_v21_backfill(conn), _v21_convert_hypertable(conn)),
     },
+
+    # ------------------------------------------------------------------
+    # V22: Deprecate legacy source tables after V21 backfill
+    #
+    # Renames events → events_deprecated, nginx_events → nginx_events_deprecated,
+    # unifi_events → unifi_events_deprecated, unifi_devices → unifi_devices_deprecated,
+    # unifi_clients → unifi_clients_deprecated.
+    #
+    # Tables are NOT dropped yet — keep as *_deprecated safety net until the
+    # operator confirms normalized_events has sufficient data.
+    # ------------------------------------------------------------------
+    {
+        "version": 22,
+        "description": "Deprecate nginx_events, unifi_events, unifi_devices, unifi_clients tables (rename to *_deprecated)",
+        "sql": [
+            # These tables are superseded by normalized_events and will be dropped
+            # in a future migration after operator verification.
+            # Note: the `events` table is NOT deprecated here — it remains in use
+            # by server.py endpoints until a follow-up migration handles it.
+            "ALTER TABLE IF EXISTS nginx_events RENAME TO nginx_events_deprecated;",
+            "ALTER TABLE IF EXISTS unifi_events RENAME TO unifi_events_deprecated;",
+            "ALTER TABLE IF EXISTS unifi_devices RENAME TO unifi_devices_deprecated;",
+            "ALTER TABLE IF EXISTS unifi_clients RENAME TO unifi_clients_deprecated;",
+        ],
+        "hook": lambda conn: _v22_verify_deprecation(conn),
+    },
 ]
 
 # =============================================================================
@@ -1594,6 +1620,47 @@ def _v21_convert_hypertable(conn: Any):
             logger.warning("V21: Could not verify hypertable stats (possibly mocked context)")
 
         logger.info("V21: Migration complete — normalized_events hypertable verified")
+    finally:
+        cur.close()
+
+
+def _v22_verify_deprecation(conn: Any):
+    """Verify legacy table deprecation and log counts for operator review.
+
+    After renaming, log the row counts in both the deprecated tables and
+    normalized_events so the operator can confirm data parity.
+    """
+    cur = conn.cursor()
+    try:
+        # Count normalized_events
+        cur.execute("SELECT count(*) FROM normalized_events")
+        norm_count = cur.fetchone()[0]
+        logger.info("V22: normalized_events has %d rows", norm_count)
+
+        # Count deprecated tables (safe — renamed tables still exist)
+        # Note: events is NOT deprecated (still actively used by server.py endpoints)
+        deprecated_tables = [
+            "nginx_events_deprecated",
+            "unifi_events_deprecated",
+            "unifi_devices_deprecated",
+            "unifi_clients_deprecated",
+        ]
+        for tbl in deprecated_tables:
+            try:
+                cur.execute(f"SELECT count(*) FROM {tbl}")
+                count = cur.fetchone()[0]
+                logger.info("V22: %s has %d rows (deprecated — safe to drop after verification)", tbl, count)
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "does not exist" in msg or "relation" in msg:
+                    logger.info("V22: %s does not exist (never created) — skipping", tbl)
+                else:
+                    logger.warning("V22: Could not count %s: %s", tbl, exc)
+
+        logger.info(
+            "V22: Deprecation complete. Legacy tables renamed to *_deprecated. "
+            "Verify normalized_events has sufficient data before dropping deprecated tables."
+        )
     finally:
         cur.close()
 

@@ -53,28 +53,32 @@ class DashboardAPI:
         }
         
         try:
-            # Get event counts from database
+            # Get event counts from normalized_events (grouped by source)
+            # DEPRECATED tables (firewall_events, http_events, ids_events,
+            # zenarmor_events, nginx_events) were renamed to *_deprecated in V22.
             result = self.db.execute("""
-                SELECT 
-                    (SELECT COUNT(*) FROM firewall_events) as firewall,
-                    (SELECT COUNT(*) FROM http_events) as http,
-                    (SELECT COUNT(*) FROM ids_events) as ids,
-                    (SELECT COUNT(*) FROM zenarmor_events) as zenarmor,
-                    (SELECT COUNT(*) FROM nginx_events) as nginx
-            """).fetchone()
-            
+                SELECT source, COUNT(*) as cnt
+                FROM normalized_events
+                GROUP BY source
+            """).fetchall()
+
             if result:
-                stats["total_events"] = sum(r for r in result if r)
+                by_source = {row[0]: row[1] for row in result}
+                stats["total_events"] = sum(by_source.values())
                 stats["by_source"] = {
-                    "firewall": result[0],
-                    "http": result[1],
-                    "ids": result[2],
-                    "zenarmor": result[3],
-                    "nginx": result[4]
+                    "firewall": by_source.get("firewall", 0),
+                    "http": by_source.get("http", 0),
+                    "ids": by_source.get("ids", 0),
+                    "zenarmor": by_source.get("zenarmor", 0),
+                    "nginx": by_source.get("nginx", 0),
+                    "unifi": by_source.get("unifi", 0),
                 }
-            
-            # Get unique IPs
-            result = self.db.execute("SELECT COUNT(DISTINCT src_ip) FROM firewall_events").fetchone()
+
+            # Get unique IPs from normalized_events
+            result = self.db.execute(
+                "SELECT COUNT(DISTINCT src_ip) FROM normalized_events "
+                "WHERE src_ip IS NOT NULL AND src_ip != ''"
+            ).fetchone()
             if result:
                 stats["total_ips"] = result[0]
             

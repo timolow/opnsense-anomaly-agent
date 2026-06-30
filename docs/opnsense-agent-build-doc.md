@@ -548,6 +548,35 @@ docker logs anomaly-agent 2>&1 | grep -i "error\|exception" | tail -20
 - **Legacy firewall rules**: Appear in syslog as RUID hashes but are NOT exposed by the API — expected and documented behavior.
 - **Template sensors**: Depend on source sensor by name. If source unavailable, template shows "unknown". Trace upstream to source before modifying config.
 
+### Database schema changes (V22)
+
+**Tables deprecated (renamed to \*_deprecated):**
+
+| Original table | Deprecated name | Superseded by |
+|---------------|----------------|---------------|
+| `nginx_events` | `nginx_events_deprecated` | `normalized_events` (source='nginx') |
+| `unifi_events` | `unifi_events_deprecated` | `normalized_events` (source='unifi') |
+| `unifi_devices` | `unifi_devices_deprecated` | Not backfilled (registry, different schema) |
+| `unifi_clients` | `unifi_clients_deprecated` | Not backfilled (registry, different schema) |
+
+**NOT deprecated:** The `events` table remains active — many `server.py` endpoints still query it directly. A follow-up migration will handle `events` deprecation.
+
+**Why:** V21 (`normalized_events`) unified all event sources into a single hypertable with `source` discriminator + `payload_context` JSONB for source-specific fields. After the V21 backfill, the nginx/unifi tables are redundant. They were renamed (not dropped) as a safety net.
+
+**Action required before dropping:** Verify `normalized_events` has sufficient data:
+```sql
+SELECT source, count(*) FROM normalized_events GROUP BY source;
+```
+Once verified, drop deprecated tables with:
+```sql
+DROP TABLE IF EXISTS nginx_events_deprecated;
+DROP TABLE IF EXISTS unifi_events_deprecated;
+DROP TABLE IF EXISTS unifi_devices_deprecated;
+DROP TABLE IF EXISTS unifi_clients_deprecated;
+```
+
+**Code changes:** `server.py` (query_nginx_top_paths, query_nginx_timeline) and `dashboard_api.py` (_get_stats) now query `normalized_events` instead of legacy tables.
+
 ---
 
 ## E2E Enforcement Rules
