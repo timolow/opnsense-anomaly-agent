@@ -17,6 +17,7 @@ from schema_migrations import (
     _v3_finalize,
     _v20_convert_hypertable,
     _v21_backfill,
+    _v22_verify_deprecation,
     CURRENT_SCHEMA_VERSION,
     MIGRATIONS,
 )
@@ -742,3 +743,74 @@ class TestV21Backfill:
         v21 = next(m for m in MIGRATIONS if m["version"] == 21)
         all_sql = " ".join(v21["sql"])
         assert "source TEXT NOT NULL" in all_sql or "source TEXT" in all_sql
+
+
+class TestV22Deprecation:
+    """Test V22 deprecation migration — rename legacy tables to *_deprecated."""
+
+    def test_v22_migration_exists(self):
+        """V22 migration is defined in MIGRATIONS list."""
+        v22 = next(m for m in MIGRATIONS if m["version"] == 22)
+        assert "deprecat" in v22["description"].lower() or "rename" in v22["description"].lower()
+
+    def test_v22_has_rename_statements(self):
+        """V22 SQL contains ALTER TABLE RENAME for nginx/unifi tables only."""
+        v22 = next(m for m in MIGRATIONS if m["version"] == 22)
+        all_sql = " ".join(v22["sql"])
+        assert "nginx_events RENAME TO nginx_events_deprecated" in all_sql
+        assert "unifi_events RENAME TO unifi_events_deprecated" in all_sql
+        assert "unifi_devices RENAME TO unifi_devices_deprecated" in all_sql
+        assert "unifi_clients RENAME TO unifi_clients_deprecated" in all_sql
+        # events table is NOT deprecated (still in use by server.py endpoints)
+        assert "events RENAME TO events_deprecated" not in all_sql
+
+    def test_v22_has_hook(self):
+        """V22 migration calls _v22_verify_deprecation hook."""
+        v22 = next(m for m in MIGRATIONS if m["version"] == 22)
+        assert "hook" in v22
+        assert callable(v22["hook"])
+
+    def test_v22_verify_counts_normalized_events(self):
+        """_v22_verify_deprecation counts normalized_events rows."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            (1000,),  # normalized_events count
+            (100,),   # nginx_events_deprecated
+            (50,),    # unifi_events_deprecated
+            (10,),    # unifi_devices_deprecated
+            (25,),    # unifi_clients_deprecated
+        ]
+
+        _v22_verify_deprecation(conn)
+
+        # Verify count queries were run
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "SELECT count(*) FROM normalized_events" in calls_str
+        assert "nginx_events_deprecated" in calls_str
+        assert "unifi_events_deprecated" in calls_str
+        # events is NOT deprecated (still actively used) — the literal table
+        # name "events_deprecated" should not appear as a standalone target.
+        calls = [str(c) for c in cur.execute.call_args_list]
+        # Match " FROM events_deprecated" but NOT " FROM nginx_events_deprecated" etc.
+        standalone_deprecated = [c for c in calls if " FROM events_deprecated" in c]
+        assert standalone_deprecated == [], f"events_deprecated should not be queried: {standalone_deprecated}"
+
+    def test_v22_verify_handles_missing_deprecated_table(self):
+        """Missing deprecated tables are logged as info, not errors."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+
+        def execute_side_effect(*args, **kwargs):
+            sql = str(args[0]) if args else ""
+            if "normalized_events" in sql:
+                return None  # succeeds
+            raise Exception("relation does not exist")
+
+        cur.fetchone.side_effect = [(100,)]
+        cur.execute.side_effect = execute_side_effect
+
+        # Should not raise — handles missing tables gracefully
+        _v22_verify_deprecation(conn)
