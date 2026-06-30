@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 19
+CURRENT_SCHEMA_VERSION = 20
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -956,6 +956,23 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+
+    # ------------------------------------------------------------------
+    # V20: TimescaleDB hypertable conversion
+    #      - CREATE EXTENSION IF NOT EXISTS timescaledb (built-in on timescaledb image)
+    #      - Convert events table to hypertable partitioned by timestamp (7-day chunks)
+    #      - Drop old primary key (id), replace with (id, timestamp) composite required by TimescaleDB
+    #      - Existing data is automatically redistributed into chunks by create_hypertable
+    # ------------------------------------------------------------------
+    {
+        "version": 20,
+        "description": "Convert events table to TimescaleDB hypertable partitioned by timestamp",
+        "sql": [
+            # Enable TimescaleDB extension (already present in timescaledb image)
+            "CREATE EXTENSION IF NOT EXISTS timescaledb;",
+        ],
+        "hook": lambda conn: _v20_convert_hypertable(conn),
+    },
 ]
 
 # =============================================================================
@@ -1011,6 +1028,62 @@ def _v3_finalize(conn: Any):
         msg = str(exc).lower()
         if "not" in msg and ("null" in msg or "exist" in msg):
             logger.debug("rule_name constraint already correct — skipped")
+        else:
+            raise
+    finally:
+        cur.close()
+
+
+def _v20_convert_hypertable(conn: Any):
+    """Convert events table to TimescaleDB hypertable.
+
+    Steps:
+    1. Drop the existing SERIAL PRIMARY KEY on events(id).
+    2. Create a composite PRIMARY KEY on events(id, timestamp) — required by TimescaleDB.
+    3. Call create_hypertable() which auto-partitions existing data into 7-day chunks.
+    4. Drop indexes that TimescaleDB makes redundant (it manages its own partition indexes).
+    """
+    cur = conn.cursor()
+    try:
+        # Check if already a hypertable (idempotent)
+        cur.execute("""
+            SELECT hypertable_schema, hypertable_name
+            FROM timescaledb_information.hypertables
+            WHERE hypertable_name = 'events'
+        """)
+        if cur.fetchone():
+            logger.info("events is already a hypertable — skipping V20")
+            return
+
+        logger.info("V20: Dropping existing primary key on events table")
+        cur.execute("ALTER TABLE events DROP CONSTRAINT events_pkey")
+
+        logger.info("V20: Adding composite primary key (id, timestamp)")
+        cur.execute("ALTER TABLE events ADD PRIMARY KEY (id, timestamp)")
+
+        logger.info(
+            "V20: Creating hypertable on events(timestamp), chunk_interval = 7 days"
+        )
+        cur.execute("""
+            SELECT create_hypertable(
+                'events',
+                'timestamp',
+                chunk_time_interval => INTERVAL '7 days'
+            )
+        """)
+
+        # Drop the old plain B-tree timestamp index — TimescaleDB manages partitioning
+        # on the time column internally. Composite indexes (V11-V13) remain useful.
+        logger.info("V20: Dropping redundant idx_events_timestamp (hypertable handles this)")
+        cur.execute("DROP INDEX IF EXISTS idx_events_timestamp")
+
+        conn.commit()
+        logger.info("V20: Hypertable conversion complete")
+    except Exception as exc:
+        conn.rollback()
+        msg = str(exc).lower()
+        if "already exists" in msg or "already a hypertable" in msg:
+            logger.info("V20: Hypertable already exists — skipping")
         else:
             raise
     finally:
