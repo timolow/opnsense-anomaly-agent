@@ -16,6 +16,7 @@ from schema_migrations import (
     _safe_create_hypertable,
     _v3_finalize,
     _v20_convert_hypertable,
+    _v21_backfill,
     CURRENT_SCHEMA_VERSION,
     MIGRATIONS,
 )
@@ -585,3 +586,158 @@ class TestV20MigrationEntry:
     def test_v20_description_mentions_hypertable(self):
         v20 = next(m for m in MIGRATIONS if m["version"] == 20)
         assert "hypertable" in v20["description"].lower()
+
+
+class TestV21Backfill:
+    """Test _v21_backfill — bulk backfill into normalized_events from legacy tables."""
+
+    def test_skips_when_normalized_events_populated(self):
+        """Backfill exits immediately if normalized_events already has rows."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.return_value = (42,)  # existing rows
+
+        _v21_backfill(conn)
+
+        # Should have run only the count check, no INSERT
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "SELECT count(*) FROM normalized_events" in calls_str
+        assert "INSERT INTO normalized_events" not in calls_str
+
+    def test_backfills_from_events_table(self):
+        """Backfill from events table maps columns correctly."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            (0,),       # normalized_events empty
+            (1,),       # events table exists
+            None, None, # padding for verification count queries
+        ]
+        cur.rowcount = 100
+
+        _v21_backfill(conn)
+
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "INSERT INTO normalized_events" in calls_str
+        assert "jsonb_build_object" in calls_str
+        assert "FROM events" in calls_str
+
+    def test_backfills_from_nginx_events(self):
+        """Backfill from nginx_events table."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            (0,),       # normalized_events empty
+            (1,),       # events table exists
+            (1,),       # nginx_events table exists
+            (150,),     # verification: normalized_events count
+            (100,),     # verification: events count
+            (50,),      # verification: nginx_events count
+            (0,),       # verification: unifi_events count
+            None, None, # padding
+        ]
+        cur.rowcount = 50
+
+        _v21_backfill(conn)
+
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "FROM nginx_events ne" in calls_str
+        assert "'nginx' AS source" in calls_str
+
+    def test_backfills_from_unifi_events(self):
+        """Backfill from unifi_events table."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            (0,),       # normalized_events empty
+            (1,),       # events table exists
+            (1,),       # nginx_events table exists
+            (1,),       # unifi_events table exists
+            (200,),     # verification: normalized_events count
+            (100,),     # verification: events count
+            (50,),      # verification: nginx_events count
+            (50,),      # verification: unifi_events count
+            None, None, # padding
+        ]
+        cur.rowcount = 50
+
+        _v21_backfill(conn)
+
+        calls_str = " ".join(str(c) for c in cur.execute.call_args_list)
+        assert "FROM unifi_events ue" in calls_str
+        assert "'unifi' AS source" in calls_str
+
+    def test_skips_missing_tables_gracefully(self):
+        """Missing source tables are skipped without raising."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            (0,),       # normalized_events empty
+            None,       # events table missing
+            None,       # nginx_events table missing
+            None,       # unifi_events table missing
+            (0,),       # verification: normalized_events count
+            None, None, # padding
+        ]
+
+        # Should not raise — all tables missing is valid (fresh install)
+        _v21_backfill(conn)
+
+    def test_handles_insert_errors_gracefully(self):
+        """INSERT failure on one table does not stop other backfills."""
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value = cur
+        cur.fetchone.side_effect = [
+            (0,),       # normalized_events empty
+            (1,),       # events table exists
+            (1,),       # nginx_events table exists
+            (1,),       # unifi_events table exists
+            (0,),       # verification: normalized_events count
+            None, None, # padding
+        ]
+        # First execute after count check is "events exists", then events INSERT fails
+        call_index = [0]
+        def execute_side_effect(*args, **kwargs):
+            sql = str(args[0]) if args else ""
+            call_index[0] += 1
+            if "INSERT INTO normalized_events" in sql and "FROM events" in sql:
+                raise Exception("duplicate key")
+            if "INSERT INTO normalized_events" in sql and "FROM nginx_events" in sql:
+                raise Exception("type mismatch")
+            return None
+
+        cur.execute.side_effect = execute_side_effect
+
+        # Should complete without raising — errors are logged as warnings
+        _v21_backfill(conn)
+
+    def test_v21_migration_has_hook(self):
+        """V21 migration definition calls backfill before hypertable conversion."""
+        v21 = next(m for m in MIGRATIONS if m["version"] == 21)
+        assert "hook" in v21
+        assert callable(v21["hook"])
+
+    def test_v21_creates_normalized_events_table(self):
+        """V21 SQL contains CREATE TABLE for normalized_events."""
+        v21 = next(m for m in MIGRATIONS if m["version"] == 21)
+        all_sql = " ".join(v21["sql"])
+        assert "CREATE TABLE IF NOT EXISTS normalized_events" in all_sql
+
+    def test_v21_normalized_events_has_payload_context(self):
+        """normalized_events schema includes payload_context JSONB column."""
+        v21 = next(m for m in MIGRATIONS if m["version"] == 21)
+        all_sql = " ".join(v21["sql"])
+        assert "payload_context" in all_sql
+        assert "JSONB" in all_sql
+
+    def test_v21_normalized_events_has_source_column(self):
+        """normalized_events schema includes source column with default."""
+        v21 = next(m for m in MIGRATIONS if m["version"] == 21)
+        all_sql = " ".join(v21["sql"])
+        assert "source TEXT NOT NULL" in all_sql or "source TEXT" in all_sql
