@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -973,6 +973,138 @@ MIGRATIONS: List[Dict[str, Any]] = [
         ],
         "hook": lambda conn: _v20_convert_hypertable(conn),
     },
+
+    # ------------------------------------------------------------------
+    # V21: Unified normalized_events table
+    #
+    # Design rationale:
+    # The existing schema stores events from different sources in separate
+    # tables (events, nginx_events, unifi_events) with different columns.
+    # This makes cross-source queries, unified analytics, and consolidated
+    # ML pipelines expensive — requiring UNION ALL with sparse columns.
+    #
+    # normalized_events solves this by defining a single superset schema that
+    # covers ALL event sources. Source-specific fields that don't apply to
+    # a given event are simply NULL. The payload_context JSONB column holds
+    # structured, source-specific payload data that would otherwise require
+    # dozens of sparse columns.
+    #
+    # Source mapping:
+    #   - firewall (log_type='filterlog'/'firewall'):
+    #       Core fields fully populated. Payload: TCP flags, TTL, length.
+    #   - nginx (log_type='nginx'):
+    #       Core + payload_context.method/path/status_code/user_agent/etc.
+    #   - IDS (log_type='ids'):
+    #       Core + payload_context.signature_id/signature_msg/gen_rev.
+    #   - zenarmor (log_type='zenarmor'):
+    #       Core + payload_context.policy/category/url/etc.
+    #   - unifi (source='unifi'):
+    #       src_ip=client IP, action=event_type, payload_context for all
+    #       UniFi-specific fields (mac, ap, ssid, rssi, etc.).
+    #
+    # TimescaleDB: converted to hypertable partitioned by timestamp so
+    # cross-source time-range queries benefit from chunk pruning.
+    # ------------------------------------------------------------------
+    {
+        "version": 21,
+        "description": "Create unified normalized_events table with superset schema for all event sources",
+        "sql": [
+            """
+            CREATE TABLE IF NOT EXISTS normalized_events (
+                id BIGSERIAL PRIMARY KEY,
+                -- Core temporal + network fields (present in ALL sources)
+                timestamp TIMESTAMPTZ NOT NULL,
+                src_ip TEXT,
+                dst_ip TEXT,
+                src_port INTEGER,
+                dst_port INTEGER,
+                protocol TEXT,
+                action TEXT,
+                interface TEXT,
+                direction TEXT,
+
+                -- Network enrichment (DNS + geo)
+                src_hostname TEXT,
+                dst_hostname TEXT,
+                geo_src_country TEXT,
+                geo_src_city TEXT,
+                geo_dst_country TEXT,
+                geo_dst_city TEXT,
+
+                -- Source-specific structured payload (JSONB per source type)
+                -- firewall: {tcp_flags, ip_ttl, ip_total_length, tcp_seq, tcp_ack, tcp_window, tcp_options, udp_datalen, icmp_datalen}
+                -- nginx:    {method, path, status_code, response_size, user_agent, request_time}
+                -- ids:      {signature_id, signature_msg, signature_gen, signature_rev, classification}
+                -- zenarmor: {policy, category, url, profile_name}
+                -- unifi:    {event_key, mac, device, ap, ssid, rssi, rx_bytes, tx_bytes, model, state, num_sta}
+                payload_context JSONB,
+
+                -- Metadata
+                source TEXT NOT NULL DEFAULT 'firewall',
+                log_type TEXT DEFAULT '',
+                rule_name TEXT,
+                severity TEXT,
+                raw_message TEXT,
+                ingested_at TIMESTAMPTZ DEFAULT NOW(),
+
+                -- Classification
+                ip_class TEXT,       -- WAN / LAN / VPN / OWN
+                flow_id TEXT,        -- Correlation key across sources for same flow
+
+                -- TimescaleDB-friendly composite key
+                CONSTRAINT pk_normalized_events PRIMARY KEY (id, timestamp)
+            );
+            """,
+            """
+            -- Core time-range index (hypertable handles timestamp partitioning,
+            -- but composite indexes still help for source-filtered queries)
+            CREATE INDEX IF NOT EXISTS idx_norm_events_ts_source
+                ON normalized_events (timestamp, source);
+            """,
+            """
+            -- Source + action combo for cross-source threat queries
+            CREATE INDEX IF NOT EXISTS idx_norm_events_source_action
+                ON normalized_events (source, action)
+                WHERE action IS NOT NULL;
+            """,
+            """
+            -- IP-based lookups (src_ip for source analysis, dst_ip for target analysis)
+            CREATE INDEX IF NOT EXISTS idx_norm_events_src_ip_ts
+                ON normalized_events (src_ip, timestamp)
+                WHERE src_ip IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_norm_events_dst_ip_ts
+                ON normalized_events (dst_ip, timestamp)
+                WHERE dst_ip IS NOT NULL;
+            """,
+            """
+            -- Classification lookups
+            CREATE INDEX IF NOT EXISTS idx_norm_events_ip_class
+                ON normalized_events (ip_class)
+                WHERE ip_class IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_norm_events_flow_id
+                ON normalized_events (flow_id)
+                WHERE flow_id IS NOT NULL;
+            """,
+            """
+            -- Severity for threat prioritization
+            CREATE INDEX IF NOT EXISTS idx_norm_events_severity_ts
+                ON normalized_events (severity, timestamp DESC)
+                WHERE severity IS NOT NULL;
+            """,
+            """
+            -- GIN index on payload_context for JSONB queries (path, signature, etc.)
+            CREATE INDEX IF NOT EXISTS idx_norm_events_payload
+                ON normalized_events USING GIN (payload_context);
+            """,
+            """
+            -- Rule-based lookups (mirrors events table pattern)
+            CREATE INDEX IF NOT EXISTS idx_norm_events_rule_name
+                ON normalized_events (rule_name)
+                WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
+            """,
+        ],
+        "hook": lambda conn: _v21_convert_hypertable(conn),
+    },
 ]
 
 # =============================================================================
@@ -1174,6 +1306,61 @@ def _v20_convert_hypertable(conn: Any):
             logger.warning("V20: Could not verify hypertable stats (possibly mocked context)")
 
         logger.info("V20: Migration complete — hypertable verified")
+    finally:
+        cur.close()
+
+
+def _v21_convert_hypertable(conn: Any):
+    """Convert normalized_events to TimescaleDB hypertable (idempotent).
+
+    Steps:
+    1. Use _safe_create_hypertable to convert normalized_events(id, timestamp).
+    2. Run ANALYZE on the new hypertable.
+    3. Log chunk distribution for verification.
+    """
+    converted = _safe_create_hypertable(
+        conn, "normalized_events", "timestamp", "7 days", ("id", "timestamp")
+    )
+
+    if not converted:
+        cur = conn.cursor()
+        try:
+            cur.execute("ANALYZE normalized_events")
+            conn.commit()
+            logger.info("V21: ANALYZE on existing hypertable complete")
+        finally:
+            cur.close()
+        return
+
+    cur = conn.cursor()
+    try:
+        logger.info("V21: Running ANALYZE on normalized_events hypertable...")
+        cur.execute("ANALYZE normalized_events")
+
+        try:
+            cur.execute("SELECT count(*) FROM normalized_events")
+            count_row = cur.fetchone()
+            if count_row is not None:
+                logger.info("V21: Verified %d events in normalized_events hypertable", count_row[0])
+
+            cur.execute("""
+                SELECT count(*), min(range_start), max(range_end)
+                FROM timescaledb_information.chunks
+                WHERE table_name = 'normalized_events'
+            """)
+            chunk_row = cur.fetchone()
+            if chunk_row:
+                chunk_count, range_start, range_end = chunk_row
+                logger.info(
+                    "V21: Verified %d chunks (range %s to %s)",
+                    chunk_count, range_start, range_end,
+                )
+            else:
+                logger.info("V21: No chunks yet (fresh instance with no normalized_events)")
+        except Exception:
+            logger.warning("V21: Could not verify hypertable stats (possibly mocked context)")
+
+        logger.info("V21: Migration complete — normalized_events hypertable verified")
     finally:
         cur.close()
 
