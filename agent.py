@@ -99,6 +99,8 @@ from anomaly_detector import AnomalyDetector
 from threshold_tuner import ThresholdTuner
 from concept_drift import ConceptDriftDetector, DriftEvent
 from unified_behavioral_engine import UnifiedBehavioralEngine
+from ip_behavior_model import BehaviorProfiler
+from detection_logging import get_detection_logger
 
 # P2-6: SSE queue access (imported from server module)
 _sse_publish_fn = None
@@ -714,6 +716,9 @@ class OPNsenseAgent:
         self.correlation_engine.on_incident_created(_on_incident)
         logger.info("Correlation engine incident callback registered for Discord alerts")
 
+        # Detection decision logger — structured JSON for ALL detection decisions
+        self.det_log = get_detection_logger(__name__)
+
         # Auto-resolve stale incidents every 5 minutes via maintenance thread
         # (wired below in _start_maintenance_thread)
 
@@ -1237,9 +1242,11 @@ class OPNsenseAgent:
                 src_ip = attack.get("src_ip", "")
                 attack_type = attack.get("attack_type", "")
                 if self._is_muted(src_ip, attack_type):
-                    slogger.info(
-                        "Alert suppressed (muted)",
-                        ip=src_ip, attack_type=attack_type,
+                    self.det_log.log_suppressed(
+                        src_ip=src_ip,
+                        detection_module="attack_detector",
+                        signal_types=[attack_type],
+                        explanation=f"Muted: {attack_type} from {src_ip} (alert suppression active)",
                     )
                     continue
                 self.anomaly_count += 1
@@ -1249,6 +1256,21 @@ class OPNsenseAgent:
                     llm_analysis = self.vllm_client.analyze_anomaly(
                         events[0], attack.get("attack_type", ""), attack.get("description", "")
                     )
+                # ── Structured detection decision log ──
+                detail = {**attack.get("detail", {}), "description": attack.get("description", "")}
+                explanation = self.det_log.build_explanation([attack_type], detail)
+                self.det_log.log_alert(
+                    event_id=attack.get("event_id"),
+                    src_ip=src_ip,
+                    dst_ip=attack.get("dst_ip"),
+                    detection_module="attack_detector",
+                    score=float(attack.get("severity", "MEDIUM") in ("CRITICAL", "HIGH")),
+                    severity=attack.get("severity", "MEDIUM"),
+                    signal_types=[attack_type],
+                    threshold=attack.get("detail", {}).get("threshold"),
+                    explanation=explanation,
+                    detail=detail,
+                )
                 slogger.warning(
                     "Attack detected",
                     ip=src_ip, attack_type=attack_type,
@@ -1277,12 +1299,31 @@ class OPNsenseAgent:
             for geo_result in geo_results:
                 src_ip = geo_result.get("src_ip", "")
                 if self._is_muted(src_ip, "GEO_ANOMALY"):
-                    slogger.info(
-                        "Geo alert suppressed (muted)",
-                        ip=src_ip, attack_type="GEO_ANOMALY",
+                    self.det_log.log_suppressed(
+                        src_ip=src_ip,
+                        detection_module="geo_anomaly",
+                        signal_types=["GEO_ANOMALY"],
+                        explanation=f"Muted: geo_anomaly from {src_ip}",
                     )
                     continue
                 self.anomaly_count += 1
+                # ── Structured detection decision log ──
+                geo_type = geo_result.get("type", "geo_anomaly")
+                geo_detail = {
+                    "country_code": geo_result.get("country_code"),
+                    "country_name": geo_result.get("country_name"),
+                    "description": geo_result.get("description", ""),
+                }
+                explanation = self.det_log.build_explanation([geo_type], geo_detail)
+                self.det_log.log_alert(
+                    src_ip=src_ip,
+                    detection_module="geo_anomaly",
+                    score=0.8,
+                    severity=geo_result.get("severity", "MEDIUM"),
+                    signal_types=[geo_type],
+                    explanation=explanation,
+                    detail=geo_detail,
+                )
                 # Emit geo anomaly signal
                 self.signal_bus.emit(
                     source="geo",
@@ -1368,11 +1409,17 @@ class OPNsenseAgent:
         
         for anomaly in anomalies:
             self.anomaly_count += 1
-            slogger.warning(
-                "Service anomaly detected",
-                attack_type=anomaly.get('type'),
-                severity=anomaly.get('severity', 'medium'),
-                description=anomaly.get('description', ''),
+            anomaly_type = anomaly.get('type', 'service_anomaly')
+            detail = {k: v for k, v in anomaly.items() if k not in ('type', 'severity', 'description')}
+            explanation = self.det_log.build_explanation([anomaly_type], detail)
+            self.det_log.log_alert(
+                detection_module="service_monitor",
+                src_ip="",
+                score=0.7,
+                severity=anomaly.get('severity', 'MEDIUM'),
+                signal_types=[anomaly_type],
+                explanation=explanation,
+                detail=detail,
             )
             self.signal_bus.emit(
                 source="service_monitor",
@@ -1496,6 +1543,17 @@ class OPNsenseAgent:
                     alert = self.wan_flap_detector.check_gateway_state(name, old_state, new_state)
                     if alert:
                         self.anomaly_count += 1
+                        # ── Structured detection decision log ──
+                        wan_detail = {"gateway": name, "old_state": old_state, "new_state": new_state, "description": alert.get("description", "")}
+                        self.det_log.log_alert(
+                            detection_module="wan_flap_detector",
+                            src_ip="",
+                            score=0.8,
+                            severity=alert.get("severity", "HIGH"),
+                            signal_types=["WAN_FLAP"],
+                            explanation=f"Flagged because: wan_flap (gateway {name} flapped {old_state}->{new_state})",
+                            detail=wan_detail,
+                        )
                         logger.warning("WAN flap detected: %s — %s", name, alert['description'])
                         self.signal_bus.emit(
                             source="wan_flap",
@@ -1525,6 +1583,19 @@ class OPNsenseAgent:
         
         for anomaly in anomalies:
             self.anomaly_count += 1
+            anomaly_type = anomaly.get('type', 'zenarmor_anomaly')
+            detail = {k: v for k, v in anomaly.items() if k not in ('type', 'severity', 'description')}
+            explanation = self.det_log.build_explanation([anomaly_type], detail)
+            self.det_log.log_alert(
+                detection_module="zenarmor_classifier",
+                src_ip=anomaly.get("src_ip", ""),
+                dst_ip=anomaly.get("dst_ip"),
+                score=0.7,
+                severity=anomaly.get('severity', 'MEDIUM'),
+                signal_types=[anomaly_type],
+                explanation=explanation,
+                detail=detail,
+            )
             logger.info("ZenArmor anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             # Map anomaly types to signal types
             zen_signal_map = {
@@ -1555,6 +1626,18 @@ class OPNsenseAgent:
         
         for anomaly in anomalies:
             self.anomaly_count += 1
+            anomaly_type = anomaly.get('type', 'ids_anomaly')
+            detail = {k: v for k, v in anomaly.items() if k not in ('type', 'severity', 'description')}
+            explanation = self.det_log.build_explanation([anomaly_type], detail)
+            self.det_log.log_alert(
+                detection_module="ids_signature_analyzer",
+                src_ip="",
+                score=0.8,
+                severity=anomaly.get('severity', 'MEDIUM'),
+                signal_types=[anomaly_type],
+                explanation=explanation,
+                detail=detail,
+            )
             logger.info("IDS anomaly: %s — %s", anomaly.get('type'), anomaly.get('description'))
             # Map anomaly types to signal types
             ids_signal_map = {
@@ -1607,6 +1690,18 @@ class OPNsenseAgent:
             severity = event.get("severity", "").upper()
             if severity in ("HIGH", "CRITICAL"):
                 self.anomaly_count += 1
+                event_type = event.get("event_type", "unifi_anomaly")
+                detail = {k: v for k, v in event.items() if k not in ("event_type", "severity", "description")}
+                explanation = self.det_log.build_explanation([event_type], detail)
+                self.det_log.log_alert(
+                    detection_module="unifi_monitor",
+                    src_ip=event.get("ip", ""),
+                    score=0.8,
+                    severity=severity,
+                    signal_types=[event_type],
+                    explanation=explanation,
+                    detail=detail,
+                )
                 logger.warning("UniFi anomaly: %s — %s", event.get("event_type"), event.get("description"))
                 self.discord_bot.send_alert(event)
                 self.apprise_notifier.send_alert(event)
@@ -1741,6 +1836,20 @@ class OPNsenseAgent:
                                     logger.info("Anomaly alert suppressed (muted): %s from %s", anomaly_type, src_ip)
                                     continue
                                 self.anomaly_count += 1
+                                # ── Structured detection decision log ──
+                                anomaly_detail = {k: v for k, v in anomaly.items() if k not in ("type", "severity", "src_ip", "dst_ip", "dst_port", "proto", "description")}
+                                explanation = self.det_log.build_explanation([anomaly_type], anomaly_detail)
+                                self.det_log.log_alert(
+                                    src_ip=src_ip,
+                                    dst_ip=anomaly.get("dst_ip"),
+                                    detection_module="anomaly_detector",
+                                    score=float(anomaly.get("z_score") or anomaly.get("ports_count") or anomaly.get("event_count") or 1.0),
+                                    severity=anomaly.get("severity", "MEDIUM"),
+                                    signal_types=[anomaly_type],
+                                    threshold=anomaly_detail.get("threshold"),
+                                    explanation=explanation,
+                                    detail=anomaly_detail,
+                                )
                                 logger.info("Anomaly detected: %s - %s", anomaly.get("type"), anomaly.get("description"))
                                 # Emit signal to signal bus
                                 anomaly_type = anomaly.get("type", "unknown")
