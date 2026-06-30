@@ -195,7 +195,7 @@ class TestSeeder:
             counts["threat_profiles"] = cur.rowcount
 
             # Delete events last
-            cur.execute("DELETE FROM events WHERE src_ip LIKE %s OR dst_ip LIKE %s OR raw_message LIKE %s OR rule_name LIKE %s",
+            cur.execute("DELETE FROM normalized_events WHERE src_ip LIKE %s OR dst_ip LIKE %s OR raw_message LIKE %s OR rule_name LIKE %s",
                         (f"{MARKER_IP_BASE}.%", f"{MARKER_IP_BASE}.%",
                          f"{TEST_MARKER_PREFIX}%", f"{TEST_MARKER_PREFIX}%"))
             counts["events"] = cur.rowcount
@@ -214,7 +214,7 @@ class TestSeeder:
                 pass  # simplified below
 
         with self._cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM events WHERE src_ip LIKE %s OR dst_ip LIKE %s OR raw_message LIKE %s OR rule_name LIKE %s",
+            cur.execute("SELECT COUNT(*) FROM normalized_events WHERE src_ip LIKE %s OR dst_ip LIKE %s OR raw_message LIKE %s OR rule_name LIKE %s",
                         (f"{MARKER_IP_BASE}.%", f"{MARKER_IP_BASE}.%", f"{TEST_MARKER_PREFIX}%", f"{TEST_MARKER_PREFIX}%"))
             counts["events"] = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM anomalies WHERE src_ip LIKE %s OR dst_ip LIKE %s OR description LIKE %s",
@@ -252,7 +252,7 @@ class TestSeeder:
         for i in range(count):
             ts = base_ts + timedelta(seconds=i * (hours_ago * 3600 / max(count, 1)))
             src_ip = src_ips[i % len(src_ips)]
-            proto = protocols[i % len(protocols)]
+            protocol = protocols[i % len(protocols)]
             action = actions[i % len(actions)]
             dst_port = [80, 443, 53, 8080, 22, 3306, 8443][i % 7]
             iface = interfaces[i % len(interfaces)]
@@ -265,16 +265,16 @@ class TestSeeder:
                 "server.local",               # dst_hostname
                 49152 + i,                    # src_port
                 dst_port,                     # dst_port
-                proto,                        # proto
+                protocol,                        # protocol
                 action,                       # action
                 iface,                        # interface
                 "inbound",                    # direction
                 4,                            # version
                 64,                           # ip_ttl
                 128 + (i % 10) * 8,          # ip_total_length
-                "SA" if proto == "TCP" else None,  # tcp_flags
+                "SA" if protocol == "TCP" else None,  # tcp_flags
                 None, None, None, None,       # tcp_seq/ack/window/options
-                None if proto == "TCP" else 64,  # udp_datalen
+                None if protocol == "TCP" else 64,  # udp_datalen
                 None,                         # icmp_datalen
                 f"{TEST_MARKER_PREFIX}|normal_traffic|seq={i}",  # raw_message
                 TEST_RULES[i % len(TEST_RULES)],  # rule_name
@@ -479,7 +479,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["port_scan"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": None,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|port_scan|16 ports scanned on {DST_IP_SERVER}",
                 "detail": {"marker": TEST_MARKER_PREFIX, "scan_type": "vertical", "ports_scanned": 16},
             },
@@ -491,7 +491,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["syn_flood"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 80,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|syn_flood|100 SYN packets to port 80",
                 "detail": {"marker": TEST_MARKER_PREFIX, "packet_count": 100, "target_port": 80},
             },
@@ -503,7 +503,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["brute_force_ssh"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 22,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|brute_force|30 SSH attempts from {TEST_IPS['brute_force_ssh']}",
                 "detail": {"marker": TEST_MARKER_PREFIX, "attempts": 30, "service": "ssh"},
             },
@@ -515,7 +515,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["probe_xmas"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 445,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|probe_xmas|XMAS scan detected",
                 "detail": {"marker": TEST_MARKER_PREFIX, "probe_type": "XMAS"},
             },
@@ -527,7 +527,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["probe_null"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 445,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|probe_null|NULL scan detected",
                 "detail": {"marker": TEST_MARKER_PREFIX, "probe_type": "NULL"},
             },
@@ -539,7 +539,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["probe_fin"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 80,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|probe_fin|FIN scan detected",
                 "detail": {"marker": TEST_MARKER_PREFIX, "probe_type": "FIN"},
             },
@@ -551,7 +551,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["high_volume"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": None,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|volume_anomaly|500 events in 1h window (baseline: 50)",
                 "detail": {"marker": TEST_MARKER_PREFIX, "actual": 500, "baseline": 50, "zscore": 4.5},
             },
@@ -563,7 +563,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["ids_trigger"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 3306,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|ids_alert|ET EXPLOIT Buffer Overflow Attempt on port 3306",
                 "detail": {"marker": TEST_MARKER_PREFIX, "signature": "ET EXPLOIT Buffer Overflow", "sid": 2001234},
             },
@@ -575,7 +575,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["zenarmor"],
                 "dst_ip": DST_IP_LAN,
                 "dst_port": 443,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|zenarmor|Malware download blocked",
                 "detail": {"marker": TEST_MARKER_PREFIX, "policy": "block_malware", "threat": "trojan.generic"},
             },
@@ -587,7 +587,7 @@ class TestSeeder:
                 "src_ip": TEST_IPS["nginx_web"],
                 "dst_ip": DST_IP_SERVER,
                 "dst_port": 443,
-                "proto": "TCP",
+                "protocol": "TCP",
                 "description": f"{TEST_MARKER_PREFIX}|web_attack|Path traversal attempt: /../../../etc/passwd",
                 "detail": {"marker": TEST_MARKER_PREFIX, "path": "/../../../etc/passwd", "attack": "path_traversal"},
             },
@@ -681,7 +681,18 @@ class TestSeeder:
         return conn.cursor()
 
     def _bulk_insert_events(self, events: List[Tuple]) -> int:
-        """Insert events in bulk, track IDs via returning query."""
+        """Insert events in bulk into normalized_events.
+
+        Input tuples are in the old events-table layout (24 columns):
+          (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
+           src_port, dst_port, protocol, action, interface,
+           direction, version, ip_ttl, ip_total_length, tcp_flags,
+           tcp_seq, tcp_ack, tcp_window, tcp_options,
+           udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
+
+        We map these to normalized_events columns, building payload_context
+        JSONB from the source-specific fields and deriving source from log_type.
+        """
         if not events:
             return 0
         import psycopg2
@@ -690,16 +701,58 @@ class TestSeeder:
         conn.autocommit = True
         cur = conn.cursor()
         try:
+            # Transform old tuple layout -> normalized_events row
+            normalized: List[Tuple] = []
+            for ev in events:
+                log_type = ev[23] or "filterlog"
+                source = {
+                    "nginx": "nginx",
+                    "ids": "ids",
+                    "zenarmor": "zenarmor",
+                    "unifi": "unifi",
+                }.get(log_type, "firewall")
+
+                # Build payload_context from source-specific fields
+                payload: Dict[str, Any] = {}
+                if ev[11] is not None:
+                    payload["version"] = ev[11]
+                for key, idx in [("ip_ttl", 12), ("ip_total_length", 13)]:
+                    if ev[idx] is not None:
+                        payload[key] = ev[idx]
+                for key, idx in [("tcp_flags", 14), ("tcp_seq", 15), ("tcp_ack", 16),
+                                 ("tcp_window", 17), ("tcp_options", 18),
+                                 ("udp_datalen", 19), ("icmp_datalen", 20)]:
+                    if ev[idx] is not None:
+                        payload[key] = ev[idx]
+
+                normalized.append((
+                    ev[0],       # timestamp
+                    ev[1],       # src_ip
+                    ev[2],       # dst_ip
+                    ev[5],       # src_port
+                    ev[6],       # dst_port
+                    ev[7],       # protocol
+                    ev[8],       # action
+                    ev[9],       # interface
+                    ev[10],      # direction
+                    ev[3],       # src_hostname
+                    ev[4],       # dst_hostname
+                    json.dumps(payload) if payload else None,  # payload_context
+                    source,      # source
+                    log_type,    # log_type
+                    ev[22],      # rule_name
+                    None,        # severity
+                    ev[21],      # raw_message
+                ))
+
             psycopg2.extras.execute_values(
                 cur,
-                """INSERT INTO events
-                   (timestamp, src_ip, dst_ip, src_hostname, dst_hostname,
-                    src_port, dst_port, proto, action, interface,
-                    direction, version, ip_ttl, ip_total_length, tcp_flags,
-                    tcp_seq, tcp_ack, tcp_window, tcp_options,
-                    udp_datalen, icmp_datalen, raw_message, rule_name, log_type)
+                """INSERT INTO normalized_events
+                   (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, action,
+                    interface, direction, src_hostname, dst_hostname, payload_context,
+                    source, log_type, rule_name, severity, raw_message)
                    VALUES %s""",
-                events, page_size=500
+                normalized, page_size=500
             )
             count = cur.rowcount
             self._inserted_event_ids.extend(range(count))
@@ -722,7 +775,7 @@ class TestSeeder:
                 cur.execute(
                     """INSERT INTO anomalies
                        (timestamp, attack_type, severity,
-                        src_ip, dst_ip, dst_port, proto,
+                        src_ip, dst_ip, dst_port, protocol,
                         description, detail)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                        RETURNING id""",
@@ -733,7 +786,7 @@ class TestSeeder:
                         a.get("src_ip"),
                         a.get("dst_ip"),
                         a.get("dst_port"),
-                        a.get("proto"),
+                        a.get("protocol"),
                         a.get("description"),
                         json.dumps(detail) if detail else None,
                     )

@@ -58,9 +58,9 @@ class DashboardAPI:
                 SELECT 
                     (SELECT COUNT(*) FROM firewall_events) as firewall,
                     (SELECT COUNT(*) FROM http_events) as http,
-                    (SELECT COUNT(*) FROM ids_events) as ids,
-                    (SELECT COUNT(*) FROM zenarmor_events) as zenarmor,
-                    (SELECT COUNT(*) FROM nginx_events) as nginx
+                    (SELECT COUNT(*) FROM normalized_events WHERE source = 'ids') as ids,
+                    (SELECT COUNT(*) FROM normalized_events WHERE source = 'zenarmor') as zenarmor,
+                    (SELECT COUNT(*) FROM normalized_events WHERE source = 'nginx') as nginx
             """).fetchone()
             
             if result:

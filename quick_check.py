@@ -8,7 +8,7 @@ cur = db.connect().cursor()
 
 # Recent events
 cur.execute("""
-    SELECT COUNT(*) FROM events 
+    SELECT COUNT(*) FROM normalized_events 
     WHERE timestamp > NOW() - INTERVAL '5 minutes'
 """)
 print(f"Events in last 5 min: {cur.fetchone()[0]}")
@@ -16,7 +16,7 @@ print(f"Events in last 5 min: {cur.fetchone()[0]}")
 # Top rules
 cur.execute("""
     SELECT rule_name, COUNT(*) as cnt, COUNT(DISTINCT src_ip) as ips, COUNT(DISTINCT dst_port) as ports
-    FROM events WHERE timestamp > NOW() - INTERVAL '5 minutes'
+    FROM normalized_events WHERE timestamp > NOW() - INTERVAL '5 minutes'
     GROUP BY rule_name ORDER BY cnt DESC LIMIT 10
 """)
 print("\nTop rules (5 min):")
@@ -25,7 +25,7 @@ for row in cur.fetchall():
 
 # Log types
 cur.execute("""
-    SELECT log_type, COUNT(*) FROM events
+    SELECT log_type, COUNT(*) FROM normalized_events
     WHERE timestamp > NOW() - INTERVAL '5 minutes'
     GROUP BY log_type ORDER BY COUNT(*) DESC
 """)

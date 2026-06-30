@@ -93,7 +93,7 @@ def verify_hypertable(db_conn: Any) -> Dict[str, Any]:
         logger.info("Hypertable confirmed: %s.%s", hypertable_row[0], hypertable_row[1])
 
         # 2. Count actual events
-        cur.execute("SELECT count(*) FROM events")
+        cur.execute("SELECT count(*) FROM normalized_events")
         event_count = cur.fetchone()[0]
         result["event_count"] = event_count
         result["messages"].append(f"Total events in hypertable: {event_count:,}")

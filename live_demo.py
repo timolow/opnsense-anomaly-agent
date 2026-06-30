@@ -29,9 +29,9 @@ def main():
     # Get recent events
     print("\nFetching recent events...")
     cur.execute("""
-        SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port, proto,
+        SELECT id, timestamp, src_ip, dst_ip, src_port, dst_port, protocol,
                action, rule_name, interface, direction, raw_message
-        FROM events
+        FROM normalized_events
         ORDER BY timestamp DESC
         LIMIT 1000
     """)

@@ -444,7 +444,7 @@ def _start_chat_server(agent: OPNsenseAgent, port: int) -> Thread:
                         cur = conn.cursor()
                         cur.execute("""
                             SELECT DATE_TRUNC('hour', timestamp) as hour, COUNT(*)
-                            FROM events
+                            FROM normalized_events
                             WHERE timestamp > NOW() - INTERVAL '24 hours'
                             GROUP BY hour ORDER BY hour
                         """)
@@ -827,7 +827,7 @@ class OPNsenseAgent:
         cur = self.db._new_cursor()
         try:
             cur.execute(
-                "DELETE FROM events WHERE timestamp < NOW() - INTERVAL %s",
+                "DELETE FROM normalized_events WHERE timestamp < NOW() - INTERVAL %s",
                 (f"{events_days} days",),
             )
             stats["events"] = cur.rowcount or 0
@@ -1101,7 +1101,7 @@ class OPNsenseAgent:
                 event.get("dst_ip"),
                 event.get("sport"),
                 event.get("dport"),
-                event.get("proto"),
+                event.get("protocol"),
                 event.get("action"),
                 event.get("interface"),
                 event.get("direction"),
@@ -1642,9 +1642,9 @@ class OPNsenseAgent:
                                         "src_ip": anomaly.get("src_ip"),
                                         "dst_ip": anomaly.get("dst_ip"),
                                         "dst_port": anomaly.get("dst_port"),
-                                        "proto": anomaly.get("proto"),
+                                        "protocol": anomaly.get("protocol"),
                                         "description": anomaly.get("description", ""),
-                                        "detail": {k: v for k, v in anomaly.items() if k not in ("attack_type", "severity", "src_ip", "dst_ip", "dst_port", "proto", "description")}
+                                        "detail": {k: v for k, v in anomaly.items() if k not in ("attack_type", "severity", "src_ip", "dst_ip", "dst_port", "protocol", "description")}
                                     }
                                     anomaly_id = self.db.insert_anomaly(db_anomaly)
                                 except Exception as e:
