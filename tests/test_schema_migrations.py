@@ -214,7 +214,8 @@ class TestRunMigrations:
         conn.cursor.return_value = cur
         # schema_versions table exists, current version
         # Provide enough values for fetchone calls from _get_current_version + hooks
-        cur.fetchone.side_effect = [(True,), (current_version,), None, None, None, None, None, None, None, (0,), None] + [None] * 50
+        # Use a generous list of (0,) values for count queries, plus None for optional fetches
+        cur.fetchone.side_effect = [(True,), (current_version,)] + [(0,)] * 100 + [None] * 50
         cur.fetchall.return_value = [("events_pkey",)]
         db.connect.return_value = conn
         return db, conn, cur

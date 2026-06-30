@@ -1102,6 +1102,11 @@ MIGRATIONS: List[Dict[str, Any]] = [
                 ON normalized_events (rule_name)
                 WHERE rule_name IS NOT NULL AND rule_name != '' AND rule_name != 'N/A';
             """,
+            """
+            -- Log type for filtered queries by event category
+            CREATE INDEX IF NOT EXISTS idx_normalized_events_log_type
+                ON normalized_events (log_type);
+            """,
         ],
         "hook": lambda conn: (_v21_backfill(conn), _v21_convert_hypertable(conn)),
     },

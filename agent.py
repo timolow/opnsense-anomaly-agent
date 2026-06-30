@@ -1057,33 +1057,62 @@ class OPNsenseAgent:
                         if hostname:
                             event[f"{field}_hostname"] = hostname
 
-            # Build DB tuple for batch insert
+            # Build DB tuple for batch insert into normalized_events
             raw = event.get("raw", "")
+
+            # Build payload_context for source-specific fields
+            payload = {}
+            if event.get("version"):
+                payload["version"] = event["version"]
+            for key in ("ip_ttl", "ip_total_length"):
+                if event.get(key) is not None:
+                    payload[key] = event[key]
+            for key in ("tcp_flags_raw", "tcp_seq", "tcp_ack", "tcp_window",
+                         "tcp_options", "udp_datalen", "icmp_datalen"):
+                val = event.get(key)
+                if val is not None:
+                    payload[key] = val
+            for key in ("method", "path", "status_code", "response_size",
+                         "user_agent", "request_time"):
+                if event.get(key) is not None:
+                    payload[key] = event[key]
+            for key in ("signature_id", "signature_msg", "signature_gen",
+                         "signature_rev", "classification"):
+                if event.get(key):
+                    payload[key] = event[key]
+
+            # Auto-detect source
+            src = event.get("source", "")
+            if not src:
+                if event.get("unifi_event_key"):
+                    src = "unifi"
+                elif event.get("method") and event.get("path"):
+                    src = "nginx"
+                elif event.get("signature_id") or event.get("ids_event"):
+                    src = "ids"
+                elif event.get("policy") or event.get("zenarmor"):
+                    src = "zenarmor"
+                else:
+                    src = "firewall"
+
             db_tuples.append((
                 event.get("timestamp"),
                 event.get("src_ip"),
                 event.get("dst_ip"),
-                event.get("src_hostname"),
-                event.get("dst_hostname"),
                 event.get("sport"),
                 event.get("dport"),
                 event.get("proto"),
                 event.get("action"),
                 event.get("interface"),
                 event.get("direction"),
-                event.get("version"),
-                event.get("ip_ttl"),
-                event.get("ip_total_length"),
-                event.get("tcp_flags_raw") or event.get("tcp_flags"),
-                event.get("tcp_seq"),
-                event.get("tcp_ack"),
-                event.get("tcp_window"),
-                event.get("tcp_options"),
-                event.get("udp_datalen"),
-                event.get("icmp_datalen"),
-                raw,
-                event.get("rule_name"),
+                event.get("src_hostname"),
+                event.get("dst_hostname"),
+                json.dumps(payload) if payload else None,
+                src,
                 event.get("log_type", ""),
+                event.get("rule_name"),
+                event.get("severity"),
+                raw,
             ))
 
         # ── Phase 2: Batch DB insert ─────────────────────────────────
@@ -1472,17 +1501,11 @@ class OPNsenseAgent:
 
         # Insert into DB and alert on anomalies
         for event in events:
-            # Insert to UniFi-specific table
+            # Insert to normalized_events (insert_unifi_event delegates to insert_event)
             try:
                 self.db.insert_unifi_event(event)
             except Exception as e:
                 logger.warning("Failed to insert UniFi event: %s", e)
-
-            # Also insert to main events table for ML pipeline
-            try:
-                self.db.insert_event(event, event.get("raw", ""))
-            except Exception:
-                pass
 
             # Alert on HIGH/CRITICAL severity
             severity = event.get("severity", "").upper()
