@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -1172,6 +1172,15 @@ MIGRATIONS: List[Dict[str, Any]] = [
             CREATE INDEX IF NOT EXISTS idx_ip_baselines_sample_count
                 ON ip_baselines(sample_count DESC);
             """,
+        ],
+    },
+    # ------------------------------------------------------------------
+    {
+        "version": 24,
+        "description": "Add feature_alpha_multipliers to adaptive_weights (baseline adaptation rates)",
+        "sql": [],
+        "alter_columns": [
+            ("adaptive_weights", "feature_alpha_multipliers", "JSONB DEFAULT NULL"),
         ],
     },
 ]
