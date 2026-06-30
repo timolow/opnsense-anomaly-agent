@@ -99,7 +99,7 @@ from baseline_engine import BaselineEngine
 from anomaly_detector import AnomalyDetector
 from threshold_tuner import ThresholdTuner
 from concept_drift import ConceptDriftDetector, DriftEvent
-from ip_behavior_model import BehaviorProfiler
+from unified_behavioral_engine import UnifiedBehavioralEngine
 
 # P2-6: SSE queue access (imported from server module)
 _sse_publish_fn = None
@@ -659,7 +659,7 @@ class OPNsenseAgent:
 
         # IP behavior profiler — per-IP behavioral profiling with EMA baselines
         try:
-            self.behavior_profiler = BehaviorProfiler(self.db)
+            self.behavior_profiler = UnifiedBehavioralEngine(self.db)
             logger.info("IP behavior profiler initialized")
         except Exception as e:
             logger.warning("Failed to initialize behavior profiler: %s", e)
@@ -1199,12 +1199,14 @@ class OPNsenseAgent:
             # Emit behavior signals to signal bus
             for ip, signals in behavior_signals.items():
                 for sig in signals:
+                    # UnifiedSignal has: .signal_type, .score, .details, .source
+                    severity = "high" if sig.score >= 0.7 else "medium" if sig.score >= 0.4 else "low"
                     self.signal_bus.emit(
-                        source="behavior_profiler",
-                        signal_type=sig.get("signal_type", "behavior_deviation"),
-                        severity=sig.get("severity", "low"),
+                        source=sig.source,
+                        signal_type=sig.signal_type,
+                        severity=severity,
                         ip=ip,
-                        metadata=sig.get("metadata", {}),
+                        metadata=sig.details,
                     )
 
         # ── Phase 5: Batch attack detection ──────────────────────────
