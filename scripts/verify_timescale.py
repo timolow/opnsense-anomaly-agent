@@ -70,20 +70,20 @@ def verify_hypertable(db_conn: Any) -> Dict[str, Any]:
 
     cur = db_conn.cursor()
     try:
-        # 1. Check if events is a hypertable
+        # 1. Check if normalized_events is a hypertable
         cur.execute("""
             SELECT hypertable_schema, hypertable_name
             FROM timescaledb_information.hypertables
-            WHERE hypertable_name = 'events'
+            WHERE hypertable_schema = 'public' AND hypertable_name = 'normalized_events'
         """)
         hypertable_row = cur.fetchone()
         if not hypertable_row:
             result["status"] = "error"
             result["messages"].append(
-                "ERROR: 'events' is NOT a hypertable. "
-                "Run V20 migration first (schema_migrations.py)."
+                "ERROR: 'normalized_events' is NOT a hypertable. "
+                "Run V21 migration first (schema_migrations.py)."
             )
-            logger.error("events is not a hypertable — V20 migration may not have run")
+            logger.error("normalized_events is not a hypertable — V21 migration may not have run")
             return result
 
         result["is_hypertable"] = True
@@ -103,7 +103,7 @@ def verify_hypertable(db_conn: Any) -> Dict[str, Any]:
         cur.execute("""
             SELECT n_live_tup, last_analyze, last_autoanalyze
             FROM pg_stat_user_tables
-            WHERE relname = 'events'
+            WHERE relname = 'normalized_events'
         """)
         stat_row = cur.fetchone()
         if stat_row:
@@ -128,7 +128,7 @@ def verify_hypertable(db_conn: Any) -> Dict[str, Any]:
         cur.execute("""
             SELECT chunk_schema, chunk_name, range_start, range_end
             FROM timescaledb_information.chunks
-            WHERE table_name = 'events'
+            WHERE table_name = 'normalized_events'
             ORDER BY range_start
         """)
         chunks = cur.fetchall()
@@ -168,17 +168,17 @@ def verify_hypertable(db_conn: Any) -> Dict[str, Any]:
                 )
 
         # 5. Run ANALYZE to update planner statistics
-        logger.info("Running ANALYZE on events table...")
-        cur.execute("ANALYZE events")
+        logger.info("Running ANALYZE on normalized_events table...")
+        cur.execute("ANALYZE normalized_events")
         result["analyze_completed"] = True
-        result["messages"].append("ANALYZE events completed successfully")
-        logger.info("ANALYZE events completed")
+        result["messages"].append("ANALYZE normalized_events completed successfully")
+        logger.info("ANALYZE normalized_events completed")
 
         # 6. Post-ANALYZE: re-check estimated row count for consistency
         cur.execute("""
             SELECT n_live_tup
             FROM pg_stat_user_tables
-            WHERE relname = 'events'
+            WHERE relname = 'normalized_events'
         """)
         post_analyze_count = cur.fetchone()[0]
         if post_analyze_count != event_count and post_analyze_count > 0:

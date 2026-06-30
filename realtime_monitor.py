@@ -47,7 +47,7 @@ def main():
             cur = db.connect().cursor()
             cur.execute("""
                 SELECT rule_name, src_ip, dst_port, timestamp
-                FROM events
+                FROM normalized_events
                 WHERE timestamp > NOW() - INTERVAL '%d seconds'
                 ORDER BY timestamp DESC
             """, (WINDOW_SECONDS,))
