@@ -1426,7 +1426,8 @@ def _safe_create_hypertable(
         cur.execute(f"""
             SELECT create_hypertable(
                 %s, %s,
-                chunk_time_interval => INTERVAL %s
+                chunk_time_interval => INTERVAL %s,
+                migrate_data => true
             )
         """, (table, time_column, chunk_interval))
 
