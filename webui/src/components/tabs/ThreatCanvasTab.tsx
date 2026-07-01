@@ -10,7 +10,7 @@
 // Uses Canvas 2D for timeline chart.
 // ═══════════════════════════════════════════════════
 
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useStore } from '@/store';
 import { api } from '@/api';
@@ -20,6 +20,7 @@ import { ThreatCanvasSkeleton } from '@/components/SkeletonLoaders';
 import { TabQueryError } from '@/components/TabShell';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
 import ThreatTimeline from '@/components/charts/ThreatTimeline';
+import { useThreatCanvasSSE } from '@/hooks/useThreatCanvasSSE';
 import {
   ShieldAlert, Ban, Eye, Search, AlertTriangle,
   ChevronDown, ChevronUp, Activity, Network, ShieldCheck, Zap, ArrowRight,
@@ -51,6 +52,18 @@ function threatColor(level: string): string {
     : level === 'high' ? CYBER.orange
     : level === 'medium' ? CYBER.yellow
     : CYBER.green;
+}
+
+// ── Time active helper ──
+function timeActive(lastSeen: string | undefined): string {
+  if (!lastSeen) return 'N/A';
+  const diff = Date.now() - new Date(lastSeen).getTime();
+  const abs = Math.abs(diff);
+  const prefix = diff < 0 ? 'in ' : '';
+  if (abs < 60_000) return `${prefix}${Math.round(abs / 1000)}s ago`;
+  if (abs < 3_600_000) return `${prefix}${Math.round(abs / 60_000)}m ago`;
+  if (abs < 86_400_000) return `${prefix}${Math.round(abs / 3_600_000)}h ago`;
+  return `${prefix}${Math.round(abs / 86_400_000)}d ago`;
 }
 
 // ── Source Badge ──
@@ -169,6 +182,9 @@ function IncidentRow({ incident, isSelected, onClick }: { incident: ThreatCanvas
         </div>
         <div className="text-xs text-cyber-textMuted font-mono">{incident.signal_count} signals</div>
         <div className="text-xs text-cyber-textMuted font-mono">{incident.source_count} sources</div>
+        <div className="text-xs font-mono" style={{ color: CYBER.accent }}>
+          {timeActive(incident.last_seen)}
+        </div>
         {!incident.is_active && (
           <span className="text-xs text-cyber-green/60">resolved</span>
         )}
@@ -243,6 +259,12 @@ function IpDrillDown({ incident }: { incident: ThreatCanvasIncident }) {
             <span className="text-xs text-cyber-textMuted">Last Seen</span>
             <span className="text-xs font-mono text-cyber-text">
               {incident.last_seen ? new Date(incident.last_seen).toLocaleString() : 'N/A'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-xs text-cyber-textMuted">Time Active</span>
+            <span className="text-xs font-mono font-bold" style={{ color: CYBER.accent }}>
+              {timeActive(incident.last_seen)}
             </span>
           </div>
         </div>
@@ -353,6 +375,12 @@ export default function ThreatCanvasTab() {
     staleTime: 15_000,
   });
 
+  // SSE: refetch when live events arrive
+  const handleSSEEvent = useCallback(() => {
+    refetch();
+  }, [refetch]);
+  useThreatCanvasSSE(handleSSEEvent);
+
   // Selected incident for center panel (timeline) + right panel (drill-down)
   const selectedIncident = useMemo(() => {
     if (!threatCanvasSelectedId || !data) return null;
@@ -401,8 +429,8 @@ export default function ThreatCanvasTab() {
       {/* Empty state */}
       {noData && (
         <div className="p-12 text-center text-cyber-textMuted text-sm">
-          <ShieldCheck size={48} className="mx-auto mb-4 opacity-50" />
-          <p className="mb-2">No threat data available yet.</p>
+          <ShieldCheck size={48} className="mx-auto mb-4 opacity-50" style={{ color: CYBER.green }} />
+          <p className="mb-2 text-cyber-green font-semibold">No active incidents — all clear</p>
           <p className="text-xs">The Threat Canvas will populate as incidents are correlated across firewall, nginx, IDS, DNS, and ZenArmor sources.</p>
         </div>
       )}
@@ -469,16 +497,28 @@ export default function ThreatCanvasTab() {
               <span className="text-xs text-cyber-textMuted font-mono">{filtered.length} shown</span>
             </div>
             <div className="max-h-[500px] overflow-y-auto">
-              {filtered.map(inc => (
-                <IncidentRow
-                  key={inc.incident_id}
-                  incident={inc}
-                  isSelected={threatCanvasSelectedId === inc.incident_id}
-                  onClick={() => setThreatCanvasSelectedId(
-                    threatCanvasSelectedId === inc.incident_id ? null : inc.incident_id
-                  )}
-                />
-              ))}
+              {filtered.length === 0 ? (
+                <div className="p-8 text-center text-cyber-textMuted text-sm">
+                  <ShieldCheck size={32} className="mx-auto mb-3 opacity-50" style={{ color: CYBER.green }} />
+                  <p className="text-cyber-green font-semibold">No active incidents — all clear</p>
+                  <p className="text-xs mt-1">
+                    {threatCanvasFilterActive || threatCanvasFilterThreat !== 'all'
+                      ? 'No incidents match the active filters.'
+                      : 'Waiting for correlated threat data...'}
+                  </p>
+                </div>
+              ) : (
+                filtered.map(inc => (
+                  <IncidentRow
+                    key={inc.incident_id}
+                    incident={inc}
+                    isSelected={threatCanvasSelectedId === inc.incident_id}
+                    onClick={() => setThreatCanvasSelectedId(
+                      threatCanvasSelectedId === inc.incident_id ? null : inc.incident_id
+                    )}
+                  />
+                ))
+              )}
             </div>
           </div>
 
