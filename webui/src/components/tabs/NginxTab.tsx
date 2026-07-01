@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
 import type { NginxSummary, NginxAnomaly, NginxAnomalyList } from '../../types';
+import { format_ip } from '../../utils/formatIp';
 import { CYBER, CHART, severityStyle, METHOD_COLORS } from '../../utils/colors';
 
 // Severity style helper for nginx anomalies
@@ -298,7 +299,7 @@ function AnomaliesTable({ anomalies }: { anomalies: NginxAnomaly[] }) {
                   </span>
                 </td>
                 <td style={{ padding: '8px', fontFamily: 'monospace', color: CYBER.text, fontSize: '12px' }}>
-                  {a.src_ip}
+                  {format_ip(a.src_ip, a.src_hostname)}
                 </td>
                 <td style={{ padding: '8px', color: CYBER.textMuted, fontSize: '11px', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {a.description}

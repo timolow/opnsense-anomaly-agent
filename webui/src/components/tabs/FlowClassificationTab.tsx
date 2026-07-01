@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import { CYBER } from '@/utils/colors';
+import { format_ip } from '@/utils/formatIp';
 import CanvasPieChart from '@/components/charts/CanvasPieChart';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
 import { FlowClassificationSkeleton } from '@/components/SkeletonLoaders';
@@ -24,6 +25,8 @@ interface FlowClassification {
   confidence: number;
   src_ip?: string;
   dst_ip?: string;
+  src_hostname?: string | null;
+  dst_hostname?: string | null;
   dst_port?: number;
   protocol?: string;
   rule_name?: string;
@@ -110,9 +113,9 @@ function FlowRow({ flow }: { flow: FlowClassification }) {
         <span className={`px-2 py-0.5 text-xs rounded font-bold ${CLASS_COLORS[cls]?.badge || 'bg-cyber-accent/20 text-cyber-accent'}`}>
           {cls}
         </span>
-        {flow.src_ip && <span className="font-mono text-sm text-cyber-text">{flow.src_ip}</span>}
+        {flow.src_ip && <span className="font-mono text-sm text-cyber-text">{format_ip(flow.src_ip, flow.src_hostname)}</span>}
         <ArrowUpRight size={12} className="text-cyber-textMuted" />
-        {flow.dst_ip && <span className="font-mono text-sm text-cyber-text">{flow.dst_ip}:{flow.dst_port || '?'}</span>}
+        {flow.dst_ip && <span className="font-mono text-sm text-cyber-text">{format_ip(flow.dst_ip, flow.dst_hostname)}:{flow.dst_port || '?'}</span>}
         {flow.protocol && <span className="text-xs text-cyber-textMuted font-mono ml-auto">{flow.protocol}</span>}
         <span className="text-xs font-mono" style={{ color }}>{((flow.confidence || 0) * 100).toFixed(0)}%</span>
         {expanded ? <ChevronUp size={14} className="text-cyber-textMuted" /> : <ChevronDown size={14} className="text-cyber-textMuted" />}
