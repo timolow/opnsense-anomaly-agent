@@ -504,12 +504,9 @@ def _read_opn_config():
 # ─── PostgreSQL queries ────────────────────────────────────────────
 
 def query_stats():
-    """Optimized stats: single pass over normalized_events, no sequential queries."""
-    conn = get_db()
+    """Fast stats: uses agent state + pg_class estimate + minimal DB queries. Cached in Redis."""
     state = load_state()
-    agent_counters = {}
-    if state:
-        agent_counters = state.get("agent_counters", {})
+    agent_counters = state.get("agent_counters", {}) if state else {}
     counters = {
         "events_processed": agent_counters.get("event_count", 0),
         "anomalies_detected": agent_counters.get("anomaly_count", 0),
@@ -526,139 +523,63 @@ def query_stats():
     unique_ips = 0
     sparklines = {"events": [], "blocked": [], "passed": [], "unique_ips": [], "anomalies": []}
 
+    # Total event count from pg_class (instant, no scan)
+    conn = get_db()
     if conn:
         try:
-            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            # Single query: all 24h stats in one pass
-            cur.execute("""
-                WITH cutoff AS (SELECT NOW() - INTERVAL '24 hours' AS ts),
-                summary AS (
-                    SELECT
-                        COUNT(*) AS total_24h,
-                        COUNT(*) FILTER (WHERE action = 'BLOCK') AS blocked_24h,
-                        COUNT(*) FILTER (WHERE action = 'PASS') AS passed_24h,
-                        COUNT(DISTINCT src_ip) FILTER (WHERE src_ip IS NOT NULL AND src_ip != '') AS unique_ips_24h
-                    FROM normalized_events, cutoff
-                    WHERE timestamp > cutoff.ts
-                ),
-                source_agg AS (
-                    SELECT src_ip, COUNT(*) as event_count,
-                           COUNT(DISTINCT dst_ip) as unique_destinations,
-                           COUNT(DISTINCT dst_port) as unique_ports,
-                           MAX(interface) as interface, MAX(protocol) as protocol
-                    FROM normalized_events, cutoff
-                    WHERE timestamp > cutoff.ts
-                    GROUP BY src_ip
-                    ORDER BY event_count DESC
-                    LIMIT 100
-                ),
-                hourly AS (
-                    SELECT
-                        DATE_TRUNC('hour', timestamp)::text AS hour,
-                        COUNT(*) AS total,
-                        COUNT(*) FILTER (WHERE action = 'BLOCK') AS blocked,
-                        COUNT(*) FILTER (WHERE action = 'PASS') AS passed
-                    FROM normalized_events, cutoff
-                    WHERE timestamp > cutoff.ts
-                    GROUP BY hour
-                    ORDER BY hour
-                ),
-                hourly_ips AS (
-                    SELECT DATE_TRUNC('hour', timestamp)::text AS hour, COUNT(DISTINCT src_ip) AS uc
-                    FROM normalized_events, cutoff
-                    WHERE timestamp > cutoff.ts AND src_ip IS NOT NULL AND src_ip != ''
-                    GROUP BY hour ORDER BY hour
-                )
-                SELECT 'summary' AS tag,
-                       total_24h AS total_24h, blocked_24h AS blocked_24h,
-                       passed_24h AS passed_24h, unique_ips_24h AS unique_ips_24h,
-                       NULL::text AS src_ip, 0 AS event_count,
-                       0 AS unique_destinations, 0 AS unique_ports,
-                       NULL::text AS iface, NULL::text AS proto
-                FROM summary
-                UNION ALL
-                SELECT 'source' AS tag, 0, 0, 0, 0,
-                       src_ip, event_count, unique_destinations, unique_ports,
-                       interface AS iface, protocol AS proto
-                FROM source_agg
-                UNION ALL
-                SELECT 'hourly' AS tag, 0, 0, 0, 0,
-                       hour AS src_ip, total AS event_count,
-                       blocked AS unique_destinations, passed AS unique_ports,
-                       NULL::text, NULL::text
-                FROM hourly
-                UNION ALL
-                SELECT 'hourly_ip' AS tag, 0, 0, 0, 0,
-                       hour AS src_ip, uc AS event_count, 0, 0,
-                       NULL::text, NULL::text
-                FROM hourly_ips
-            """)
-            rows = cur.fetchall()
-            for row in rows:
-                if row["tag"] == "summary":
-                    total_events = row["total_24h"]
-                    blocked_24h = row["blocked_24h"]
-                    passed_24h = row["passed_24h"]
-                    unique_ips = row["unique_ips_24h"]
-                elif row["tag"] == "source":
-                    ip = row["src_ip"] or "0.0.0.0"
-                    cnt = row["event_count"]
-                    iface = row["iface"]
-                    protocol = row["proto"] or "ip"
-                    category = classify_interface(iface)
-                    if category == "UNKNOWN" and ip and not ip.startswith(("10.", "192.168.", "172.")):
-                        category = "WAN"
-                    if category == "WAN": by_type["external"] += cnt
-                    elif category == "LAN": by_type["internal"] += cnt
-                    elif category == "VPN": by_type["vpn"] += cnt
-                    else: by_type["unknown"] += cnt
-                    categories[category] += 1
-                    top_sources.append({
-                        "ip": ip, "count": cnt, "category": category,
-                        "interface": iface, "unique_destinations": row["unique_destinations"],
-                        "unique_ports": row["unique_ports"], "protocol": protocol,
-                    })
-                elif row["tag"] == "hourly":
-                    sparklines["events"].append({"time": row["src_ip"], "count": row["event_count"]})
-                    sparklines["blocked"].append({"time": row["src_ip"], "count": row["unique_destinations"]})
-                    sparklines["passed"].append({"time": row["src_ip"], "count": row["unique_ports"]})
-                elif row["tag"] == "hourly_ip":
-                    sparklines["unique_ips"].append({"time": row["src_ip"], "count": row["event_count"]})
-
-            by_severity = {
-                "CRITICAL": sum(1 for s in top_sources if s["count"] > 10000),
-                "HIGH": sum(1 for s in top_sources if 1000 <= s["count"] <= 10000),
-                "MEDIUM": sum(1 for s in top_sources if 100 < s["count"] < 1000),
-                "LOW": sum(1 for s in top_sources if s["count"] <= 100),
-            }
+            cur = conn.cursor()
+            cur.execute("SELECT reltuples::bigint FROM pg_class WHERE relname = 'normalized_events'")
+            est = cur.fetchone()[0]
+            db_event_count = max(int(est), counters.get("events_processed", 0))
             cur.close()
-        except Exception as e:
-            print(f"Stats query failed: {e}")
+        except Exception:
+            db_event_count = counters.get("events_processed", 0)
 
+    # Use in-memory state for top sources (fast, no DB)
     nc = state.get("network_classifier", {}) if state else {}
     ip_data = nc.get("ip_data", {})
     ip_classifications = len([v for v in ip_data.values() if isinstance(v, dict) and _get_event_count(v) > 0])
+    unique_ips = ip_classifications
+
+    top_ip_list = []
+    for ip, info in ip_data.items():
+        if not isinstance(info, dict): continue
+        cnt = _get_event_count(info)
+        if cnt == 0: continue
+        iface = info.get("interface", "")
+        category = classify_interface(iface)
+        if category == "UNKNOWN" and ip and not ip.startswith(("10.", "192.168.", "172.")):
+            category = "WAN"
+        if category == "WAN": by_type["external"] += cnt
+        elif category == "LAN": by_type["internal"] += cnt
+        elif category == "VPN": by_type["vpn"] += cnt
+        else: by_type["unknown"] += cnt
+        categories[category] += 1
+        total_events += cnt
+        top_ip_list.append({
+            "ip": ip, "count": cnt, "category": category,
+            "interface": iface, "unique_destinations": 0,
+            "unique_ports": 0, "protocol": "ip",
+        })
+    top_ip_list.sort(key=lambda x: x["count"], reverse=True)
+    top_sources = top_ip_list[:100]
+    by_severity = {
+        "CRITICAL": sum(1 for s in top_sources if s["count"] > 10000),
+        "HIGH": sum(1 for s in top_sources if 1000 <= s["count"] <= 10000),
+        "MEDIUM": sum(1 for s in top_sources if 100 < s["count"] < 1000),
+        "LOW": sum(1 for s in top_sources if s["count"] <= 100),
+    }
 
     # Rules classified count
     rules_classified = 0
     if state and "network_classifier" in state:
-        nc = state["network_classifier"]
-        if "rule_data" in nc:
-            rules_classified = len(nc["rule_data"])
-        elif "classifications" in nc:
-            rules_classified = len(nc["classifications"])
+        nc_state = state["network_classifier"]
+        if "rule_data" in nc_state:
+            rules_classified = len(nc_state["rule_data"])
+        elif "classifications" in nc_state:
+            rules_classified = len(nc_state["classifications"])
 
-    # Total event count (fast: use pg_class)
-    try:
-        cur_total = conn.cursor()
-        cur_total.execute("SELECT reltuples::bigint FROM pg_class WHERE relname = 'normalized_events'")
-        est = cur_total.fetchone()[0]
-        db_event_count = max(int(est), total_events)
-        cur_total.close()
-    except Exception:
-        db_event_count = total_events
-
-    # Geo data (cached from previous call)
+    # Geo + anomalies sparkline (fast)
     try:
         geo_data = query_geo()
         geo_regions = geo_data.get("regions", []) if isinstance(geo_data, dict) else []
@@ -666,19 +587,19 @@ def query_stats():
     except Exception:
         top_countries = []
 
-    # Anomalies sparkline
-    try:
-        cur_anom = conn.cursor()
-        cur_anom.execute("""
-            SELECT DATE_TRUNC('hour', timestamp)::text AS hour, COUNT(*) AS c
-            FROM anomalies WHERE timestamp > NOW() - INTERVAL '24 hours'
-            GROUP BY hour ORDER BY hour
-        """)
-        for row in cur_anom.fetchall():
-            sparklines["anomalies"].append({"time": row[0], "count": row[1]})
-        cur_anom.close()
-    except Exception:
-        pass
+    if conn:
+        try:
+            cur_anom = conn.cursor()
+            cur_anom.execute("""
+                SELECT DATE_TRUNC('hour', timestamp)::text AS hour, COUNT(*) AS c
+                FROM anomalies WHERE timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY hour ORDER BY hour
+            """)
+            for row in cur_anom.fetchall():
+                sparklines["anomalies"].append({"time": row[0], "count": row[1]})
+            cur_anom.close()
+        except Exception:
+            pass
 
     return {
         "counters": counters, "by_type": dict(by_type),
