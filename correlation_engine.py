@@ -46,42 +46,95 @@ SEVERITY_NAMES = ["info", "low", "medium", "high", "critical"]
 
 # ── Signal type categories for attack chain detection ────────────────
 
-# Map signal types to their phase in the attack lifecycle
+# Map signal types to their phase in the attack lifecycle.
+# Includes signal types from ALL 15 sources so the correlation engine
+# can detect chains that span any combination of detectors.
 ATTACK_PHASES = {
-    # Phase 1: Reconnaissance
-    "port_scan": "recon",
-    "horizontal_scan": "recon",
-    "vertical_scan": "recon",
-    "xmas_scan": "recon",
-    "null_scan": "recon",
-    "fin_scan": "recon",
-    "icmp_scan": "recon",
-    "new_ip": "recon",
-    "path_probe": "recon",
-    "flow_recon": "recon",
+    # ── Phase 1: Reconnaissance ─────────────────────────────────────
+    # Scanning, enumeration, new actors appearing
+    "port_scan":            "recon",
+    "horizontal_scan":      "recon",
+    "vertical_scan":        "recon",
+    "xmas_scan":            "recon",
+    "null_scan":            "recon",
+    "fin_scan":             "recon",
+    "icmp_scan":            "recon",
+    "new_ip":               "recon",
+    "path_probe":           "recon",
+    "flow_recon":           "recon",
+    "http_scan":            "recon",
+    "anomaly_new_ip":       "recon",
+    "anomaly_port_scan":    "recon",
+    "ids_new_signature":    "recon",
+    "new_country":          "recon",
+    "high_risk_country":    "recon",
+    "new_service":          "recon",
+    "baseline_pattern_change": "recon",
+    "volume_spike":         "recon",
+    "deviation_unique_dst_ports": "recon",
+    "deviation_unique_dst_ips":   "recon",
+    "firewall_port_scan":   "recon",
+    "firewall_dest_scan":   "recon",
 
-    # Phase 2: Targeting / Probing
-    "flow_suspicious": "probe",
-    "behavior_deviation": "probe",
-    "temporal_anomaly": "probe",
-    "port_diversity_anomaly": "probe",
-    "http_404_spike": "probe",
-    "ids_signature_hit": "probe",
+    # ── Phase 2: Targeting / Probing ─────────────────────────────────
+    # Suspicious behavior, deviations, initial probing
+    "flow_suspicious":               "probe",
+    "behavior_deviation":            "probe",
+    "temporal_anomaly":              "probe",
+    "anomaly_temporal":              "probe",
+    "port_diversity_anomaly":        "probe",
+    "http_404_spike":                "probe",
+    "http_anomaly":                  "probe",
+    "ids_signature":                 "probe",
+    "zenarmor_threat":               "probe",
+    "nginx_attack":                  "probe",
+    "volume_anomaly":                "probe",
+    "statistical_anomaly":           "probe",
+    "deviation_conn_rate":           "probe",
+    "deviation_bytes_per_conn":      "probe",
+    "deviation_packet_count":        "probe",
+    "repeated_blocks":               "probe",
+    "multi_port_blocks":             "probe",
+    "policy_change":                 "probe",
+    "mixed_policy":                  "probe",
+    "error_burst":                   "probe",
+    "high_ip_diversity":             "probe",
+    "system_volume_spike":           "probe",
+    "geo_volume_anomaly":            "probe",
+    "firewall_block_ratio":          "probe",
+    "invalid_ua":                    "probe",
+    "new_policy":                    "probe",
 
-    # Phase 3: Attack
-    "syn_flood": "attack",
-    "brute_force": "attack",
-    "http_attack": "attack",
-    "http_brute_force": "attack",
-    "flow_attack": "attack",
-    "anomaly_volume": "attack",
-    "baseline_volume_spike": "attack",
+    # ── Phase 3: Attack ──────────────────────────────────────────────
+    # Active hostile actions: floods, brute force, exploit attempts
+    "syn_flood":                "attack",
+    "brute_force":              "attack",
+    "http_attack":              "attack",
+    "http_brute_force":         "attack",
+    "http_ddos":                "attack",
+    "path_traversal":           "attack",
+    "flow_attack":              "attack",
+    "anomaly_volume":           "attack",
+    "baseline_volume_spike":    "attack",
+    "ids_signature_spike":      "attack",
+    "ids_target_change":        "attack",
+    "ids_cross_network":        "attack",
+    "block_spike":              "attack",
+    "system_block_spike":       "attack",
+    "threat_escalation":        "attack",
+    "firewall_block":           "attack",
+    "service_down":             "attack",
+    "wan_flap":                 "attack",
 
-    # Phase 4: Exploitation
-    "flow_exploit": "exploit",
-    "policy_violation": "exploit",
-    "ids_signature_spike": "exploit",
+    # ── Phase 4: Exploitation ────────────────────────────────────────
+    # Confirmed exploits, policy violations, post-exploitation
+    "flow_exploit":         "exploit",
+    "policy_violation":     "exploit",
+    "incident_escalated":   "exploit",
 }
+
+# Ordered phase progression for chain detection
+PHASE_ORDER = ["recon", "probe", "attack", "exploit"]
 
 
 # ── Incident data structure ──────────────────────────────────────────
@@ -106,6 +159,15 @@ class Incident:
         self.last_seen = self.first_seen
         self.is_active = True
         self.auto_resolved = False
+        self.is_escalated = False  # True when full chain detected (3+ consecutive phases)
+
+        # Per-phase first-seen timestamps for chain visualization
+        self.phase_first_seen: Dict[str, float] = {}
+
+        # Chain timeline: ordered list of {phase, signal_type, timestamp}
+        self.chain_timeline: List[Dict[str, Any]] = []
+
+        # Metadata
         self.metadata: Dict[str, Any] = {
             "dst_ips": set(),
             "dst_ports": set(),
@@ -121,9 +183,20 @@ class Incident:
         self.last_seen = time.time()
         self.signal_count += 1
 
-        # Track attack phase
+        # Track attack phase with first-seen timestamp
         phase = ATTACK_PHASES.get(signal_type)
         if phase:
+            # Record when each phase was first observed
+            if phase not in self.phase_first_seen:
+                self.phase_first_seen[phase] = self.last_seen
+                # Append to chain timeline in phase order
+                self.chain_timeline.append({
+                    "phase": phase,
+                    "signal_type": signal_type,
+                    "source": source,
+                    "timestamp": self.last_seen,
+                })
+
             self.phases.add(phase)
 
         # Enrich metadata
@@ -147,17 +220,60 @@ class Incident:
             self.severity_rank = sig_rank
             self.severity = severity
 
-        # Escalate based on signal diversity
+        # Escalate based on signal diversity and chain progression
         self._escalate_by_pattern()
 
     def get_attack_chain(self) -> List[str]:
-        """Get the ordered attack chain (phases detected)."""
-        phase_order = ["recon", "probe", "attack", "exploit"]
-        return [p for p in phase_order if p in self.phases]
+        """Get the ordered attack chain (phases detected in progression order)."""
+        return [p for p in PHASE_ORDER if p in self.phases]
+
+    def is_full_chain(self, min_phases: int = 3) -> bool:
+        """Check if this incident has a progression of min_phases+ consecutive phases.
+
+        A full chain means the attacker moved from recon -> probe -> attack (3 phases)
+        or recon -> probe -> attack -> exploit (4 phases).
+        """
+        chain = self.get_attack_chain()
+        if len(chain) < min_phases:
+            return False
+
+        # Verify phases are consecutive in the PHASE_ORDER sequence
+        chain_indices = [PHASE_ORDER.index(p) for p in chain]
+        for i in range(len(chain_indices) - 1):
+            if chain_indices[i + 1] - chain_indices[i] != 1:
+                return False
+
+        return True
+
+    def get_chain_timing(self) -> List[Dict[str, Any]]:
+        """Get ordered phase timing for dashboard visualization."""
+        result = []
+        chain = self.get_attack_chain()
+        for phase in chain:
+            first_seen = self.phase_first_seen.get(phase, self.first_seen)
+            result.append({
+                "phase": phase,
+                "first_seen": first_seen,
+                "duration": (self.phase_first_seen[phase] - first_seen) if phase in self.phase_first_seen else 0,
+                "signal_types": sorted([
+                    st for st in self.signal_types
+                    if ATTACK_PHASES.get(st) == phase
+                ]),
+            })
+        # Add total duration
+        if len(result) >= 2:
+            result[-1]["total_chain_duration"] = result[-1]["first_seen"] - result[0]["first_seen"]
+        return result
 
     def get_description(self) -> str:
         """Generate a human-readable description of this incident."""
         chain = self.get_attack_chain()
+
+        # Full chain escalation description
+        if self.is_escalated and self.is_full_chain():
+            chain_str = " -> ".join(chain)
+            return f"ESCALATED: Attack chain detected ({chain_str}) — {self.signal_count} signals from {len(self.sources)} sources"
+
         if chain:
             return f"Attack chain detected: {' -> '.join(chain)} ({self.signal_count} signals from {len(self.sources)} sources)"
 
@@ -194,9 +310,11 @@ class Incident:
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
             "is_active": self.is_active,
+            "is_escalated": self.is_escalated,
             "auto_resolved": self.auto_resolved,
             "description": self.get_description(),
             "affected_targets": self.get_affected_targets(),
+            "chain_timeline": self.chain_timeline,
             "metadata": {
                 k: sorted(v) if isinstance(v, set) else v
                 for k, v in self.metadata.items()
@@ -210,11 +328,11 @@ class Incident:
             self.severity_rank = SEVERITY_RANK["high"]
             self.severity = "high"
 
-        # Attack chain progression = critical
-        chain = self.get_attack_chain()
-        if len(chain) >= 3:
+        # Full attack chain progression (consecutive phases) = critical + escalated
+        if self.is_full_chain(3):
             self.severity_rank = SEVERITY_RANK["critical"]
             self.severity = "critical"
+            self.is_escalated = True
 
         # Cross-source correlation: signals from 3+ security sources = strong evidence
         security_sources = self.sources & {"firewall", "nginx", "ids", "attack_detector", "anomaly_detector"}
@@ -441,6 +559,7 @@ class CorrelationEngine:
             if inc.is_active and (now - inc.last_seen) < self.correlation_window:
                 # Add signal to existing incident
                 old_severity = inc.severity
+                old_escalated = inc.is_escalated
                 inc.add_signal(
                     signal.signal_type, signal.source,
                     signal.severity, signal.metadata
@@ -448,7 +567,23 @@ class CorrelationEngine:
                 self._persist_incident(inc)
                 # Emit correlation signal if severity escalated or attack chain detected
                 if self.signal_bus and inc.is_active:
-                    if inc.severity != old_severity:
+                    # Full chain escalation — highest priority signal
+                    if inc.is_escalated and not old_escalated:
+                        self.signal_bus.emit(
+                            source="correlation",
+                            signal_type="attack_chain_escalated",
+                            severity=inc.severity,
+                            ip=inc.ip,
+                            metadata={
+                                "signal_types": sorted(inc.signal_types),
+                                "sources": sorted(inc.sources),
+                                "phases": inc.get_attack_chain(),
+                                "chain_timeline": inc.chain_timeline,
+                                "signal_count": inc.signal_count,
+                                "description": inc.get_description(),
+                            },
+                        )
+                    elif inc.severity != old_severity:
                         self.signal_bus.emit(
                             source="correlation",
                             signal_type="incident_escalated",
@@ -458,6 +593,7 @@ class CorrelationEngine:
                                 "signal_types": sorted(inc.signal_types),
                                 "sources": sorted(inc.sources),
                                 "signal_count": inc.signal_count,
+                                "phases": inc.get_attack_chain(),
                                 "description": inc.get_description(),
                             },
                         )
@@ -471,6 +607,7 @@ class CorrelationEngine:
                                 "signal_types": sorted(inc.signal_types),
                                 "sources": sorted(inc.sources),
                                 "phases": inc.get_attack_chain(),
+                                "chain_timeline": inc.chain_timeline,
                                 "description": inc.get_description(),
                             },
                         )
@@ -503,6 +640,7 @@ class CorrelationEngine:
                     "signal_types": sorted(new_incident.signal_types),
                     "sources": sorted(new_incident.sources),
                     "signal_count": new_incident.signal_count,
+                    "phases": new_incident.get_attack_chain(),
                     "description": new_incident.get_description(),
                 },
             )

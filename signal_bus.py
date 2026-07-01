@@ -148,9 +148,10 @@ SIGNAL_TYPES = {
     "high_ip_diversity": {"source": SOURCE_SYSTEM_LOG, "default_severity": SEVERITY_MEDIUM},
 
     # Correlation signals (internal)
-    "attack_chain": {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_CRITICAL},
-    "incident_created": {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_INFO},
-    "incident_escalated": {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_HIGH},
+    "attack_chain":              {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_CRITICAL},
+    "attack_chain_escalated":    {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_CRITICAL},
+    "incident_created":          {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_INFO},
+    "incident_escalated":        {"source": SOURCE_CORRELATION, "default_severity": SEVERITY_HIGH},
 }
 
 
