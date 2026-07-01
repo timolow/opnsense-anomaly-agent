@@ -37,15 +37,18 @@ INCIDENT_NEW = "new"
 INCIDENT_INVESTIGATING = "investigating"
 INCIDENT_CONFIRMED = "confirmed"
 INCIDENT_RESOLVED = "resolved"
+INCIDENT_FALSE_POSITIVE = "false_positive"
 
-INCIDENT_STATES = [INCIDENT_NEW, INCIDENT_INVESTIGATING, INCIDENT_CONFIRMED, INCIDENT_RESOLVED]
+INCIDENT_STATES = [INCIDENT_NEW, INCIDENT_INVESTIGATING, INCIDENT_CONFIRMED, INCIDENT_RESOLVED, INCIDENT_FALSE_POSITIVE]
+INCIDENT_TERMINAL_STATES = [INCIDENT_RESOLVED, INCIDENT_FALSE_POSITIVE]
 
 # Valid state transitions
 VALID_TRANSITIONS: Dict[str, List[str]] = {
-    INCIDENT_NEW: [INCIDENT_INVESTIGATING, INCIDENT_CONFIRMED, INCIDENT_RESOLVED],
-    INCIDENT_INVESTIGATING: [INCIDENT_CONFIRMED, INCIDENT_RESOLVED],
+    INCIDENT_NEW: [INCIDENT_INVESTIGATING, INCIDENT_CONFIRMED, INCIDENT_RESOLVED, INCIDENT_FALSE_POSITIVE],
+    INCIDENT_INVESTIGATING: [INCIDENT_CONFIRMED, INCIDENT_RESOLVED, INCIDENT_FALSE_POSITIVE],
     INCIDENT_CONFIRMED: [INCIDENT_RESOLVED],
     INCIDENT_RESOLVED: [],  # Terminal state
+    INCIDENT_FALSE_POSITIVE: [],  # Terminal state
 }
 
 # Severity rank for sorting
@@ -76,6 +79,7 @@ class IncidentRecord:
         "first_seen", "last_seen", "description", "metadata",
         "is_active", "auto_resolved", "resolved_at", "group_id",
         "feedback_count", "feedback_score",
+        "dismissal_reason",
     )
 
     def __init__(self, db_id: int, ip: str, severity: str = "low",
@@ -86,7 +90,8 @@ class IncidentRecord:
                  last_seen: Optional[float] = None,
                  description: str = "", metadata: Optional[Dict] = None,
                  is_active: bool = True, auto_resolved: bool = False,
-                 resolved_at: Optional[float] = None):
+                 resolved_at: Optional[float] = None,
+                 dismissal_reason: str = ""):
         self.id = f"inc_{uuid.uuid4().hex[:8]}"
         self.db_id = db_id
         self.ip = ip
@@ -106,6 +111,7 @@ class IncidentRecord:
         self.group_id: Optional[int] = None
         self.feedback_count = 0
         self.feedback_score = 0.0  # avg thumbs_up ratio
+        self.dismissal_reason = dismissal_reason
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -131,6 +137,7 @@ class IncidentRecord:
             "group_id": self.group_id,
             "feedback_count": self.feedback_count,
             "feedback_score": round(self.feedback_score, 2),
+            "dismissal_reason": self.dismissal_reason,
         }
 
 
@@ -190,16 +197,19 @@ class IncidentManager:
     Thread-safe: uses locks for concurrent access to incident registry.
     """
 
-    def __init__(self, db: Any = None, auto_resolve_after: int = 3600,
+    def __init__(self, db: Any = None, behavioral_engine: Any = None,
+                 auto_resolve_after: int = 3600,
                  grouping_window: int = 86400):
         """Initialize the incident manager.
 
         Args:
             db: EventDatabase instance for persistence.
+            behavioral_engine: UnifiedBehavioralEngine for feedback-driven baseline adjustment.
             auto_resolve_after: Seconds without new signals before auto-resolving (default 3600s = 60min).
             grouping_window: Seconds to group related incidents from same IP (default 86400s = 24h).
         """
         self.db = db
+        self.behavioral_engine = behavioral_engine
         self.auto_resolve_after = auto_resolve_after
         self.grouping_window = grouping_window
 
@@ -217,6 +227,8 @@ class IncidentManager:
         self._total_created = 0
         self._total_resolved = 0
         self._total_feedback = 0
+        self._total_confirmed = 0
+        self._total_dismissed = 0
 
         logger.info(
             "IncidentManager initialized (auto_resolve=%ds, grouping_window=%ds)",
@@ -304,6 +316,122 @@ class IncidentManager:
             success_count, len(inc_ids), new_status
         )
         return results
+
+    # ── Feedback-integrated lifecycle: confirm / dismiss ──────────────
+
+    def confirm_incident(self, inc_id: str, reason: str = "") -> Tuple[bool, str]:
+        """Confirm an incident as a true positive (real threat).
+
+        Transitions to CONFIRMED, records thumbs_up feedback, and notifies
+        the UnifiedBehavioralEngine to reinforce signal weights.
+
+        Args:
+            inc_id: Incident ID (inc_xxxxxxxx).
+            reason: Optional reason for confirmation.
+
+        Returns:
+            Tuple of (success, message).
+        """
+        with self._lock:
+            record = self._incidents.get(inc_id)
+            if not record:
+                return False, f"Incident not found: {inc_id}"
+            ip = record.ip
+            signal_types = list(record.signal_types)
+
+        # Transition to confirmed (or resolve first if not a valid transition)
+        if record.status not in (INCIDENT_NEW, INCIDENT_INVESTIGATING):
+            return False, (
+                f"Cannot confirm incident {inc_id} in '{record.status}' state. "
+                f"Must be '{INCIDENT_NEW}' or '{INCIDENT_INVESTIGATING}'."
+            )
+
+        success, msg = self.transition(inc_id, INCIDENT_CONFIRMED, reason or "confirmed by user")
+        if not success:
+            return False, msg
+
+        with self._lock:
+            self._total_confirmed += 1
+
+        # Record thumbs_up feedback
+        self.record_feedback(inc_id, FEEDBACK_THUMBS_UP, reason or "confirmed by user", "user")
+
+        # Notify behavioral engine
+        self._notify_behavioral_engine(ip, signal_types, "confirm", reason)
+
+        logger.info(
+            "Incident %s confirmed for IP %s (signal_types: %s)",
+            inc_id, ip, signal_types,
+        )
+
+        self._notify({
+            "event": "confirmed",
+            "inc_id": inc_id,
+            "ip": ip,
+            "reason": reason,
+        })
+
+        return True, f"Confirmed {inc_id} as true positive for IP {ip}"
+
+    def dismiss_incident(self, inc_id: str, reason: str = "") -> Tuple[bool, str]:
+        """Dismiss an incident as a false positive.
+
+        Transitions to FALSE_POSITIVE, records thumbs_down feedback, and notifies
+        the UnifiedBehavioralEngine to adjust baselines.
+
+        Args:
+            inc_id: Incident ID (inc_xxxxxxxx).
+            reason: Optional reason for dismissal.
+
+        Returns:
+            Tuple of (success, message).
+        """
+        with self._lock:
+            record = self._incidents.get(inc_id)
+            if not record:
+                return False, f"Incident not found: {inc_id}"
+            ip = record.ip
+            signal_types = list(record.signal_types)
+
+        # Transition to false_positive (or resolve if not a valid transition)
+        if record.status not in (INCIDENT_NEW, INCIDENT_INVESTIGATING):
+            return False, (
+                f"Cannot dismiss incident {inc_id} in '{record.status}' state. "
+                f"Must be '{INCIDENT_NEW}' or '{INCIDENT_INVESTIGATING}'."
+            )
+
+        success, msg = self.transition(inc_id, INCIDENT_FALSE_POSITIVE, reason or "dismissed by user")
+        if not success:
+            return False, msg
+
+        with self._lock:
+            record = self._incidents.get(inc_id)
+            if record:
+                record.dismissal_reason = reason or "dismissed by user"
+            self._total_dismissed += 1
+
+        # Record thumbs_down feedback
+        self.record_feedback(inc_id, FEEDBACK_THUMBS_DOWN, reason or "dismissed by user", "user")
+
+        # Notify behavioral engine
+        self._notify_behavioral_engine(ip, signal_types, "dismiss", reason)
+
+        # Persist dismissal reason to DB
+        self._persist_dismissal_reason(inc_id, reason)
+
+        logger.info(
+            "Incident %s dismissed for IP %s (reason: %s)",
+            inc_id, ip, reason,
+        )
+
+        self._notify({
+            "event": "dismissed",
+            "inc_id": inc_id,
+            "ip": ip,
+            "reason": reason,
+        })
+
+        return True, f"Dismissed {inc_id} as false positive for IP {ip}"
 
     # ── Incident creation (from CorrelationEngine) ────────────────────
 
@@ -526,7 +654,7 @@ class IncidentManager:
         with self._lock:
             for record in self._incidents.values():
                 if (record.is_active and
-                    record.status != INCIDENT_RESOLVED and
+                    record.status not in INCIDENT_TERMINAL_STATES and
                     (now - record.last_seen) > self.auto_resolve_after):
                     record.is_active = False
                     record.auto_resolved = True
@@ -559,6 +687,8 @@ class IncidentManager:
                 "total_created": self._total_created,
                 "total_resolved": self._total_resolved,
                 "total_feedback": self._total_feedback,
+                "total_confirmed": self._total_confirmed,
+                "total_dismissed": self._total_dismissed,
                 "active_incidents": sum(1 for i in self._incidents.values() if i.is_active),
                 "by_status": dict(by_status),
                 "by_severity": dict(by_severity),
@@ -573,6 +703,68 @@ class IncidentManager:
         self._callbacks.append(callback)
 
     # ── Internal methods ──────────────────────────────────────────────
+
+    def _notify_behavioral_engine(self, ip: str, signal_types: List[str],
+                                   action: str, reason: str = "") -> None:
+        """Forward feedback to UnifiedBehavioralEngine for baseline adjustment.
+
+        Args:
+            ip: The IP address involved.
+            signal_types: Signal types associated with the incident.
+            action: 'confirm' or 'dismiss'.
+            reason: Optional reason.
+        """
+        if not self.behavioral_engine:
+            logger.debug(
+                "No behavioral engine configured — feedback for %s not forwarded",
+                ip,
+            )
+            return
+
+        try:
+            if action == "confirm":
+                self.behavioral_engine.record_true_positive(
+                    ip, signal_types or None, notes=reason or None
+                )
+            elif action == "dismiss":
+                self.behavioral_engine.record_false_positive(
+                    ip, signal_types or None, notes=reason or None
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to forward %s feedback to behavioral engine for %s: %s",
+                action, ip, e,
+            )
+
+    def _persist_dismissal_reason(self, inc_id: str, reason: str) -> None:
+        """Persist dismissal reason to the incidents table."""
+        if not self.db:
+            return
+
+        with self._lock:
+            record = self._incidents.get(inc_id)
+
+        if not record or not record.db_id:
+            return
+
+        try:
+            conn = self.db.connect()
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "UPDATE incidents SET dismissal_reason = %s WHERE id = %s",
+                    (reason, record.db_id),
+                )
+                conn.commit()
+            except Exception as e:
+                logger.warning(
+                    "Failed to persist dismissal reason for %s: %s", inc_id, e
+                )
+            finally:
+                cur.close()
+                self.db.putconn(conn)
+        except Exception as e:
+            logger.warning("DB connection error persisting dismissal: %s", e)
 
     def _notify(self, event: Dict[str, Any]):
         """Notify all registered callbacks."""
@@ -620,9 +812,9 @@ class IncidentManager:
             try:
                 cur.execute(
                     """UPDATE incidents SET
-                       is_active = %s, resolved_at = CASE WHEN %s = 'resolved' THEN NOW() ELSE resolved_at END
+                       is_active = %s, resolved_at = CASE WHEN %s IN ('resolved', 'false_positive') THEN NOW() ELSE resolved_at END
                        WHERE id = %s""",
-                    (status != INCIDENT_RESOLVED, status, record.db_id),
+                    (status not in INCIDENT_TERMINAL_STATES, status, record.db_id),
                 )
                 conn.commit()
             except Exception as e:

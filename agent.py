@@ -643,7 +643,7 @@ class OPNsenseAgent:
         # Incident manager — lifecycle, feedback, grouping for correlated incidents
         try:
             from incident_manager import IncidentManager
-            self.incident_manager = IncidentManager(self.db)
+            self.incident_manager = IncidentManager(self.db, self.anomaly_detector)
             logger.info("Incident manager initialized")
         except Exception as e:
             logger.warning("Failed to initialize incident manager: %s", e)

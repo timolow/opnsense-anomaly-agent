@@ -411,6 +411,8 @@ class CommandHandler:
         'recent-alerts': 'Show recent anomaly alerts',
         'incident': 'View or transition an incident by ID',
         'incident-status': 'List active incidents with optional filters',
+        'incident-confirm': 'Confirm an incident as a true positive',
+        'incident-dismiss': 'Dismiss an incident as a false positive',
         'help': 'Show available commands',
     }
     
@@ -452,6 +454,10 @@ class CommandHandler:
             return self._cmd_incident(args)
         elif cmd == 'incident-status':
             return self._cmd_incident_status(args)
+        elif cmd == 'incident-confirm':
+            return self._cmd_incident_confirm(args)
+        elif cmd == 'incident-dismiss':
+            return self._cmd_incident_dismiss(args)
         else:
             return CommandResult(content=f"Unknown command: `{cmd}`. Type `/help` for available commands.")
     
@@ -914,7 +920,41 @@ class CommandHandler:
 
         content = f"**{len(incidents)}** active incidents"
         return CommandResult(content=content, embed=embed)
-    
+
+    def _cmd_incident_confirm(self, args: str) -> CommandResult:
+        """Handle /incident-confirm <inc_id> [reason] — Confirm as true positive."""
+        parts = args.strip().split(None, 1)
+        if not parts:
+            return CommandResult(content="Usage: `/incident-confirm <inc_id> [reason]`")
+
+        inc_id = parts[0]
+        reason = parts[1] if len(parts) > 1 else ""
+
+        mgr = getattr(self.agent, 'incident_manager', None)
+        if not mgr:
+            return CommandResult(content="Incident manager not available.")
+
+        success, message = mgr.confirm_incident(inc_id, reason)
+        status_icon = "✅" if success else "❌"
+        return CommandResult(content=f"{status_icon} {message}")
+
+    def _cmd_incident_dismiss(self, args: str) -> CommandResult:
+        """Handle /incident-dismiss <inc_id> [reason] — Dismiss as false positive."""
+        parts = args.strip().split(None, 1)
+        if not parts:
+            return CommandResult(content="Usage: `/incident-dismiss <inc_id> [reason]`")
+
+        inc_id = parts[0]
+        reason = parts[1] if len(parts) > 1 else ""
+
+        mgr = getattr(self.agent, 'incident_manager', None)
+        if not mgr:
+            return CommandResult(content="Incident manager not available.")
+
+        success, message = mgr.dismiss_incident(inc_id, reason)
+        status_icon = "✅" if success else "❌"
+        return CommandResult(content=f"{status_icon} {message}")
+
     def record_attack(self, attack: Dict[str, Any]):
         self._recent_attacks.append(attack)
         if len(self._recent_attacks) > self._max_attacks:
@@ -1119,6 +1159,42 @@ class DiscordBot:
                             }
                         ],
                     },
+                    {
+                        'name': 'incident-confirm',
+                        'description': 'Confirm an incident as a true positive (real threat)',
+                        'options': [
+                            {
+                                'type': 3,  # STRING
+                                'name': 'incident_id',
+                                'description': 'Incident ID (e.g. inc_abc123)',
+                                'required': True,
+                            },
+                            {
+                                'type': 3,  # STRING
+                                'name': 'reason',
+                                'description': 'Optional reason for confirmation',
+                                'required': False,
+                            }
+                        ],
+                    },
+                    {
+                        'name': 'incident-dismiss',
+                        'description': 'Dismiss an incident as a false positive',
+                        'options': [
+                            {
+                                'type': 3,  # STRING
+                                'name': 'incident_id',
+                                'description': 'Incident ID (e.g. inc_abc123)',
+                                'required': True,
+                            },
+                            {
+                                'type': 3,  # STRING
+                                'name': 'reason',
+                                'description': 'Optional reason for dismissal',
+                                'required': False,
+                            }
+                        ],
+                    },
                 ]
                 try:
                     resp = _requests.put(cmd_url, json=commands, headers=headers, timeout=10)
@@ -1170,6 +1246,18 @@ class DiscordBot:
                         limit = opts.get('limit')
                         if limit is not None:
                             args_parts.append(str(limit))
+                    elif cmd == 'incident-confirm':
+                        inc_id = opts.get('incident_id', '')
+                        reason = opts.get('reason', '') or ''
+                        args_parts = [inc_id] if inc_id else []
+                        if reason:
+                            args_parts.append(reason)
+                    elif cmd == 'incident-dismiss':
+                        inc_id = opts.get('incident_id', '')
+                        reason = opts.get('reason', '') or ''
+                        args_parts = [inc_id] if inc_id else []
+                        if reason:
+                            args_parts.append(reason)
                     args_str = ' '.join(args_parts)
                     
                     # Handle the command
