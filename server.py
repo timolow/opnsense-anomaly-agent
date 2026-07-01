@@ -4702,10 +4702,12 @@ def api_get_incidents(status=None, ip=None, severity="low", limit=50):
                 "signal_count": row.get("signal_count", 0),
                 "signal_types": row.get("signal_types", []),
                 "sources": row.get("sources", []),
+                "phases": row.get("phases", []),
                 "first_seen": row.get("first_seen"),
                 "last_seen": row.get("last_seen"),
                 "description": row.get("description", ""),
                 "is_active": row.get("is_active", True),
+                "is_escalated": row.get("is_escalated", False),
                 "auto_resolved": row.get("auto_resolved", False),
                 "status": "active" if row.get("is_active", True) else "resolved",
             })
