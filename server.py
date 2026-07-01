@@ -102,12 +102,41 @@ def publish_anomaly_sse(anomaly_data: dict):
     except queue.Full:
         logger.warning("SSE queue full, dropping anomaly event")
 
+
+# ─── Incident SSE Queue (separate from anomaly SSE) ──────────────────
+_incident_sse_queue: queue.Queue = queue.Queue(maxsize=1000)
+_incident_sse_clients: list = []
+_incident_sse_clients_lock = threading_lib.Lock()
+
+
+def publish_incident_sse(incident_data: dict, event_type: str = "incident_updated"):
+    """Publish an incident update to the SSE queue.
+
+    Called by server.py incident-action handlers so frontend
+    threat canvas auto-refreshes on any incident state change.
+    """
+    try:
+        _incident_sse_queue.put_nowait({
+            "type": event_type,
+            "incident_id": incident_data.get("incident_id", incident_data.get("id", "")),
+            "ip": incident_data.get("ip", ""),
+            "severity": incident_data.get("severity", "low"),
+            "status": incident_data.get("status", ""),
+            "action": incident_data.get("action", ""),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    except queue.Full:
+        logger.warning("Incident SSE queue full, dropping event")
+
+
 def sse_background_cleaner():
-    """Background thread to clean up dead SSE connections."""
+    """Background thread to clean up dead SSE connections (both anomaly and incident)."""
     while True:
         time.sleep(60)
         with _sse_clients_lock:
             _sse_clients[:] = [c for c in _sse_clients if c.get("alive", False)]
+        with _incident_sse_clients_lock:
+            _incident_sse_clients[:] = [c for c in _incident_sse_clients if c.get("alive", False)]
 
 try:
     import psycopg2
@@ -3508,6 +3537,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             raise
 
+    # ─── P5-T7: Incident SSE handler ──────────────────────────────────
+    def _handle_incident_sse(self):
+        """Handle incident SSE streaming connection."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        client_id = int(time.time() * 1000000)
+        client_ref = {"alive": True, "client_id": client_id}
+        with _incident_sse_clients_lock:
+            _incident_sse_clients.append(client_ref)
+
+        try:
+            # Send initial connection event
+            self._sse_write(f"event: connected\ndata: {{\"client_id\": {client_id}, \"stream\": \"incidents\"}}\n\n")
+
+            while client_ref["alive"]:
+                try:
+                    data = _incident_sse_queue.get(timeout=5)
+                    if not client_ref["alive"]:
+                        break
+                    self._sse_write(f"event: {data['type']}\ndata: {json.dumps(data, default=str)}\n\n")
+                except queue.Empty:
+                    # Send heartbeat every 5 seconds
+                    self._sse_write(": heartbeat\n\n")
+        except (BrokenPipeError, ConnectionResetError, Exception) as e:
+            logger.debug("Incident SSE client disconnected: %s", e)
+        finally:
+            client_ref["alive"] = False
+            with _incident_sse_clients_lock:
+                if client_ref in _incident_sse_clients:
+                    _incident_sse_clients.remove(client_ref)
+
     # ═══════════════════════════════════════════════
     # Phase 5: Threshold Auto-Tuning API handlers
     # ═══════════════════════════════════════════════
@@ -3974,6 +4039,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # P5-T1: Threat Canvas unified threat intelligence
             elif path == "/api/threat-canvas":
                 self._send_json(api_threat_canvas())
+            # P5-T7: IP timeline endpoint
+            elif path.startswith("/api/ip-timeline"):
+                query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                ip_filter = query.get("ip", [None])[0]
+                range_str = query.get("range", ["1h"])[0]
+                if ip_filter:
+                    self._send_json(api_ip_timeline(ip_filter, range_str))
+                else:
+                    self._send_json({"error": "Missing required query parameter: ip"}, 400)
+            # P5-T7: Incident SSE stream
+            elif path == "/api/incidents/events":
+                self._handle_incident_sse()
             # ML PIVOT: New behavioral ML endpoints (GET)
             elif path == "/api/flow-classifications":
                 self._send_json(api_flow_classifications())
@@ -4080,6 +4157,38 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(result, status_code)
             else:
                 self._send_json({"error": f"Unknown action: {action}"}, 400)
+        elif path == "/api/incident-actions":
+            # Unified incident actions: block, watchlist, mute, feedback, transition, resolve
+            cl = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(cl)
+            data = json.loads(body)
+            action = data.get("action", "")
+            incident_id = data.get("incident_id", "")
+            ip = data.get("ip", "")
+            reason = data.get("reason", "")
+
+            if not action:
+                self._send_json({"error": "Missing required field: action"}, 400)
+                return
+            if not incident_id and not ip:
+                self._send_json({"error": "Provide either incident_id or ip"}, 400)
+                return
+
+            try:
+                result = api_incident_actions(action, incident_id, ip, data)
+                # Broadcast incident update via SSE
+                publish_incident_sse({
+                    "incident_id": incident_id,
+                    "ip": ip,
+                    "action": action,
+                    "severity": result.get("severity", "low"),
+                    "status": result.get("status", ""),
+                }, f"incident_{action}")
+                status_code = result.get("status_code", 200)
+                self._send_json(result, status_code)
+            except Exception as e:
+                logger.error("api_incident_actions failed: %s", e, exc_info=True)
+                self._send_json({"error": str(e)}, 500)
         elif path == "/api/rule-feedback":
             # Submit feedback for a rule classification (P2-2 feedback loop)
             cl = int(self.headers.get("Content-Length", 0))
@@ -5030,6 +5139,314 @@ def api_threat_canvas():
             },
             "data_source_status": "error",
             "empty_message": str(e),
+        }
+
+
+def api_ip_timeline(ip: str, range_str: str = "1h"):
+    """GET /api/ip-timeline?ip=X&range=1h — Timeline events for an IP address.
+
+    Returns normalized_events, behavior signals, and incident history
+    for the given IP within the specified time range.
+
+    Range format: <number><unit> where unit is s/m/h/d (e.g. 1h, 30m, 7d).
+    Default: 1h.
+    """
+    try:
+        import psycopg2.extras
+
+        # Parse range string
+        range_seconds = 3600  # default 1h
+        if range_str:
+            unit = range_str[-1].lower()
+            try:
+                value = int(range_str[:-1])
+            except (ValueError, IndexError):
+                value = 1
+            multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+            range_seconds = value * multipliers.get(unit, 3600)
+
+        range_interval = f"{range_seconds} seconds"
+
+        conn = get_db()
+        if not conn:
+            return {
+                "ip": ip,
+                "range": range_str,
+                "range_seconds": range_seconds,
+                "events": [],
+                "signals": [],
+                "incidents": [],
+                "hostname": None,
+                "profile_threat_level": "unknown",
+                "profile_behavior_score": 0,
+            }
+
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # 1. Fetch normalized events for this IP
+        cur.execute("""
+            SELECT
+                timestamp,
+                source,
+                src_ip,
+                dst_ip,
+                src_port,
+                dst_port,
+                protocol,
+                action,
+                interface,
+                severity,
+                src_hostname,
+                dst_hostname,
+                rule_name,
+                log_type,
+                COALESCE(payload_context->>'description', '') AS description
+            FROM normalized_events
+            WHERE (src_ip = %s OR dst_ip = %s)
+              AND timestamp > NOW() - INTERVAL %s
+            ORDER BY timestamp ASC
+            LIMIT 500
+        """, (ip, ip, range_interval))
+        events = [
+            {
+                "timestamp": r["timestamp"].isoformat() if r["timestamp"] else "",
+                "source": r["source"],
+                "src_ip": r["src_ip"] or "",
+                "dst_ip": r["dst_ip"] or "",
+                "src_port": r["src_port"],
+                "dst_port": r["dst_port"],
+                "protocol": r["protocol"] or "",
+                "action": r["action"] or "",
+                "interface": r["interface"] or "",
+                "severity": r["severity"] or "info",
+                "rule_name": r["rule_name"] or "",
+                "description": r["description"],
+            }
+            for r in cur.fetchall()
+        ]
+
+        # 2. Fetch behavior signals for this IP
+        cur.execute("""
+            SELECT
+                timestamp,
+                source,
+                signal_type,
+                severity,
+                COALESCE(metadata->>'description', '') AS description
+            FROM ip_behavior_signals
+            WHERE ip = %s
+              AND timestamp > NOW() - INTERVAL %s
+            ORDER BY timestamp ASC
+            LIMIT 200
+        """, (ip, range_interval))
+        signals = [
+            {
+                "timestamp": r["timestamp"].isoformat() if r["timestamp"] else "",
+                "source": r["source"],
+                "signal_type": r["signal_type"],
+                "severity": r["severity"],
+                "description": r["description"],
+            }
+            for r in cur.fetchall()
+        ]
+
+        # 3. Fetch incidents for this IP
+        cur.execute("""
+            SELECT
+                id::text AS incident_id,
+                severity,
+                signal_count,
+                signal_types,
+                sources,
+                phases,
+                first_seen,
+                last_seen,
+                description,
+                narrative,
+                is_active,
+                auto_resolved
+            FROM incidents
+            WHERE ip = %s
+            ORDER BY last_seen DESC
+            LIMIT 20
+        """, (ip,))
+        incidents = [
+            {
+                "incident_id": f"inc_{r['incident_id']}",
+                "severity": r["severity"],
+                "signal_count": r["signal_count"],
+                "sources": r["sources"] or [],
+                "phases": r["phases"] or [],
+                "first_seen": r["first_seen"].isoformat() if r["first_seen"] else "",
+                "last_seen": r["last_seen"].isoformat() if r["last_seen"] else "",
+                "description": r["description"] or "",
+                "narrative": r["narrative"] or "",
+                "is_active": r["is_active"],
+                "auto_resolved": r["auto_resolved"],
+            }
+            for r in cur.fetchall()
+        ]
+
+        # 4. Get profile info + hostname
+        profile_threat = "unknown"
+        profile_score = 0
+        hostname = None
+        cur.execute("""
+            SELECT threat_level, behavior_score
+            FROM ip_behavior_profiles
+            WHERE ip = %s
+        """, (ip,))
+        prof = cur.fetchone()
+        if prof:
+            profile_threat = prof["threat_level"]
+            profile_score = prof["behavior_score"]
+
+        cur.execute("""
+            SELECT DISTINCT src_hostname, dst_hostname
+            FROM normalized_events
+            WHERE src_ip = %s OR dst_ip = %s
+            LIMIT 1
+        """, (ip, ip))
+        evt = cur.fetchone()
+        if evt:
+            hostname = evt["src_hostname"] or evt["dst_hostname"]
+
+        cur.close()
+
+        return {
+            "ip": ip,
+            "range": range_str,
+            "range_seconds": range_seconds,
+            "events": events,
+            "signals": signals,
+            "incidents": incidents,
+            "hostname": hostname,
+            "profile_threat_level": profile_threat,
+            "profile_behavior_score": profile_score,
+        }
+
+    except Exception as e:
+        logger.error("api_ip_timeline failed for %s: %s", ip, e, exc_info=True)
+        return {
+            "ip": ip,
+            "range": range_str,
+            "events": [],
+            "signals": [],
+            "incidents": [],
+            "hostname": None,
+            "profile_threat_level": "unknown",
+            "profile_behavior_score": 0,
+            "error": str(e),
+        }
+
+
+def api_incident_actions(action: str, incident_id: str, ip: str, data: dict):
+    """POST /api/incident-actions — Unified incident action handler.
+
+    Supported actions:
+    - block: Block IP in firewall (creates/updates AGENT_BLOCKLIST alias)
+    - watchlist: Add IP to watchlist
+    - mute: Mute alerts for this IP/incident
+    - feedback: Record thumbs_up/thumbs_down feedback
+    - transition: Change incident status (new, investigating, confirmed, resolved, false_positive)
+    - resolve: Mark incident as resolved
+    - escalate: Escalate incident severity
+
+    Returns: {success, message, status_code, ...action-specific fields}
+    """
+    if action == "block":
+        reason = data.get("reason", f"Blocked from incident {incident_id}")
+        target_ip = ip or ""
+        if not target_ip:
+            return {"success": False, "message": "IP required for block action", "status_code": 400}
+        result = block_ip_in_firewall(target_ip, reason)
+        return {
+            "success": result.get("success", False),
+            "message": result.get("message", ""),
+            "ip": target_ip,
+            "action": "block",
+            "status_code": 201 if result.get("success") else 422,
+        }
+
+    elif action == "watchlist":
+        reason = data.get("reason", f"Added from incident {incident_id}")
+        target_ip = ip or ""
+        if not target_ip:
+            return {"success": False, "message": "IP required for watchlist action", "status_code": 400}
+        result = add_to_watchlist(target_ip, reason)
+        return {
+            "success": result.get("success", False),
+            "message": result.get("message", ""),
+            "ip": target_ip,
+            "action": "watchlist",
+            "status_code": 201 if result.get("success") else 409,
+        }
+
+    elif action == "mute":
+        target_ip = ip or ""
+        if not target_ip:
+            return {"success": False, "message": "IP required for mute action", "status_code": 400}
+        duration = int(data.get("duration_seconds", 3600))
+        attack_type = data.get("attack_type", "ALL")
+        mute = add_mute(ip=target_ip, attack_type=attack_type, duration=duration, source="incident_dashboard")
+        return {
+            "success": True,
+            "message": f"Muted {target_ip} for {duration}s",
+            "ip": target_ip,
+            "action": "mute",
+            "mute_id": mute["id"],
+            "status_code": 201,
+        }
+
+    elif action == "feedback":
+        if not incident_id:
+            return {"success": False, "message": "incident_id required for feedback", "status_code": 400}
+        feedback_type = data.get("feedback_type", "thumbs_up")
+        notes = data.get("notes", "")
+        user_id = data.get("user_id", "dashboard")
+        mgr = _get_incident_manager()
+        success, message = mgr.record_feedback(incident_id, feedback_type, notes, user_id)
+        return {
+            "success": success,
+            "message": message,
+            "incident_id": incident_id,
+            "action": "feedback",
+            "status_code": 201 if success else 400,
+        }
+
+    elif action in ("transition", "resolve", "escalate"):
+        if not incident_id:
+            return {"success": False, "message": "incident_id required for transition", "status_code": 400}
+
+        # Map high-level actions to incident states
+        if action == "resolve":
+            new_status = "resolved"
+        elif action == "escalate":
+            # Escalate: move to confirmed or bump severity
+            new_status = "confirmed"
+        else:
+            new_status = data.get("status", "")
+            if not new_status:
+                return {"success": False, "message": "status required for transition action", "status_code": 400}
+
+        reason = data.get("reason", f"Transitioned via incident actions")
+        mgr = _get_incident_manager()
+        success, message = mgr.transition(incident_id, new_status, reason)
+        return {
+            "success": success,
+            "message": message,
+            "incident_id": incident_id,
+            "action": action,
+            "status": new_status,
+            "status_code": 200 if success else 400,
+        }
+
+    else:
+        valid_actions = ["block", "watchlist", "mute", "feedback", "transition", "resolve", "escalate"]
+        return {
+            "success": False,
+            "message": f"Unknown action: {action}. Valid: {', '.join(valid_actions)}",
+            "status_code": 400,
         }
 
 
