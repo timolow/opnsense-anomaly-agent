@@ -14,7 +14,7 @@ import { useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useStore } from '@/store';
 import { api } from '@/api';
-import type { ThreatCanvasData, ThreatCanvasIncident, RecommendedAction, TimelineEvent } from '@/types';
+import type { ThreatCanvasData, ThreatCanvasIncident, RecommendedAction, TimelineEvent, IpTimelineData, IpTimelineEvent } from '@/types';
 import { CYBER, severityStyle } from '@/utils/colors';
 import { ThreatCanvasSkeleton } from '@/components/SkeletonLoaders';
 import { TabQueryError } from '@/components/TabShell';
@@ -366,6 +366,7 @@ export default function ThreatCanvasTab() {
     setThreatCanvasFilterActive,
     threatCanvasFilterThreat,
     setThreatCanvasFilterThreat,
+    timeRange,
   } = useStore();
 
   const { data, isLoading, isError, error, refetch } = useQuery<ThreatCanvasData>({
@@ -386,6 +387,22 @@ export default function ThreatCanvasTab() {
     if (!threatCanvasSelectedId || !data) return null;
     return data.incidents.find(i => i.incident_id === threatCanvasSelectedId) || null;
   }, [threatCanvasSelectedId, data]);
+
+  // Fetch full timeline data from /api/ip-timeline using global time range
+  const { data: timelineData } = useQuery<IpTimelineData>({
+    queryKey: ['ip-timeline', selectedIncident?.ip, timeRange],
+    queryFn: () => api.ipTimeline(selectedIncident!.ip, timeRange),
+    enabled: !!selectedIncident,
+    staleTime: 10_000,
+  });
+
+  // Merge timeline events: prefer /api/ip-timeline events, fall back to incident.timeline
+  const timelineEvents: (TimelineEvent | IpTimelineEvent)[] = useMemo(() => {
+    if (timelineData?.events?.length) {
+      return timelineData.events;
+    }
+    return selectedIncident?.timeline ?? [];
+  }, [timelineData, selectedIncident]);
 
   // Filtered incidents
   const filtered = useMemo(() => {
@@ -530,13 +547,13 @@ export default function ThreatCanvasTab() {
                 IP Timeline
               </h3>
               {selectedIncident && (
-                <span className="text-xs text-cyber-textMuted font-mono">{selectedIncident.timeline.length} events</span>
+                <span className="text-xs text-cyber-textMuted font-mono">{timelineEvents.length} events</span>
               )}
             </div>
             <div className="p-3">
               {selectedIncident ? (
                 <ThreatTimeline
-                  events={selectedIncident.timeline}
+                  events={timelineEvents}
                   ip={selectedIncident.ip}
                   height={420}
                 />
