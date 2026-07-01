@@ -2479,18 +2479,40 @@ def query_health():
 
     # --- Redis ---
     r = get_redis()
+    redis_available = False
     if r:
         try:
             r.ping()
             info = r.info("memory")
             mem_used = info.get("used_memory_human", "unknown")
             subsystems["redis"] = {"status": "connected", "message": f"Memory: {mem_used}"}
+            redis_available = True
         except Exception as e:
             subsystems["redis"] = {"status": "error", "message": str(e)}
             overall_status = "degraded"
     else:
         subsystems["redis"] = {"status": "disconnected", "message": "Redis not available"}
         # Redis is optional for non-critical features
+    
+    # --- Reverse DNS ---
+    rdns_cache = state.get("reverse_dns", {}) if state else {}
+    rdns_cache_size = len(rdns_cache)
+    # Also count live DNS entries in Redis
+    redis_dns_count = 0
+    if redis_available and r:
+        try:
+            keys = r.keys("dns:*")
+            redis_dns_count = len(keys)
+        except Exception:
+            pass
+    subsystems["reverse_dns"] = {
+        "status": "active",
+        "message": f"Caching enabled (default), in-memory={rdns_cache_size}, redis_entries={redis_dns_count}",
+        "cache_ttl": int(os.environ.get("REVERSE_DNS_CACHE_TTL", "3600")),
+        "dns_server": os.environ.get("REVERSE_DNS_SERVER", "system-default"),
+        "cache_size": rdns_cache_size,
+        "redis_entries": redis_dns_count,
+    }
     
     # --- OPNsense API ---
     opn_host = os.environ.get("OPN_HOST", "")
