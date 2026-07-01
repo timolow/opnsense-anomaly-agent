@@ -775,6 +775,7 @@ export interface ThreatCanvasIncident {
   first_seen: string;
   last_seen: string;
   narrative: string;
+  explanation: string;
   timeline: TimelineEvent[];     // chronological events for this IP
   is_active: boolean;
 }

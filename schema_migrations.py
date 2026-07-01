@@ -1271,6 +1271,22 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+    {
+        "version": 29,
+        "description": "Add explanation column to incidents for concise, structured explanations",
+        "sql": [
+            """
+            ALTER TABLE incidents ADD COLUMN IF NOT EXISTS explanation TEXT DEFAULT '';
+            """,
+            """
+            COMMENT ON COLUMN incidents.explanation IS
+                'Concise explanation of why this IP was flagged, auto-generated from signal types and metadata.';
+            """,
+            """
+            ANALYZE incidents;
+            """,
+        ],
+    },
 ]
 
 # =============================================================================

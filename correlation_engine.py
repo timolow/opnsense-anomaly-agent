@@ -463,6 +463,90 @@ class Incident:
 
         return clauses
 
+    def get_explanation(self) -> str:
+        """Generate a concise, human-readable explanation of why this IP was flagged.
+
+        Produces text like:
+            'This IP was flagged because: 15 blocked ports in 2 min (port_scan),
+             5 nginx 404s for admin paths (path_probe),
+             IDS signature ET SCAN Nmap SYN (ids_signature_hit)'
+
+        Returns:
+            Explanation string suitable for API responses, UI display, and alerts.
+        """
+        clauses: List[str] = []
+
+        # ── Firewall / port scan signals ──
+        ports = sorted(self.metadata.get("dst_ports", set()))
+        port_count = len(ports)
+        scan_signals = [st for st in self.signal_types if st in (
+            "port_scan", "vertical_scan", "horizontal_scan",
+            "firewall_port_scan", "multi_port_blocks",
+        )]
+        if scan_signals and port_count:
+            # Duration context
+            duration = self.last_seen - self.first_seen
+            if duration < 60:
+                time_ctx = f"{int(duration)}s"
+            else:
+                time_ctx = f"{int(duration // 60)} min"
+            clauses.append(f"{port_count} blocked ports in {time_ctx} ({scan_signals[0]})")
+
+        # ── Repeated blocks ──
+        if "repeated_blocks" in self.signal_types and not scan_signals:
+            clauses.append(f"{self.signal_count} repeated firewall blocks (repeated_blocks)")
+
+        # ── Nginx / web probe signals ──
+        web_signals = [st for st in self.signal_types if st in (
+            "path_probe", "path_traversal", "http_404_spike", "http_scan",
+            "http_brute_force", "http_ddos", "invalid_ua",
+        )]
+        if web_signals:
+            for ws in web_signals:
+                if ws == "http_404_spike" or ws == "path_probe":
+                    clauses.append(f"web path scanning / 404 generation ({ws})")
+                elif ws == "path_traversal":
+                    clauses.append(f"path traversal attempts ({ws})")
+                elif ws == "http_brute_force":
+                    clauses.append(f"brute force login attempts ({ws})")
+                elif ws == "http_ddos":
+                    clauses.append(f"HTTP flood detected ({ws})")
+                elif ws == "invalid_ua":
+                    clauses.append(f"suspicious user agents ({ws})")
+                elif ws == "http_scan":
+                    clauses.append(f"web service scanning ({ws})")
+                break  # Just the most specific one
+
+        # ── IDS signature hits ──
+        ids_signals = [st for st in self.signal_types if st.startswith("ids_")]
+        if ids_signals:
+            for ids_sig in ids_signals:
+                if ids_sig == "ids_signature_hit":
+                    clauses.append(f"IDS signature match (ids_signature_hit)")
+                else:
+                    clauses.append(f"IDS alert ({ids_sig})")
+
+        # ── Behavioral anomaly signals ──
+        anomaly_signals = [st for st in self.signal_types if st.startswith("anomaly_") or st.startswith("deviation_")]
+        if anomaly_signals:
+            clauses.append(f"behavioral anomaly detected ({anomaly_signals[0]})")
+
+        # ── Attack signals ──
+        attack_signals = [st for st in self.signal_types if st in (
+            "syn_flood", "brute_force", "http_attack", "block_spike",
+        )]
+        if attack_signals:
+            clauses.append(f"active attack indicators ({', '.join(attack_signals[:2])})")
+
+        # ── Fallback: list all signal types if no specific clauses built ──
+        if not clauses:
+            signal_summary = ", ".join(sorted(self.signal_types)[:4])
+            if len(self.signal_types) > 4:
+                signal_summary += f" (+{len(self.signal_types) - 4} more)"
+            clauses.append(signal_summary)
+
+        return f"This IP was flagged because: {'; '.join(clauses)}"
+
     def get_affected_targets(self) -> List[str]:
         """Get list of affected target IPs/ports."""
         targets = []
@@ -537,6 +621,7 @@ class Incident:
             "auto_resolved": self.auto_resolved,
             "description": self.get_description(),
             "narrative": self.get_narrative(dns_resolver),
+            "explanation": self.get_explanation(),
             "affected_targets": self.get_affected_targets(),
             "related_ips": sorted(self.get_related_ips()),
             "chain_timeline": self.chain_timeline,
@@ -972,31 +1057,37 @@ class CorrelationEngine:
             if row:
                 # Update existing
                 narrative_text = incident.get_narrative()
+                explanation_text = incident.get_explanation()
                 cur.execute(
                     """UPDATE incidents SET
                        severity = %s, signal_count = %s, signal_types = %s::text[],
                        sources = %s::text[], phases = %s::text[],
                        last_seen = to_timestamp(%s),
-                       description = %s, narrative = %s, metadata = %s::jsonb
+                       description = %s, narrative = %s, explanation = %s,
+                       metadata = %s::jsonb
                        WHERE id = %s""",
                     (incident.severity, incident.signal_count,
                      signal_types, sources, phases,
                      incident.last_seen, incident.get_description(),
-                     narrative_text, metadata, row[0]),
+                     narrative_text, explanation_text, metadata, row[0]),
                 )
             else:
                 # Insert new
                 narrative_text = incident.get_narrative()
+                explanation_text = incident.get_explanation()
                 cur.execute(
                     """INSERT INTO incidents
                        (ip, severity, signal_count, signal_types, sources,
-                        phases, first_seen, last_seen, description, narrative, metadata)
+                        phases, first_seen, last_seen, description, narrative,
+                        explanation, metadata)
                        VALUES (%s, %s, %s, %s::text[], %s::text[], %s::text[],
-                               to_timestamp(%s), to_timestamp(%s), %s, %s, %s::jsonb)""",
+                               to_timestamp(%s), to_timestamp(%s), %s, %s,
+                               %s, %s::jsonb)""",
                     (incident.ip, incident.severity, incident.signal_count,
                      signal_types, sources, phases,
                      incident.first_seen, incident.last_seen,
-                     incident.get_description(), narrative_text, metadata),
+                     incident.get_description(), narrative_text,
+                     explanation_text, metadata),
                 )
             cur.close()
 

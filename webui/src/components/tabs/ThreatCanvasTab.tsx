@@ -173,6 +173,10 @@ function IncidentRow({ incident, isSelected, onClick }: { incident: ThreatCanvas
         {incident.narrative && (
           <p className="text-xs text-cyber-textMuted mt-1 truncate">{incident.narrative}</p>
         )}
+        {/* Explanation preview */}
+        {incident.explanation && (
+          <p className="text-xs text-cyber-accent/70 mt-0.5 truncate">{incident.explanation}</p>
+        )}
       </div>
 
       {/* Right column: stats */}
@@ -290,6 +294,14 @@ function IpDrillDown({ incident }: { incident: ThreatCanvasIncident }) {
         <div className="rounded-lg border border-cyber-accent/20 bg-cyber-accent/5 p-3">
           <h4 className="text-xs text-cyber-accent uppercase tracking-wider mb-1 font-semibold">Narrative</h4>
           <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.narrative}</p>
+        </div>
+      )}
+
+      {/* Explanation */}
+      {incident.explanation && (
+        <div className="rounded-lg border border-cyber-purple/20 bg-cyber-purple/5 p-3">
+          <h4 className="text-xs text-cyber-purple uppercase tracking-wider mb-1 font-semibold">Why Flagged</h4>
+          <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.explanation}</p>
         </div>
       )}
 

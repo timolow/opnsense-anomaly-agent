@@ -33,6 +33,7 @@ interface IncidentDetail {
   last_seen: string;
   description: string;
   narrative: string;
+  explanation: string;
   metadata: Record<string, any>;
   is_active: boolean;
   auto_resolved: boolean;
@@ -51,6 +52,7 @@ interface Incident {
   last_seen: string;
   description: string;
   narrative: string;
+  explanation: string;
   metadata: Record<string, any>;
   is_active: boolean;
   auto_resolved: boolean;
@@ -168,6 +170,14 @@ function IncidentDetailModal({ incident, onClose }: { incident: IncidentDetail; 
             <div className="rounded-lg border border-cyber-accent/20 bg-cyber-accent/5 p-4">
               <h4 className="text-xs text-cyber-accent uppercase tracking-wider mb-2 font-semibold">Incident Narrative</h4>
               <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.narrative}</p>
+            </div>
+          )}
+
+          {/* Explanation */}
+          {incident.explanation && (
+            <div className="rounded-lg border border-cyber-purple/20 bg-cyber-purple/5 p-4">
+              <h4 className="text-xs text-cyber-purple uppercase tracking-wider mb-2 font-semibold">Why Flagged</h4>
+              <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.explanation}</p>
             </div>
           )}
 

@@ -4886,6 +4886,7 @@ def api_get_incidents(status=None, ip=None, severity="low", limit=50):
                 "last_seen": row.get("last_seen"),
                 "description": row.get("description", ""),
                 "narrative": row.get("narrative", ""),
+                "explanation": row.get("explanation", ""),
                 "is_active": row.get("is_active", True),
                 "is_escalated": row.get("is_escalated", False),
                 "auto_resolved": row.get("auto_resolved", False),
@@ -5014,6 +5015,7 @@ def api_threat_canvas():
                 i.last_seen,
                 i.description,
                 i.narrative,
+                i.explanation,
                 i.is_active,
                 i.auto_resolved,
                 COALESCE(p.behavior_score, 0) AS behavior_score,
@@ -5101,6 +5103,7 @@ def api_threat_canvas():
                 "first_seen": row["first_seen"].isoformat() if row["first_seen"] else "",
                 "last_seen": row["last_seen"].isoformat() if row["last_seen"] else "",
                 "narrative": row["narrative"] or row["description"] or "",
+                "explanation": row.get("explanation") or "",
                 "timeline": timeline,
                 "is_active": row["is_active"],
             })
