@@ -680,6 +680,20 @@ class OPNsenseAgent:
         self.signal_bus.subscribe("all", _on_signal)
         logger.info("Signal bus subscribed: _on_signal callback registered for correlation engine")
 
+        # Incident alert callback — send Discord alerts for escalated/high-severity incidents
+        def _on_incident(incident):
+            # Only alert on escalated incidents, high+ severity, or multi-phase chains
+            if not (incident.is_escalated or incident.severity in ("high", "critical") or len(incident.phases) >= 2):
+                return
+            inc_dict = incident.to_dict()
+            if self.discord_bot:
+                try:
+                    self.discord_bot.send_incident_alert(inc_dict)
+                except Exception as e:
+                    logger.error("Failed to send Discord incident alert: %s", e)
+        self.correlation_engine.on_incident_created(_on_incident)
+        logger.info("Correlation engine incident callback registered for Discord alerts")
+
         # Auto-resolve stale incidents every 5 minutes via maintenance thread
         # (wired below in _start_maintenance_thread)
 

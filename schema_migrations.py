@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 26
+CURRENT_SCHEMA_VERSION = 28
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -1252,6 +1252,22 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
             """
             ANALYZE incident_groups;
+            """,
+        ],
+    },
+    {
+        "version": 28,
+        "description": "Add narrative column to incidents for human-readable incident descriptions",
+        "sql": [
+            """
+            ALTER TABLE incidents ADD COLUMN IF NOT EXISTS narrative TEXT DEFAULT '';
+            """,
+            """
+            COMMENT ON COLUMN incidents.narrative IS
+                'Human-readable narrative description of the incident activity and context.';
+            """,
+            """
+            ANALYZE incidents;
             """,
         ],
     },
