@@ -112,7 +112,7 @@ interface AppState {
 }
 
 const DEFAULT_TABS = [
-  'overview', 'heatmap', 'traffic', 'behavioral-overview', 'ip-profiles', 'flow-classification',
+  'threat-canvas', 'overview', 'heatmap', 'traffic', 'behavioral-overview', 'ip-profiles', 'flow-classification',
   'incident-timeline', 'behavioral-baselines', 'alerts', 'rules-classified',
   'network', 'wan-flap', 'logs', 'services', 'settings',
 ];
@@ -120,7 +120,7 @@ const DEFAULT_TABS = [
 const persistedSidebar = loadSidebarState();
 
 export const useStore = create<AppState>((set) => ({
-  activeTab: 'overview',
+  activeTab: 'threat-canvas',
   setActiveTab: (tab) => set({ activeTab: tab }),
   sidebarCollapsed: persistedSidebar.sidebarCollapsed,
   toggleSidebar: () => set((s) => {
