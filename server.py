@@ -243,7 +243,7 @@ def _ttl_set(key: str, value: Any, ttl_seconds: int):
         _ttl_cache[key] = (value, time.time() + ttl_seconds)
 
 def _get_db_once():
-    conn_str = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASS}"
+    conn_str = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASS} connect_timeout=3"
     for attempt in range(3):
         try:
             return psycopg2.connect(conn_str)
@@ -3030,7 +3030,7 @@ def query_nginx_summary():
                 'status_ok': 0, 'status_client_err': 0, 'status_server_err': 0,
                 'unique_ips': 0, 'top_ips': [], 'top_paths': [],
                 'not_found_404': 0, 'anomalies_by_type': {},
-                'data_source_status': 'configured',
+                'data_source_status': 'no_data',
                 'empty_message': 'No HTTP/HTTPS traffic (port 80/443) detected in firewall logs in last 24h.',
             }
 
