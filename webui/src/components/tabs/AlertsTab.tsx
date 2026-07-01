@@ -8,6 +8,7 @@ import { ShieldAlert, Ban, Shield, Eye, Search, Filter, X } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { AlertsData, MutesData, ZenArmorData, IdsData } from '@/types';
+import { format_ip } from '@/utils/formatIp';
 import { useStore } from '../../store';
 
 import { AlertsSkeleton } from '../../components/SkeletonLoaders';
@@ -130,8 +131,8 @@ function AlertsView() {
                     <td className="text-cyber-textMuted">{alert.timestamp}</td>
                     <td><span className={`cyber-badge ${severityColor(alert.severity)}`}>{alert.severity}</span></td>
                     <td className={`font-semibold ${alert.severity === 'CRITICAL' ? 'text-cyber-red' : alert.severity === 'HIGH' ? 'text-cyber-orange' : alert.severity === 'MEDIUM' ? 'text-cyber-yellow' : 'text-cyber-green'}`}>{alert.type}</td>
-                    <td className="font-mono">{alert.source_ip}</td>
-                    <td className="font-mono">{alert.destination_ip}</td>
+                    <td className="font-mono">{format_ip(alert.source_ip, alert.src_hostname)}</td>
+                    <td className="font-mono">{format_ip(alert.destination_ip, alert.dst_hostname)}</td>
                     <td className="max-w-xs truncate text-cyber-textMuted">{alert.details}</td>
                   </tr>
                 ))}

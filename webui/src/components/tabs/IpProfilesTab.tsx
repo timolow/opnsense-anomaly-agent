@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { BehaviorProfile, BehaviorLevel } from '@/types';
 import { CYBER } from '@/utils/colors';
+import { format_ip } from '@/utils/formatIp';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
 import { IpProfilesSkeleton } from '@/components/SkeletonLoaders';
 import {
@@ -150,7 +151,7 @@ function ProfileCard({ profile }: { profile: BehaviorProfile }) {
           <div className="flex items-center gap-3">
             <LevelIcon size={20} style={{ color: levelStyle.main }} />
             <div>
-              <span className="font-mono font-bold text-base" style={{ color: CYBER.text }}>{profile.ip}</span>
+              <span className="font-mono font-bold text-base" style={{ color: CYBER.text }}>{format_ip(profile.ip, profile.hostname)}</span>
               <span className={`ml-2 px-2 py-0.5 text-xs rounded-full font-semibold ${levelStyle.badge}`}>
                 {level.toUpperCase()}
               </span>

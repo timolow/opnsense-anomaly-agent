@@ -10,6 +10,7 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { api } from '@/api';
+import { format_ip } from '@/utils/formatIp';
 import type { IpFlowData } from '@/types';
 import { NETWORK, networkColor, CYBER, RECHARTS_TOOLTIP } from '@/utils/colors';
 import {
@@ -361,7 +362,7 @@ function TopSourcesTable({ stats }: { stats: any }) {
             {sources.map((source: any, i: number) => (
               <tr key={i} className="border-b border-cyber-border/30 hover:bg-cyber-panelHover">
                 <td className="py-2 px-3 text-cyber-text">
-                  {source.ip || '0.0.0.0'}
+                  {format_ip(source.ip, source.src_hostname || null) || '0.0.0.0'}
                 </td>
                 <td className="py-2 px-3 text-right text-cyber-accent">
                   {(source.count || 0).toLocaleString()}
