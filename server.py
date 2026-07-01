@@ -7715,6 +7715,32 @@ def query__rule_action_breakdown(hours=24, limit=30):
         print(f"Rule action breakdown query failed: {e}")
         return {"rules": []}
 
+def _prewarm_cache():
+    """Pre-warm Redis cache for expensive endpoints on startup.
+    Runs in background thread so it does not block server startup.
+    """
+    import time as _time
+    # Wait for server to be ready
+    _time.sleep(5)
+    cache_endpoints = [
+        "/api/stats",
+        "/api/heatmap?hours=24",
+        "/api/ip-flow",
+        "/api/events?limit=100&offset=0",
+        "/api/alerts",
+        "/api/behavior-overview",
+    ]
+    for ep in cache_endpoints:
+        try:
+            import urllib.request as _ur
+            url = f"http://127.0.0.1:{os.getenv('DASHBOARD_PORT', '8766')}{ep}"
+            _ur.urlopen(url, timeout=60)
+        except Exception as e:
+            print(f"[WARN] Cache pre-warm failed for {ep}: {e}")
+        _time.sleep(1)
+    print("[OK] Cache pre-warming complete")
+
+
 def run_server(host=None, port=8766):
     """Run the dashboard HTTP server.
 
@@ -7733,6 +7759,11 @@ def run_server(host=None, port=8766):
     sse_cleaner = threading_lib.Thread(target=sse_background_cleaner, daemon=True)
     sse_cleaner.start()
     logger.info("SSE background cleaner started")
+
+    # Pre-warm Redis cache in background
+    prewarm_thread = threading_lib.Thread(target=_prewarm_cache, daemon=True)
+    prewarm_thread.start()
+    logger.info("Cache pre-warming thread started")
 
     global _server_instance
     try:
