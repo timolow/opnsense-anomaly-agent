@@ -4243,7 +4243,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 profile_ip = path[len("/api/behavior-profiles/"):]
                 self._send_json(api_behavior_profile_by_ip(profile_ip))
             elif path == "/api/behavior-overview":
-                self._send_json(api_behavior_overview())
+                redis_client = get_redis()
+                cache_key = "api:behavior-overview"
+                force_refresh = "force" in urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = api_behavior_overview()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path == "/api/feedback-history":
                 query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 ip_filter = query.get("ip", [None])[0]

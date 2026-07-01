@@ -163,7 +163,7 @@ export default function HeatmapTab() {
     }
 
     // Draw IP labels (left column)
-    const hostnames = data.hostnames_y || [];
+    const hostnames = (data?.hostnames || data?.hostnames_y || [])
     ctx.fillStyle = CYBER.textMuted;
     ctx.font = '9px monospace';
     ctx.textAlign = 'right';
