@@ -3827,7 +3827,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/stats":
-                self._send_json(query_stats())
+                redis_client = get_redis()
+                cache_key = "api:stats"
+                force_refresh = "force" in urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_stats()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             # ═══════════════════════════════════════════════
             # -style visualizations (read from PostgreSQL)
             # ═══════════════════════════════════════════════
@@ -3855,7 +3869,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/rule-actions":
                 self._send_json(query__rule_action_breakdown())
             elif path == "/api/heatmap":
-                self._send_json(query_heatmap())
+                redis_client = get_redis()
+                heatmap_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                hours = heatmap_query.get("hours", ["24"])[0]
+                cache_key = f"api:heatmap:{hours}"
+                force_refresh = "force" in heatmap_query
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_heatmap()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path == "/api/ip-flow":
                 ip_flow_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 ip_version = ip_flow_query.get("ip_version", [None])[0]
