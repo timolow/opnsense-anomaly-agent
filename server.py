@@ -2473,7 +2473,7 @@ def query_health():
                     cur.execute("""
                         SELECT count(*)
                         FROM timescaledb_information.chunks
-                        WHERE table_name = 'normalized_events'
+                        WHERE hypertable_name = 'normalized_events'
                     """)
                     ts_info["chunks"] = cur.fetchone()[0]
                     # Version info
@@ -6950,7 +6950,7 @@ def api_pipeline_health():
                     if ht:
                         cur.execute("""
                             SELECT count(*) FROM timescaledb_information.chunks
-                            WHERE table_name = 'normalized_events'
+                            WHERE hypertable_name = 'normalized_events'
                         """)
                         ts_info["chunks"] = cur.fetchone()[0]
                         cur.execute("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")

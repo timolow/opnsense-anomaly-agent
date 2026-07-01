@@ -1786,7 +1786,7 @@ def _v21_convert_hypertable(conn: Any):
             cur.execute("""
                 SELECT count(*), min(range_start), max(range_end)
                 FROM timescaledb_information.chunks
-                WHERE table_name = 'normalized_events'
+                WHERE hypertable_name = 'normalized_events'
             """)
             chunk_row = cur.fetchone()
             if chunk_row:

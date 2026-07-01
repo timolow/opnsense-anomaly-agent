@@ -22,3 +22,9 @@
 [2026-06-30 02:00:05] ERROR: PostgreSQL container 'anomaly-postgres' is not running
 [2026-06-30 02:00:05] Status updated: failed - Backup failed
 [2026-06-30 02:00:05] DISCORD_WEBHOOK_URL not set; skipping Discord alert
+[2026-07-01 02:00:05] Starting backup of opnsense...
+[2026-07-01 02:00:05] Status updated: running - Backup in progress...
+/Users/timolow/opnsense-anomaly-agent/scripts/backup_db.sh: line 130: docker: command not found
+[2026-07-01 02:00:05] ERROR: PostgreSQL container 'anomaly-postgres' is not running
+[2026-07-01 02:00:05] Status updated: failed - Backup failed
+[2026-07-01 02:00:05] DISCORD_WEBHOOK_URL not set; skipping Discord alert
