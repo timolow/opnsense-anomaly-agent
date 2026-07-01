@@ -3808,16 +3808,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         pass
                 self._send_json(result)
             elif path == "/api/ip-flow":
+                redis_client = get_redis()
                 ip_flow_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 ip_version = ip_flow_query.get("ip_version", [None])[0]
-                self._send_json(query_ip_flow(ip_version=ip_version))
+                cache_key = f"api:ip-flow:{ip_version or 'all'}"
+                force_refresh = "force" in ip_flow_query
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_ip_flow(ip_version=ip_version or "")
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path == "/api/ip-flow-clusters":
                 cluster_query = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
                 expand = cluster_query.get("expand", [None])[0]
                 threshold = int(cluster_query.get("threshold", ["0"])[0] or "0")
                 self._send_json(query_ip_flow_clusters(expand_cluster=expand, edge_threshold=threshold))
             elif path == "/api/events":
-                self._send_json(query_events())
+                redis_client = get_redis()
+                cache_key = "api:events"
+                force_refresh = "force" in urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_events()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path == "/api/mutes":
                 self._send_json(load_mutes())
             elif path == "/api/geo":
@@ -3837,9 +3865,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/version":
                 self._send_json(query_version())
             elif path == "/api/alerts":
-                self._send_json(query_alerts())
+                redis_client = get_redis()
+                cache_key = "api:alerts"
+                force_refresh = "force" in urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_alerts()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path == "/api/anomalies":
-                self._send_json(query_anomalies())
+                redis_client = get_redis()
+                cache_key = "api:anomalies"
+                force_refresh = "force" in urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_anomalies()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path.startswith("/api/ip-detail/"):
                 ip = urllib.parse.unquote(path.split("/api/ip-detail/")[-1])
                 if ip:
@@ -4029,7 +4085,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # DNS query monitoring
             # ═══════════════════════════════════════════════
             elif path == "/api/dns-queries":
-                self._send_json(query_dns_queries())
+                redis_client = get_redis()
+                cache_key = "api:dns-queries"
+                force_refresh = "force" in urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+                if redis_client and not force_refresh:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        self._send_json(json.loads(cached))
+                        return
+                result = query_dns_queries()
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, _CACHE_TTL, json.dumps(result))
+                    except Exception:
+                        pass
+                self._send_json(result)
             elif path == "/api/wan-flap":
                 self._send_json(query_wan_flaps())
             elif path == "/api/wan-flap-status":
