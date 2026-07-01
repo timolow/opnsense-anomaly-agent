@@ -685,7 +685,27 @@ class OPNsenseAgent:
             # Only alert on escalated incidents, high+ severity, or multi-phase chains
             if not (incident.is_escalated or incident.severity in ("high", "critical") or len(incident.phases) >= 2):
                 return
-            inc_dict = incident.to_dict()
+
+            # Enrich with DNS name
+            dns_name = None
+            if self.reverse_dns and self.reverse_dns.enabled:
+                try:
+                    dns_name = self.reverse_dns.lookup(incident.ip)
+                except Exception:
+                    pass
+
+            # Enrich with behavioral score
+            behavioral_score = None
+            if self.behavior_profiler:
+                try:
+                    behavioral_score = self.behavior_profiler.get_behavioral_score(incident.ip)
+                except Exception:
+                    pass
+
+            inc_dict = incident.to_dict(dns_resolver=self.reverse_dns if self.reverse_dns.enabled else None)
+            inc_dict['dns_name'] = dns_name
+            inc_dict['behavioral_score'] = behavioral_score
+
             if self.discord_bot:
                 try:
                     self.discord_bot.send_incident_alert(inc_dict)
