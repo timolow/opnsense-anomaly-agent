@@ -539,6 +539,7 @@ export interface NginxAnomaly {
   attack_type: string;
   severity: string;
   src_ip: string;
+  src_hostname?: string | null;
   path?: string;
   status_code?: number;
   description: string;

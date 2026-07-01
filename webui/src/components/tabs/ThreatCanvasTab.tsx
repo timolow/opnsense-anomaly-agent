@@ -10,7 +10,8 @@
 // Uses Canvas 2D for timeline chart.
 // ═══════════════════════════════════════════════════
 
-import { useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { format_ip } from '@/utils/formatIp';
 import { useQuery } from '@tanstack/react-query';
 import { useStore } from '@/store';
 import { api } from '@/api';
@@ -148,10 +149,7 @@ function IncidentRow({ incident, isSelected, onClick }: { incident: ThreatCanvas
       {/* IP + hostname */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-sm font-bold text-cyber-text">{incident.ip}</span>
-          {incident.src_hostname && (
-            <span className="text-xs text-cyber-accent/80 font-mono truncate">({incident.src_hostname})</span>
-          )}
+          <span className="font-mono text-sm font-bold text-cyber-text">{format_ip(incident.ip, incident.src_hostname)}</span>
         </div>
         <div className="flex flex-wrap gap-1 mt-1">
           {incident.sources.map(src => (
@@ -232,10 +230,7 @@ function IpDrillDown({ incident }: { incident: ThreatCanvasIncident }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
-          <h3 className="font-mono text-lg font-bold text-cyber-text">{incident.ip}</h3>
-          {incident.src_hostname && (
-            <span className="text-sm text-cyber-accent font-mono">({incident.src_hostname})</span>
-          )}
+          <h3 className="font-mono text-lg font-bold text-cyber-text">{format_ip(incident.ip, incident.src_hostname)}</h3>
           {incident.dst_hostname && (
             <span className="text-xs text-cyber-textMuted">→ {incident.dst_hostname}</span>
           )}

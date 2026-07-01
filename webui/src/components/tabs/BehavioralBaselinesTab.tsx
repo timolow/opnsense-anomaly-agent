@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CYBER, severityStyle } from '@/utils/colors';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
+import { format_ip } from '@/utils/formatIp';
 import { BehavioralBaselinesSkeleton } from '@/components/SkeletonLoaders';
 import {
   Activity, TrendingUp, TrendingDown, AlertTriangle, Clock,
@@ -21,6 +22,7 @@ interface SignalBusStats {
   by_severity: Record<string, number>;
   recent: Array<{
     ip: string;
+    hostname?: string | null;
     signal_type: string;
     source: string;
     severity: string;
@@ -121,7 +123,7 @@ function RecentSignals({ signals }: { signals: SignalBusStats['recent'] }) {
               <span className="w-16 text-left" style={{ color: style.color }}>{s.severity}</span>
               <span className="text-cyber-accent truncate">{s.signal_type}</span>
               <span className="text-cyber-textMuted">[{s.source}]</span>
-              <span className="text-cyber-text truncate">{s.ip}</span>
+              <span className="text-cyber-text truncate">{format_ip(s.ip, s.hostname)}</span>
               <span className="text-cyber-textMuted ml-auto flex-shrink-0">
                 {s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : ''}
               </span>
