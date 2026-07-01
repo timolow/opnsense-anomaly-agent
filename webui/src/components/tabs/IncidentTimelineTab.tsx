@@ -4,6 +4,7 @@
 // visualization, detail view, and severity sorting.
 // ═══════════════════════════════════════════════════
 
+import { format_ip } from '@/utils/formatIp';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CYBER, severityStyle } from '@/utils/colors';
@@ -122,7 +123,7 @@ function IncidentRow({ incident, onSelect }: { incident: Incident; onSelect: (id
       }}>
         {incident.severity}
       </span>
-      <span className="font-mono text-sm font-bold text-cyber-text">{incident.ip}</span>
+      <span className="font-mono text-sm font-bold text-cyber-text">{format_ip(incident.ip)}</span>
       <span className="text-xs text-cyber-textMuted font-mono ml-auto hidden lg:inline">{incident.signal_count} signals</span>
       <span className="text-xs text-cyber-textMuted font-mono hidden lg:inline">{incident.sources?.length || 0} sources</span>
       {incident.auto_resolved && <span className="text-xs text-cyber-textMuted line-through">auto-resolved</span>}
@@ -145,7 +146,7 @@ function IncidentDetailModal({ incident, onClose }: { incident: IncidentDetail; 
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: style.color, boxShadow: `0 0 8px ${style.color}` }} />
             <h3 className="text-lg font-bold text-gradient-cyber">Incident #{incident.id}</h3>
-            <span className="font-mono font-bold text-lg" style={{ color: style.color }}>{incident.ip}</span>
+            <span className="font-mono font-bold text-lg" style={{ color: style.color }}>{format_ip(incident.ip)}</span>
           </div>
           <button onClick={onClose} className="text-cyber-textMuted hover:text-cyber-text">
             <X size={20} />

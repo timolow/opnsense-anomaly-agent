@@ -2,6 +2,7 @@
 // IP Flow Tab - Detailed IP communication table
 // ═══════════════════════════════════════════════════
 
+import { format_ip } from '@/utils/formatIp';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { IpFlowData } from '@/types';
@@ -78,10 +79,13 @@ export default function IpFlowTab() {
                 </td>
               </tr>
             ) : (
-              sorted.map((edge, i) => (
+              sorted.map((edge, i) => {
+                const srcNode = data.nodes.find(n => n.id === edge.source);
+                const dstNode = data.nodes.find(n => n.id === edge.target);
+                return (
                 <tr key={i}>
-                  <td className="font-mono">{edge.source}</td>
-                  <td className="font-mono">{edge.target}</td>
+                  <td className="font-mono">{format_ip(edge.source, srcNode?.hostname)}</td>
+                  <td className="font-mono">{format_ip(edge.target, dstNode?.hostname)}</td>
                   <td>
                     <div className="flex items-center gap-2">
                       <div className="cyber-progress-track w-24">
@@ -99,7 +103,8 @@ export default function IpFlowTab() {
                     </span>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table></div>

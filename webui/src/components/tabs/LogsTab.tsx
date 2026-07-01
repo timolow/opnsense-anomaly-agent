@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { FileText, Search, Database, Filter, ChevronDown, ChevronUp } from 'lucide-react';
+import { format_ip } from '@/utils/formatIp';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { EventsData, DnsQueryData } from '@/types';
@@ -129,8 +130,8 @@ function SyslogsView() {
                       </span>
                     </td>
                     <td className="font-mono">{event.proto || '-'}</td>
-                    <td className="font-mono">{event.src_ip || '-'}</td>
-                    <td className="font-mono">{event.dst_ip || '-'}</td>
+                    <td className="font-mono">{format_ip(event.src_ip, (event as any).src_hostname)}</td>
+                    <td className="font-mono">{format_ip(event.dst_ip, (event as any).dst_hostname)}</td>
                     <td className="font-mono text-xs">{event.interface || '-'}</td>
                     <td className="max-w-[150px] truncate font-mono">{event.rule_name || '-'}</td>
                     <td className="max-w-[300px] truncate font-mono text-cyber-textMuted">
@@ -385,8 +386,8 @@ function QueryLogsView() {
                         </span>
                       </td>
                       <td className="font-mono">{log.proto?.toUpperCase()}</td>
-                      <td className="font-mono">{log.src_ip}</td>
-                      <td className="font-mono">{log.dst_ip}</td>
+                      <td className="font-mono">{format_ip(log.src_ip, log.src_hostname)}</td>
+                      <td className="font-mono">{format_ip(log.dst_ip, log.dst_hostname)}</td>
                       <td className="font-mono">{log.dst_port ?? '-'}</td>
                       <td className="font-mono text-xs">{log.rule_name || '-'}</td>
                     </tr>

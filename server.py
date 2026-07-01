@@ -694,21 +694,31 @@ def query_heatmap():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT src_ip, EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as event_count
+            SELECT src_ip, MAX(src_hostname) as src_hostname,
+                   EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as event_count
             FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY src_ip, EXTRACT(HOUR FROM timestamp)
             ORDER BY src_ip, hour
         """)
         rows = cur.fetchall()
         ip_hour = defaultdict(lambda: defaultdict(int))
+        ip_hostname: dict = {}
         for row in rows:
             ip = row["src_ip"] or "0.0.0.0"
             hour = int(row["hour"])
             ip_hour[ip][hour] += row["event_count"]
+            if row["src_hostname"]:
+                ip_hostname[ip] = row["src_hostname"]
         ip_totals = {ip: sum(hours.values()) for ip, hours in ip_hour.items()}
         sorted_ips = sorted(ip_totals.keys(), key=lambda x: ip_totals[x], reverse=True)[:50]
         matrix = [[ip_hour[ip].get(h, 0) for h in range(24)] for ip in sorted_ips]
-        return {"labels_x": [f"{h:02d}:00" for h in range(24)], "labels_y": sorted_ips, "data": matrix, "total_events": sum(sum(row) for row in matrix)}
+        return {
+            "labels_x": [f"{h:02d}:00" for h in range(24)],
+            "labels_y": sorted_ips,
+            "hostnames_y": [ip_hostname.get(ip) for ip in sorted_ips],
+            "data": matrix,
+            "total_events": sum(sum(row) for row in matrix)
+        }
     except Exception as e:
         print(f"Heatmap query failed: {e}")
         return _fallback_heatmap()
@@ -744,7 +754,8 @@ def query_ip_flow(ip_version: str = None):
             ip_filter = " AND (src_ip LIKE '%:%' OR (src_ip NOT LIKE '%.%.%.%' AND src_ip != ''))"
 
         cur.execute("""
-            SELECT src_ip, dst_ip, COUNT(*) as connection_count,
+            SELECT src_ip, dst_ip, MAX(src_hostname) as src_hostname, MAX(dst_hostname) as dst_hostname,
+                   COUNT(*) as connection_count,
                    ARRAY_AGG(DISTINCT dst_port) as ports,
                    ARRAY_AGG(DISTINCT interface) as interfaces
             FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
@@ -766,6 +777,7 @@ def query_ip_flow(ip_version: str = None):
         iface_rows = cur.fetchall()
         iface_by_ip = defaultdict(set)
         for row in iface_rows: iface_by_ip[row["src_ip"]].add(row["interface"])
+        hostname_by_ip: dict = {}
         nodes = []
         node_map = {}
         colors = {"WAN": "#ef4444", "LAN": "#22c55e", "VPN": "#a855f7", "SOURCE": "#3b82f6", "TARGET": "#f59e0b", "UNKNOWN": "#6b7280"}
@@ -774,17 +786,19 @@ def query_ip_flow(ip_version: str = None):
             src_ip = row["src_ip"] or "0.0.0.0"
             dst_ip = row["dst_ip"] or "0.0.0.0"
             count = row["connection_count"]
+            if row["src_hostname"]: hostname_by_ip[src_ip] = row["src_hostname"]
+            if row["dst_hostname"]: hostname_by_ip[dst_ip] = row["dst_hostname"]
             if src_ip not in node_map:
                 src_iface = iface_by_ip.get(src_ip, set())
                 src_cat = classify_interface(list(src_iface)[0] if src_iface else None)
                 if src_cat == "UNKNOWN": src_cat = "SOURCE"
-                nodes.append({"id": src_ip, "label": src_ip, "category": src_cat, "color": colors.get(src_cat, "#3b82f6"), "size": min(6 + count, 24)})
+                nodes.append({"id": src_ip, "label": src_ip, "hostname": hostname_by_ip.get(src_ip), "category": src_cat, "color": colors.get(src_cat, "#3b82f6"), "size": min(6 + count, 24)})
                 node_map[src_ip] = len(nodes) - 1
             if dst_ip not in node_map:
                 dst_iface = iface_by_ip.get(dst_ip, set())
                 dst_cat = classify_interface(list(dst_iface)[0] if dst_iface else None)
                 if dst_cat == "UNKNOWN": dst_cat = "TARGET"
-                nodes.append({"id": dst_ip, "label": dst_ip, "category": dst_cat, "color": colors.get(dst_cat, "#f59e0b"), "size": min(4 + count, 18)})
+                nodes.append({"id": dst_ip, "label": dst_ip, "hostname": hostname_by_ip.get(dst_ip), "category": dst_cat, "color": colors.get(dst_cat, "#f59e0b"), "size": min(4 + count, 18)})
                 node_map[dst_ip] = len(nodes) - 1
             ports = [str(p) for p in (row["ports"] or [])[:5]]
             connections.append({"source": src_ip, "target": dst_ip, "value": count, "ports": ports, "type": "traffic"})
@@ -1144,7 +1158,8 @@ def query_events():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT src_ip, COUNT(*) as event_count,
+            SELECT src_ip, MAX(src_hostname) as src_hostname,
+                   COUNT(*) as event_count,
                    COUNT(DISTINCT dst_ip) as unique_dst,
                    COUNT(DISTINCT dst_port) as unique_ports,
                    interface
@@ -1166,7 +1181,9 @@ def query_events():
             events.append({
                 "attack_type": f"{category} traffic from {ip}",
                 "details": f"{cnt:,} events, {row['unique_dst']} destinations, {row['unique_ports']} ports",
-                "severity": severity, "count": cnt, "ip": ip, "category": category, "interface": iface,
+                "severity": severity, "count": cnt, "ip": ip,
+                "src_hostname": row["src_hostname"] or None,
+                "category": category, "interface": iface,
             })
         cur.close()
         return events
@@ -1552,7 +1569,9 @@ def query_alerts():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT src_ip, COUNT(*) as cnt, COUNT(DISTINCT dst_ip) as unique_dst, interface, MAX(timestamp) as latest_timestamp
+            SELECT src_ip, MAX(src_hostname) as src_hostname,
+                   COUNT(*) as cnt, COUNT(DISTINCT dst_ip) as unique_dst,
+                   interface, MAX(timestamp) as latest_timestamp
             FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
             GROUP BY src_ip, interface
             HAVING COUNT(*) > 1000
@@ -1566,6 +1585,7 @@ def query_alerts():
             severity = "CRITICAL" if cnt > 10000 else "WARNING"
             alerts.append({
                 "ip": row["src_ip"] or "0.0.0.0",
+                "src_hostname": row["src_hostname"] or None,
                 "attack_type": f"{classify_interface(row['interface'])} traffic",
                 "count": cnt,
                 "severity": severity,
@@ -1601,9 +1621,11 @@ def query_anomalies():
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT id, attack_type, severity, description, src_ip, dst_ip, timestamp
-            FROM anomalies
-            ORDER BY id DESC
+            SELECT a.id, a.attack_type, a.severity, a.description, a.src_ip, a.dst_ip,
+                   e.src_hostname, e.dst_hostname, a.timestamp
+            FROM anomalies a
+            LEFT JOIN events e ON a.event_id = e.id
+            ORDER BY a.id DESC
             LIMIT 50
         """)
         rows = cur.fetchall()
@@ -1616,6 +1638,8 @@ def query_anomalies():
                 "description": row["description"],
                 "src_ip": row.get("src_ip", ""),
                 "dst_ip": row.get("dst_ip", ""),
+                "src_hostname": row.get("src_hostname") or None,
+                "dst_hostname": row.get("dst_hostname") or None,
                 "timestamp": str(row["timestamp"]) if row["timestamp"] else ""
             })
         return anomalies
@@ -1700,7 +1724,8 @@ def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         query = """
-            SELECT timestamp, src_ip, dst_ip, dst_port, protocol, action, rule_name
+            SELECT timestamp, src_ip, dst_ip, dst_port, protocol, action, rule_name,
+                   src_hostname, dst_hostname
             FROM normalized_events
             WHERE timestamp > NOW() - INTERVAL '%s days'
         """ % days
@@ -1720,6 +1745,8 @@ def query_logs(days: int = 1, limit: int = 50, src_ip: str = None):
                 "timestamp": str(row["timestamp"]) if row["timestamp"] else "",
                 "src_ip": row["src_ip"] or "",
                 "dst_ip": row["dst_ip"] or "",
+                "src_hostname": row.get("src_hostname") or None,
+                "dst_hostname": row.get("dst_hostname") or None,
                 "dst_port": row["dst_port"],
                 "protocol": row["protocol"] or "",
                 "action": row["action"] or "",
@@ -1904,7 +1931,7 @@ def query_new_since(since_ts: str):
         # New unique source IPs (not seen before this timestamp)
         cur.execute(
             """
-            SELECT e.src_ip, COUNT(*) as cnt
+            SELECT e.src_ip, MAX(e.src_hostname) as src_hostname, COUNT(*) as cnt
             FROM normalized_events e
             WHERE e.timestamp > %s AND e.src_ip IS NOT NULL AND e.src_ip != ''
               AND NOT EXISTS (
@@ -1918,7 +1945,7 @@ def query_new_since(since_ts: str):
             (since_dt, since_dt),
         )
         new_unique_ips = [
-            {"ip": row["src_ip"], "count": row["cnt"]}
+            {"ip": row["src_ip"], "hostname": row.get("src_hostname") or None, "count": row["cnt"]}
             for row in cur.fetchall()
         ]
 
@@ -6993,6 +7020,7 @@ def api_behavior_overview():
         top_threat_ips = [
             {
                 "ip": p["ip"],
+                "hostname": p.get("hostname"),
                 "score": p.get("behavior_score", 0),
                 "level": p.get("threat_level", "info"),
                 "events": p.get("total_events", 0),
@@ -7184,7 +7212,8 @@ def api_behavior_profiles(limit=50, offset=0):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT ip, first_seen, last_seen, profile_data, baseline_data,
-                   threat_level, total_events, behavior_score, updated_at
+                   threat_level, total_events, behavior_score, updated_at,
+                   (SELECT src_hostname FROM events WHERE src_ip = ip LIMIT 1) as hostname
             FROM ip_behavior_profiles
             ORDER BY behavior_score DESC
             LIMIT %s OFFSET %s
@@ -7193,6 +7222,7 @@ def api_behavior_profiles(limit=50, offset=0):
         cur.close()
         profiles = [{
             "ip": r["ip"],
+            "hostname": r.get("hostname") or None,
             "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
             "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
             "threat_level": r["threat_level"],
@@ -7426,7 +7456,8 @@ def query__blocked_ips(hours=24, limit=20):
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT src_ip, COUNT(*) as block_count,
+            SELECT src_ip, MAX(src_hostname) as src_hostname,
+                   COUNT(*) as block_count,
                    COUNT(DISTINCT dst_ip) as unique_targets,
                    COUNT(DISTINCT dst_port) as unique_ports
             FROM normalized_events
@@ -7442,6 +7473,7 @@ def query__blocked_ips(hours=24, limit=20):
         cur.close()
         blocked_ips = [{
             "ip": r["src_ip"],
+            "src_hostname": r["src_hostname"] or None,
             "count": r["block_count"],
             "unique_targets": r["unique_targets"],
             "unique_ports": r["unique_ports"]

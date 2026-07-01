@@ -42,6 +42,7 @@ export interface HeatmapData {
   matrix: number[][];
   labels: string[];
   rowLabels: string[];
+  hostnames_y?: (string | null)[];
   ip: string[];
   hour: number[];
   value: number[];
@@ -51,6 +52,7 @@ export interface IpFlowData {
   nodes: Array<{
     id: string;
     label: string;
+    hostname?: string | null;
     category: string;
     color: string;
     size: number;
@@ -67,6 +69,7 @@ export interface IpFlowData {
 export interface IpFlowClusterNode {
   id: string;
   label: string;
+  hostname?: string | null;
   category: string;
   color: string;
   size: number;
@@ -96,6 +99,8 @@ export interface EventsData {
     dst_ip: string;
     src_port?: number;
     dst_port?: number;
+    src_hostname?: string | null;
+    dst_hostname?: string | null;
     rule_name: string;
     interface: string;
     direction?: string;
@@ -117,6 +122,7 @@ export interface MutesData {
 export interface GeoHotspot {
   ip: string;
   src_ip: string;
+  src_hostname?: string | null;
   lat: number;
   lon: number;
   count: number;
@@ -124,6 +130,7 @@ export interface GeoHotspot {
   country: string;
   country_name?: string;
   dst_ip?: string;
+  dst_hostname?: string | null;
   unique_dst?: number;
   interface?: string;
   action?: string;
@@ -165,6 +172,8 @@ export interface AlertsData {
     severity: string;
     source_ip: string;
     destination_ip: string;
+    src_hostname?: string | null;
+    dst_hostname?: string | null;
     details: string;
     category: string;
   }>;
@@ -476,7 +485,7 @@ export interface Timeline {
 }
 
 export interface BlockedIps {
-  blocked_ips: Array<{ ip: string; count: number; unique_targets: number; unique_ports: number }>;
+  blocked_ips: Array<{ ip: string; src_hostname?: string | null; count: number; unique_targets: number; unique_ports: number }>;
   total_blocked: number;
 }
 
@@ -578,7 +587,7 @@ export interface WhatChangedData {
   new_events: number;
   new_anomalies: number;
   new_blocked: number;
-  new_unique_ips: Array<{ ip: string; count: number }>;
+  new_unique_ips: Array<{ ip: string; hostname?: string | null; count: number }>;
   new_rule_matches: Array<{ rule: string; count: number; last_seen: string }>;
   new_baseline_breaches: Array<{ rule_name: string; current_rate: number; baseline_rate: number; deviation: number }>;
   first_time: boolean;
@@ -611,6 +620,7 @@ export type BehaviorLevel = 'benign' | 'suspicious' | 'hostile' | 'info';
 
 export interface BehaviorProfile {
   ip: string;
+  hostname?: string | null;
   behavior_score: number;       // 0-100
   threat_level: BehaviorLevel;
   event_count_24h: number;
@@ -668,7 +678,7 @@ export interface BehaviorOverviewData {
   active_ips_24h: number;
   ip_breakdown: BehaviorIpBreakdown;
   incident_stats: IncidentStats;
-  top_threat_ips: Array<{ ip: string; score: number; level: BehaviorLevel; events: number }>;
+  top_threat_ips: Array<{ ip: string; hostname?: string | null; score: number; level: BehaviorLevel; events: number }>;
   pipeline_health: {
     events_per_second: number;
     last_event: string;
@@ -677,7 +687,7 @@ export interface BehaviorOverviewData {
   };
   behavior_timeline: BehaviorTimelinePoint[];
   behavioral_changes: {
-    new_suspicious_ips: Array<{ ip: string; score: number }>;
+    new_suspicious_ips: Array<{ ip: string; score: number; hostname?: string | null }>;
     escalated_incidents: Array<{ type: string; severity: string }>;
     resolved_threats: Array<{ type: string; timestamp: string }>;
   };

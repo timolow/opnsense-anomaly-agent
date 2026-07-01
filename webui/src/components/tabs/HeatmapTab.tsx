@@ -1,5 +1,6 @@
 // Heatmap Tab - IP x Hour activity heatmap
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { format_ip } from '@/utils/formatIp';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { HeatmapData } from '@/types';
@@ -30,7 +31,7 @@ const BEHAVIOR_COLORS = {
 export default function HeatmapTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const legendCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string; behavior?: string } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; val: number; ip: string; hour: string; hostname?: string | null; behavior?: string } | null>(null);
   const [topN, setTopN] = useState<number>(50);
   const [behaviorFilter, setBehaviorFilter] = useState<string>('all');
 
@@ -160,11 +161,13 @@ export default function HeatmapTab() {
     }
 
     // Draw IP labels (left column)
+    const hostnames = data.hostnames_y || [];
     ctx.fillStyle = CYBER.textMuted;
     ctx.font = '9px monospace';
     ctx.textAlign = 'right';
     for (let i = 0; i < rowLabels.length; i++) {
-      const short = rowLabels[i].length > 18 ? rowLabels[i].substring(0, 15) + '...' : rowLabels[i];
+      const ipLabel = format_ip(rowLabels[i], hostnames[i] || null);
+      const short = ipLabel.length > 25 ? ipLabel.substring(0, 22) + '...' : ipLabel;
       ctx.fillText(short, cellW - 4, i * cellH + cellH / 2 + 3);
     }
 
@@ -230,7 +233,8 @@ export default function HeatmapTab() {
     ctx.fillText(maxVal.toLocaleString(), w, h + 14);
   }, [filteredData]);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const hostnames = data.hostnames_y || [];
+    const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!filteredData || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const { matrix, labels, rowLabels } = filteredData;
@@ -246,6 +250,7 @@ export default function HeatmapTab() {
         y: e.clientY,
         val: matrix[row][col],
         ip: rowLabels[row],
+        hostname: hostnames[row] || null,
         hour: labels[col],
       });
     } else {
@@ -329,7 +334,7 @@ export default function HeatmapTab() {
             className="fixed pointer-events-none z-50 cyber-card px-3 py-2 text-xs font-mono"
             style={{ left: tooltip.x + 10, top: tooltip.y - 40, minWidth: 150 }}
           >
-            <div className="font-semibold">{tooltip.ip}</div>
+            <div className="font-semibold">{format_ip(tooltip.ip, tooltip.hostname || null)}</div>
             <div className="text-cyber-textMuted">{tooltip.hour}</div>
             <div className="text-cyber-accent">{tooltip.val.toLocaleString()} events</div>
           </div>

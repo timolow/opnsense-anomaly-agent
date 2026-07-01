@@ -17,6 +17,7 @@ import CanvasBarChart from '../../components/charts/CanvasBarChart';
 import TimelineChart from '../../components/charts/TimelineChart';
 import Sparkline from '../../components/charts/Sparkline';
 import CanvasAreaChart from '../../components/charts/CanvasAreaChart';
+import { format_ip } from '@/utils/formatIp';
 import { useStore } from '../../store';
 import { CYBER, SEVERITY, RECHARTS_TOOLTIP } from '@/utils/colors';
 import { OverviewSkeleton } from '../../components/SkeletonLoaders';
@@ -339,7 +340,7 @@ function ActivityFeed({ alerts }: { alerts: AlertsData }) {
               </div>
               <div className="text-sm font-medium">{alert.type}</div>
               <div className="text-xs text-cyber-textMuted mt-0.5 font-mono">
-                {alert.source_ip} → {alert.destination_ip}
+                {format_ip(alert.source_ip, alert.src_hostname)} → {format_ip(alert.destination_ip, alert.dst_hostname)}
               </div>
               <div className="text-xs text-cyber-textMuted mt-0.5">{alert.details}</div>
             </div>
@@ -437,7 +438,7 @@ function WhatChangedPanel({ data, onDismiss }: { data: WhatChangedData; onDismis
               <div className="flex flex-wrap gap-1.5">
                 {data.new_unique_ips.slice(0, 10).map((ip, i) => (
                   <span key={i} className="cyber-tag text-xs font-mono" style={{ borderColor: 'var(--color-cyber-orange)' }}>
-                    {ip.ip} <span className="text-cyber-textMuted">({ip.count})</span>
+                    {format_ip(ip.ip, ip.hostname)} <span className="text-cyber-textMuted">({ip.count})</span>
                   </span>
                 ))}
                 {data.new_unique_ips.length > 10 && (

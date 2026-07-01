@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api';
 import type { BehaviorOverviewData, IncidentStats } from '@/types';
 import { CYBER, severityStyle } from '@/utils/colors';
+import { format_ip } from '@/utils/formatIp';
 import CanvasAreaChart from '@/components/charts/CanvasAreaChart';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
 import { BehavioralOverviewSkeleton } from '@/components/SkeletonLoaders';
@@ -293,7 +294,7 @@ function TopThreatIps({ data }: { data: BehaviorOverviewData }) {
             >
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono text-cyber-textMuted w-4">{i + 1}</span>
-                <span className="text-sm font-mono">{ipData.ip}</span>
+                <span className="text-sm font-mono">{format_ip(ipData.ip, ipData.hostname)}</span>
               </div>
               <div className="flex items-center gap-3 text-xs font-mono">
                 <span className="text-cyber-textMuted">{ipData.events} events</span>
@@ -366,7 +367,7 @@ function BehavioralChangesPanel({ data }: { data: BehaviorOverviewData }) {
               <div className="flex flex-wrap gap-1.5">
                 {changes.new_suspicious_ips.slice(0, 10).map((ip, i) => (
                   <span key={i} className="cyber-tag text-xs font-mono" style={{ borderColor: CYBER.orange }}>
-                    {ip.ip} <span className="text-cyber-textMuted">(score: {ip.score})</span>
+                    {format_ip(ip.ip, ip.hostname)} <span className="text-cyber-textMuted">(score: {ip.score})</span>
                   </span>
                 ))}
               </div>
