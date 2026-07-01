@@ -18,6 +18,7 @@ import type {
   DnsQueryData,
   BehaviorOverviewData, BehaviorProfile, IncidentStats,
   ThreatCanvasData,
+  IpTimelineData,
 } from '@/types';
 
 const BASE = '/api';
@@ -745,6 +746,26 @@ export const api = {
         },
         data_source_status: 'no_data',
         empty_message: 'No threat data available yet',
+      };
+    }
+  },
+
+  // IP Timeline (P5-T4)
+  ipTimeline: async (ip: string, range: string = '1h'): Promise<IpTimelineData> => {
+    try {
+      return json<IpTimelineData>(`/ip-timeline?ip=${encodeURIComponent(ip)}&range=${encodeURIComponent(range)}`);
+    } catch {
+      return {
+        ip,
+        range,
+        range_seconds: 3600,
+        events: [],
+        signals: [],
+        incidents: [],
+        hostname: null,
+        profile_threat_level: 'unknown',
+        profile_behavior_score: 0,
+        error: 'Failed to fetch timeline data',
       };
     }
   },

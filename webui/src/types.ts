@@ -706,6 +706,60 @@ export interface TimelineEvent {
   description: string;
 }
 
+// ═══════════════════════════════════════════════════
+// IP Timeline types (P5-T4) — richer event from /api/ip-timeline
+// ═══════════════════════════════════════════════════
+
+export interface IpTimelineEvent {
+  timestamp: string;
+  source: SignalSource;
+  src_ip: string;
+  dst_ip: string;
+  src_port: number | null;
+  dst_port: number | null;
+  protocol: string;
+  action: string;           // 'block', 'pass', '404', 'request', 'signature', 'resolution', 'policy', etc.
+  interface_name: string;
+  severity: string;
+  rule_name: string;
+  description: string;
+}
+
+export interface IpTimelineSignal {
+  timestamp: string;
+  source: SignalSource;
+  signal_type: string;
+  severity: string;
+  description: string;
+}
+
+export interface IpTimelineIncident {
+  incident_id: string;
+  severity: string;
+  signal_count: number;
+  sources: SignalSource[];
+  phases: string[];
+  first_seen: string;
+  last_seen: string;
+  description: string;
+  narrative: string;
+  is_active: boolean;
+  auto_resolved: boolean;
+}
+
+export interface IpTimelineData {
+  ip: string;
+  range: string;
+  range_seconds: number;
+  events: IpTimelineEvent[];
+  signals: IpTimelineSignal[];
+  incidents: IpTimelineIncident[];
+  hostname: string | null;
+  profile_threat_level: string;
+  profile_behavior_score: number;
+  error?: string;
+}
+
 export interface ThreatCanvasIncident {
   incident_id: string;
   ip: string;
