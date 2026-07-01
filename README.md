@@ -2,7 +2,17 @@
 
 A self-learning ML-based network security monitoring system that ingests OPNsense firewall logs, detects attacks and anomalies in real time, and provides a SOC-style cyberpunk dashboard.
 
-**57M+ events processed | 19 dashboard tabs | 25 test suites | Zero-downtime deploy**
+**v1.0.0 | 9M+ events processed | 19 dashboard tabs | Zero-downtime deploy | Redis-cached APIs**
+
+## Screenshots
+
+### Dashboard — Severity, Traffic, Agent Status
+
+![Dashboard](screenshots/dashboard.png)
+
+### Heatmap — IP × Hour Activity Grid
+
+![Heatmap](screenshots/heatmap.png)
 
 ## Architecture
 
@@ -19,8 +29,6 @@ OPNsense Firewall (UDP syslog :1514)
 │  agent.py (main loop)                              │
 │  ├── attack_detectors  (port scan, SYN flood, brute force, probes)
 │  ├── anomaly_detector  (z-score volume spikes, temporal anomalies)
-│  ├── baseline_engine   (per-rule traffic learning, hourly patterns) [DEPRECATED → unified_behavioral_engine]
-│  ├── threat_engine     (multi-source IP reputation scoring) [DEPRECATED → unified_behavioral_engine]
 │  ├── geo_lookup        (MaxMind GeoLite2 + ip-api fallback)
 │  ├── zenarmor_classifier (security gateway policy tracking)
 │  ├── ids_analyzer      (Snort/Suricata signature analysis)
@@ -38,7 +46,7 @@ OPNsense Firewall (UDP syslog :1514)
 │  ├── signal_bus        (unified signal routing, 51 signal types)
 │  ├── correlation_engine (attack chain detection, incident grouping)
 │  ├── incident_manager  (lifecycle state machine, feedback loop)
-│  ├── unified_behavioral_engine (consolidated: profiles, scoring, baselines, stats)
+│  ├── unified_behavioral_engine (profiles, scoring, baselines, stats)
 │  └── flow_classifier   (GradientBoosting flow classification)
 └──────┬──────────────────┬──────────────────────────┘
        │                  │
@@ -46,7 +54,7 @@ OPNsense Firewall (UDP syslog :1514)
 ┌──────────────┐   ┌──────────────┐
 │  PostgreSQL  │   │    Redis     │
 │  (events,    │   │  (DNS cache, │
-│   baselines, │   │   rate limit)│
+│   baselines, │   │   API cache) │
 │   incidents) │   │              │
 └──────────────┘   └──────────────┘
 ```
@@ -76,41 +84,36 @@ docker compose up -d
 ```
 
 This starts three containers:
-- `anomaly-postgres` — PostgreSQL 16 (persistent event/anomaly/incident storage)
-- `anomaly-redis` — Redis 7 (DNS cache, rate limiting)
+- `anomaly-postgres` — PostgreSQL 16 + TimescaleDB (persistent event/anomaly/incident storage)
+- `anomaly-redis` — Redis 7 (DNS cache, API response cache, rate limiting)
 - `anomaly-agent` — The anomaly detection engine (syslog, ML, API, Discord, web UI)
 
 Access the dashboard at `http://<server>:8766/`
 
 ## Web Dashboard
 
-A React + TypeScript + Tailwind CSS SPA with a dark cyberpunk theme. All data is live from PostgreSQL.
+A React + TypeScript + Tailwind CSS SPA with a dark cyberpunk theme. All data is live from PostgreSQL with Redis-cached API responses.
 
 | Tab | Description |
 |-----|-------------|
-| **Overview** | Stat cards, event timeline (uPlot), severity distribution, recent activity |
-| **Heatmap** | IP-level traffic intensity grid with behavioral threat coloring |
-| **Behavioral** | ML behavioral overview: IP profiles, incident stats, threat scores |
-| **IP Profiles** | Per-IP behavioral profiles with threat scores, event breakdowns |
+| **Dashboard** | Stat cards, severity breakdown, traffic summary, agent status, recent activity |
+| **Heatmap** | IP × Hour activity grid with color-coded intensity, legend, and behavioral coloring |
+| **Traffic** | Flow map visualization (FlowMap.js), source→destination flows, IP flow table |
+| **Behavioral** | ML behavioral overview: IP profiles, incident stats, threat scores, timeline |
+| **IP Profiles** | Per-IP behavioral profiles with threat scores, event breakdowns, hostnames |
 | **Flow ML** | GradientBoosting flow classification (GOOD/SUSPICIOUS/ABUSIVE) |
-| **Incidents** | Correlated attack chains with timeline visualization |
-| **Baselines** | Signal bus monitoring, concept drift, severity distribution |
-| **Flow Map** | Sankey diagram of source→destination flows |
-| **IP Flow** | Detailed per-IP event counts and direction |
-| **Geography** | Country/region breakdown with intensity map |
-| **Alerts** | Anomaly alerts with severity filtering |
-| **Mutes** | Manage muted IPs (skip alerting for known false positives) |
-| **ZenArmor** | Security gateway policy tracking and anomaly detection |
-| **IDS** | Snort/Suricata signature analysis and frequency tracking |
-| **OPNsense Status** | Live system stats: memory, CPU, services, interfaces, gateways |
-| **Services** | DHCP, Unbound, NTP, OpenVPN, WireGuard health |
-| **Nginx Monitor** | Web traffic analysis and attack detection |
-| **Network Topology** | Force graph of IP connections (30+ nodes) |
-| **WAN Flap Detection** | Gateway stability timeline |
-| **Firewall Rules** | Rule tracking and management |
-| **Syslogs** | Raw firewall log viewer with filtering |
-| **Query Logs** | Advanced search by IP, time range |
-| **Settings** | Detection thresholds, integration config, data management |
+| **Incidents** | Correlated attack chains with severity filters, timeline, and drill-down |
+| **Threat Canvas** | Unified threat intelligence — no active incidents = all clear |
+| **Baselines** | Signal bus monitoring, concept drift (Volume +5.6σ), severity distribution |
+| **Alerts** | Anomaly alerts with severity filtering, mute management, ZenArmor, IDS |
+| **Rules ML** | ML-classified firewall rules, classification distribution, model parameters |
+| **Network** | Force-directed network topology graph, traffic distribution, top sources |
+| **WAN Flap** | Gateway stability timeline and recent flap events |
+| **Logs** | Firewall events table, DNS queries, raw query logs with search and filters |
+| **Services** | DHCP, Unbound, NTP, OpenVPN, WireGuard health monitoring |
+| **Nginx** | Web traffic analysis, HTTP methods, response codes, top source IPs |
+| **Observability** | Pipeline health, events/sec throughput, CPU/mem/disk, error rates |
+| **Settings** | Theme selection, detection thresholds, integration config, data management |
 
 ## ML-PIVOT Behavioral Engine
 
@@ -126,7 +129,7 @@ Groups related signals into incidents using IP proximity and temporal windows. D
 Full lifecycle state machine (OPEN → ACTIVE → ESCALATED → MITIGATED → RESOLVED). Feedback loop for false positive correction. Auto-resolution of stale incidents. Discord integration for real-time incident reporting.
 
 ### Unified Behavioral Engine
-`unified_behavioral_engine.py` consolidates the previous 4 separate modules (ip_behavior_model, threat_engine, baseline_engine, statistical_model) into a single engine. Per-IP behavioral profiles with EMA baselines, multi-source threat scoring with adaptive weights, IP-level traffic baselines, and z-score anomaly detection via Welford's online algorithm. The 4 deprecated modules remain as thin wrappers with migration comments until 2026-07-14.
+`unified_behavioral_engine.py` consolidates the previous 4 separate modules into a single engine. Per-IP behavioral profiles with EMA baselines, multi-source threat scoring with adaptive weights, IP-level traffic baselines, and z-score anomaly detection via Welford's online algorithm.
 
 ### Flow Classifier
 GradientBoosting classifier for network flow categorization. Trained on protocol, port, volume, duration, and direction features. Classifies flows as GOOD, SUSPICIOUS, or ABUSIVE with confidence scoring.
@@ -195,13 +198,23 @@ All endpoints served on port 8766. HTTP Basic Auth via `DASHBOARD_API_USER`/`DAS
 | `GET /api/incidents/stats` | Incident statistics by severity and phase |
 | `POST /api/incidents/inc_<id>/transition` | Incident state transition |
 
+## Performance
+
+v1.0 includes production-grade performance optimizations for 9M+ event datasets:
+
+- **In-memory stats**: `query_stats()` uses agent in-memory state + `pg_class` estimates instead of scanning 9M rows (30s+ → 0.11s)
+- **Redis caching**: 60s TTL cache on all expensive endpoints (`/api/stats`, `/api/heatmap`, `/api/ip-flow`, `/api/events`, `/api/alerts`, `/api/anomalies`, `/api/behavior-overview`, `/api/dns-queries`)
+- **Cache pre-warming**: Background thread hits all expensive endpoints 5s after startup so the dashboard loads instantly with no cold-cache timeouts
+- **Optimized queries**: Heatmap uses two-pass CTE (top 50 IPs first, then hourly data) avoiding sorting 330K rows (12.7s → ~2s)
+- **TimescaleDB**: Chunk-based storage with automatic time-range exclusion for 24h queries
+
 ## Zero-Downtime Deployment
 
 Blue-green deployment with health-check gating:
 
 ```bash
 ./deploy.sh              # Deploy current HEAD
-./deploy.sh --tag v1.2.3 # Deploy with custom tag
+./deploy.sh --tag v1.0.0 # Deploy with custom tag
 ./rollback.sh            # Rollback to previous version
 ```
 
@@ -229,9 +242,8 @@ Key environment variables (full list in `.env.example`):
 
 ## CI/CD
 
-- **172 tests** across all modules (adaptive_parser, reverse_dns, ml_learning, rule_classify, statistical_model, apprise_notifier, integration, ml_pipeline)
-- **17 ML-PIVOT integration tests** (SignalBus, CorrelationEngine, IPBehaviorModel, FlowClassifier, FullPipeline)
-- **Docker build** — Multi-platform images pushed to GHCR on every push to `master`
+- **189 tests** across all modules (adaptive_parser, reverse_dns, ml_learning, rule_classify, statistical_model, apprise_notifier, integration, ml_pipeline)
+- **Docker build** — Multi-platform images built locally or pushed to GHCR
 - **CodeQL** — Automated security scanning on every commit
 - **Tagged releases** — Images tagged with commit SHA and `latest`
 
