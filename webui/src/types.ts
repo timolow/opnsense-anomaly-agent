@@ -690,3 +690,65 @@ export interface BehaviorOverviewData {
   data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
   empty_message?: string;
 }
+
+// ═══════════════════════════════════════════════════
+// Threat Canvas types (P5-T1)
+// ═══════════════════════════════════════════════════
+
+export type ThreatLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type SignalSource = 'firewall' | 'nginx' | 'ids' | 'dns' | 'zenarmor' | 'wan_flap' | 'service' | 'baseline';
+
+export interface TimelineEvent {
+  timestamp: string;
+  source: SignalSource;
+  signal_type: string;
+  severity: string;
+  description: string;
+}
+
+export interface ThreatCanvasIncident {
+  incident_id: string;
+  ip: string;
+  src_hostname?: string;
+  dst_hostname?: string;
+  threat_level: ThreatLevel;
+  behavior_score: number;        // 0-100 unified behavioral score
+  signal_count: number;
+  source_count: number;          // unique sources contributing signals
+  sources: SignalSource[];
+  signal_types: string[];
+  phases: string[];              // ['recon', 'probe', 'attack', 'exploit']
+  first_seen: string;
+  last_seen: string;
+  narrative: string;
+  timeline: TimelineEvent[];     // chronological events for this IP
+  is_active: boolean;
+}
+
+export interface RecommendedAction {
+  incident_id: string;
+  ip: string;
+  action: 'block_ip' | 'add_watchlist' | 'investigate' | 'escalate' | 'suppress';
+  priority: 'immediate' | 'high' | 'medium' | 'low';
+  reason: string;
+  command?: string;              // e.g., firewall rule hint
+}
+
+export interface ThreatCanvasData {
+  incidents: ThreatCanvasIncident[];       // ranked by behavior_score DESC
+  actions: RecommendedAction[];
+  summary: {
+    total_active: number;
+    total_incidents: number;
+    critical_count: number;
+    high_count: number;
+    medium_count: number;
+    low_count: number;
+    unique_ips: number;
+    unique_sources: number;
+    top_source: SignalSource;
+    top_source_count: number;
+  };
+  data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
+  empty_message?: string;
+}

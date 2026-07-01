@@ -3971,6 +3971,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(api_get_incident(inc_id))
             elif path == "/api/incidents/stats":
                 self._send_json(api_incident_stats())
+            # P5-T1: Threat Canvas unified threat intelligence
+            elif path == "/api/threat-canvas":
+                self._send_json(api_threat_canvas())
             # ML PIVOT: New behavioral ML endpoints (GET)
             elif path == "/api/flow-classifications":
                 self._send_json(api_flow_classifications())
@@ -4787,6 +4790,247 @@ def api_incident_stats():
     except Exception as e:
         logger.error("api_incident_stats failed: %s", e)
         return {"error": str(e)}
+
+
+def api_threat_canvas():
+    """GET /api/threat-canvas — Unified threat intelligence canvas.
+
+    Correlates incidents, behavioral profiles, and signals into a single
+    actionable view.  Returns ranked incidents with timelines and
+    recommended actions.
+    """
+    try:
+        import psycopg2.extras
+
+        conn = get_db()
+        if not conn:
+            return {
+                "incidents": [],
+                "actions": [],
+                "summary": {
+                    "total_active": 0,
+                    "total_incidents": 0,
+                    "critical_count": 0,
+                    "high_count": 0,
+                    "medium_count": 0,
+                    "low_count": 0,
+                    "unique_ips": 0,
+                    "unique_sources": 0,
+                    "top_source": "firewall",
+                    "top_source_count": 0,
+                },
+                "data_source_status": "no_data",
+                "empty_message": "No threat data available yet",
+            }
+
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # ── 1. Fetch active incidents joined with behavioral profiles ──
+        cur.execute("""
+            SELECT
+                i.id::text AS incident_id,
+                i.ip,
+                i.severity,
+                i.signal_count,
+                i.signal_types,
+                i.sources,
+                i.phases,
+                i.first_seen,
+                i.last_seen,
+                i.description,
+                i.narrative,
+                i.is_active,
+                i.auto_resolved,
+                COALESCE(p.behavior_score, 0) AS behavior_score,
+                COALESCE(p.threat_level, 'info') AS profile_threat_level,
+                COALESCE(p.total_events, 0) AS total_events
+            FROM incidents i
+            LEFT JOIN ip_behavior_profiles p ON i.ip = p.ip
+            ORDER BY
+                CASE i.severity
+                    WHEN 'critical' THEN 0
+                    WHEN 'high' THEN 1
+                    WHEN 'medium' THEN 2
+                    WHEN 'low' THEN 3
+                    ELSE 4
+                END,
+                p.behavior_score DESC,
+                i.signal_count DESC
+            LIMIT 50
+        """)
+        incident_rows = cur.fetchall()
+
+        # ── 2. For each incident, fetch timeline events from signals ──
+        incidents: list = []
+        all_ips: list = [r["ip"] for r in incident_rows]
+        unique_sources: set = set()
+
+        for row in incident_rows:
+            ip = row["ip"]
+            threat_level = (
+                row["severity"]
+                if row["severity"] in ("critical", "high", "medium", "low", "info")
+                else "low"
+            )
+
+            # Fetch timeline for this IP's signals
+            cur.execute("""
+                SELECT timestamp, source, signal_type, severity,
+                       COALESCE(metadata->>'description', '') AS description
+                FROM ip_behavior_signals
+                WHERE ip = %s
+                ORDER BY timestamp DESC
+                LIMIT 50
+            """, (ip,))
+            timeline = [
+                {
+                    "timestamp": r["timestamp"].isoformat() if r["timestamp"] else "",
+                    "source": r["source"],
+                    "signal_type": r["signal_type"],
+                    "severity": r["severity"],
+                    "description": r["description"],
+                }
+                for r in cur.fetchall()
+            ]
+
+            # Collect unique sources
+            for src in row["sources"] or []:
+                unique_sources.add(src)
+
+            # DNS resolution: pull from events if available
+            src_hostname = ""
+            dst_hostname = ""
+            cur.execute("""
+                SELECT DISTINCT src_hostname, dst_hostname
+                FROM events
+                WHERE src_ip = %s OR dst_ip = %s
+                LIMIT 1
+            """, (ip, ip))
+            evt = cur.fetchone()
+            if evt:
+                src_hostname = evt["src_hostname"] or ""
+                dst_hostname = evt["dst_hostname"] or ""
+
+            incidents.append({
+                "incident_id": f"inc_{row['incident_id']}",
+                "ip": ip,
+                "src_hostname": src_hostname if src_hostname else None,
+                "dst_hostname": dst_hostname if dst_hostname else None,
+                "threat_level": threat_level,
+                "behavior_score": row["behavior_score"],
+                "signal_count": row["signal_count"],
+                "source_count": len(row["sources"] or []),
+                "sources": row["sources"] or [],
+                "signal_types": row["signal_types"] or [],
+                "phases": row["phases"] or [],
+                "first_seen": row["first_seen"].isoformat() if row["first_seen"] else "",
+                "last_seen": row["last_seen"].isoformat() if row["last_seen"] else "",
+                "narrative": row["narrative"] or row["description"] or "",
+                "timeline": timeline,
+                "is_active": row["is_active"],
+            })
+
+        cur.close()
+
+        # ── 3. Build summary ──
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        active_count = 0
+        for inc in incidents:
+            sev = inc["threat_level"]
+            if sev in severity_counts:
+                severity_counts[sev] += 1
+            if inc["is_active"]:
+                active_count += 1
+
+        # Top source across all incidents
+        source_counter: dict = {}
+        for inc in incidents:
+            for s in inc["sources"]:
+                source_counter[s] = source_counter.get(s, 0) + 1
+
+        top_source = max(source_counter, key=source_counter.get) if source_counter else "firewall"
+
+        # ── 4. Generate recommended actions ──
+        actions: list = []
+        for inc in incidents:
+            if not inc["is_active"]:
+                continue
+
+            score = inc["behavior_score"]
+            if score >= 90:
+                actions.append({
+                    "incident_id": inc["incident_id"],
+                    "ip": inc["ip"],
+                    "action": "block_ip",
+                    "priority": "immediate",
+                    "reason": f"Score {score}, {inc['source_count']}-source{' chain' if len(inc['phases']) >= 3 else ''} detected",
+                    "command": f"Block {inc['ip']} at firewall",
+                })
+            elif score >= 70:
+                actions.append({
+                    "incident_id": inc["incident_id"],
+                    "ip": inc["ip"],
+                    "action": "add_watchlist",
+                    "priority": "high",
+                    "reason": f"Score {score}, sustained activity from {inc['ip']}",
+                })
+            elif score >= 40:
+                actions.append({
+                    "incident_id": inc["incident_id"],
+                    "ip": inc["ip"],
+                    "action": "investigate",
+                    "priority": "medium",
+                    "reason": f"Score {score}, possible false positive — review recommended",
+                })
+            elif len(inc["phases"]) >= 3:
+                # Even low score, but attack chain detected
+                actions.append({
+                    "incident_id": inc["incident_id"],
+                    "ip": inc["ip"],
+                    "action": "escalate",
+                    "priority": "high",
+                    "reason": f"Multi-phase attack chain ({', '.join(inc['phases'])}) despite low individual scores",
+                })
+
+        return {
+            "incidents": incidents,
+            "actions": actions,
+            "summary": {
+                "total_active": active_count,
+                "total_incidents": len(incidents),
+                "critical_count": severity_counts["critical"],
+                "high_count": severity_counts["high"],
+                "medium_count": severity_counts["medium"],
+                "low_count": severity_counts["low"],
+                "unique_ips": len(set(i["ip"] for i in incidents)),
+                "unique_sources": len(unique_sources),
+                "top_source": top_source,
+                "top_source_count": source_counter.get(top_source, 0),
+            },
+            "data_source_status": "configured" if incidents else "no_data",
+            "empty_message": "No threat data available yet" if not incidents else None,
+        }
+
+    except Exception as e:
+        logger.error("api_threat_canvas failed: %s", e, exc_info=True)
+        return {
+            "incidents": [],
+            "actions": [],
+            "summary": {
+                "total_active": 0,
+                "total_incidents": 0,
+                "critical_count": 0,
+                "high_count": 0,
+                "medium_count": 0,
+                "low_count": 0,
+                "unique_ips": 0,
+                "unique_sources": 0,
+                "top_source": "firewall",
+                "top_source_count": 0,
+            },
+            "data_source_status": "error",
+            "empty_message": str(e),
+        }
 
 
 def api_transition_incident(inc_id: str, data: dict):
