@@ -376,11 +376,11 @@ export default function ThreatCanvasTab() {
     staleTime: 15_000,
   });
 
-  // SSE: refetch when live events arrive
+  // SSE: refetch when live events arrive + track connection state
   const handleSSEEvent = useCallback(() => {
     refetch();
   }, [refetch]);
-  useThreatCanvasSSE(handleSSEEvent);
+  const { isConnected } = useThreatCanvasSSE(handleSSEEvent);
 
   // Selected incident for center panel (timeline) + right panel (drill-down)
   const selectedIncident = useMemo(() => {
@@ -433,7 +433,17 @@ export default function ThreatCanvasTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gradient-cyber">Threat Canvas</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-gradient-cyber">Threat Canvas</h2>
+            {/* Live indicator — pulsing dot when SSE connected */}
+            <span
+              className={`inline-block w-2 h-2 rounded-full transition-colors duration-300 ${
+                isConnected ? 'bg-cyber-green' : 'bg-cyber-textMuted'
+              }`}
+              style={isConnected ? { boxShadow: '0 0 6px #00ff41', animation: 'pulse 2s infinite' } : {}}
+              title={isConnected ? 'Live SSE connected' : 'SSE disconnected'}
+            />
+          </div>
           <p className="text-xs text-cyber-textMuted mt-1">Unified threat intelligence with behavioral scoring and cross-source correlation</p>
         </div>
         <div className="flex items-center gap-2">

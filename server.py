@@ -129,6 +129,16 @@ def publish_incident_sse(incident_data: dict, event_type: str = "incident_update
         logger.warning("Incident SSE queue full, dropping event")
 
 
+def publish_new_incident(incident_data: dict):
+    """Publish a new_incident SSE event (called when correlation engine creates an incident)."""
+    publish_incident_sse(incident_data, event_type="new_incident")
+
+
+def publish_incident_resolved(incident_data: dict):
+    """Publish an incident_resolved SSE event."""
+    publish_incident_sse(incident_data, event_type="incident_resolved")
+
+
 def sse_background_cleaner():
     """Background thread to clean up dead SSE connections (both anomaly and incident)."""
     while True:
@@ -3493,9 +3503,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         self._send_json(metrics)
 
-    # ─── P2-6: SSE handler ─────────────────────────────────────────────
+    # ─── P2-6: SSE handler (multiplexed: anomaly + incident) ──────────
     def _handle_sse(self):
-        """Handle SSE streaming connection."""
+        """Handle SSE streaming connection — multiplexes anomaly and incident queues."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -3507,19 +3517,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
         client_ref = {"alive": True, "client_id": client_id}
         with _sse_clients_lock:
             _sse_clients.append(client_ref)
+        # Also register on incident SSE client list so cleaner picks it up
+        with _incident_sse_clients_lock:
+            _incident_sse_clients.append(client_ref)
 
         try:
             # Send initial connection event
-            self._sse_write(f"event: connected\ndata: {{\"client_id\": {client_id}}}\n\n")
+            self._sse_write(f"event: connected\ndata: {{\"client_id\": {client_id}, \"streams\": [\"anomaly\", \"incident\"]}}\n\n")
 
             while client_ref["alive"]:
+                # Use select-like polling with short timeout, drain both queues
                 try:
-                    data = _sse_queue.get(timeout=5)
+                    data = _sse_queue.get(timeout=1)
                     if not client_ref["alive"]:
                         break
                     self._sse_write(f"event: anomaly\ndata: {json.dumps(data, default=str)}\n\n")
                 except queue.Empty:
-                    # Send heartbeat every 5 seconds
+                    pass
+
+                # Drain incident queue
+                while True:
+                    try:
+                        inc_data = _incident_sse_queue.get_nowait()
+                        if not client_ref["alive"]:
+                            break
+                        self._sse_write(f"event: {inc_data['type']}\ndata: {json.dumps(inc_data, default=str)}\n\n")
+                    except queue.Empty:
+                        break
+
+                # Heartbeat every 5 seconds (accumulate 5 x 1s intervals)
+                try:
+                    _sse_queue.get(timeout=4)
+                    # Got an anomaly event - loop back to process it at top of while
+                    continue
+                except queue.Empty:
                     self._sse_write(": heartbeat\n\n")
         except (BrokenPipeError, ConnectionResetError, Exception) as e:
             logger.debug("SSE client disconnected: %s", e)
@@ -3528,6 +3559,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             with _sse_clients_lock:
                 if client_ref in _sse_clients:
                     _sse_clients.remove(client_ref)
+            with _incident_sse_clients_lock:
+                if client_ref in _incident_sse_clients:
+                    _incident_sse_clients.remove(client_ref)
 
     def _sse_write(self, text):
         """Write SSE data to the client connection."""
@@ -4176,14 +4210,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             try:
                 result = api_incident_actions(action, incident_id, ip, data)
-                # Broadcast incident update via SSE
-                publish_incident_sse({
-                    "incident_id": incident_id,
-                    "ip": ip,
-                    "action": action,
-                    "severity": result.get("severity", "low"),
-                    "status": result.get("status", ""),
-                }, f"incident_{action}")
+                # Broadcast incident update via SSE with correct event type
+                result_status = result.get("status", "")
+                if action == "resolve" or result_status == "resolved":
+                    publish_incident_resolved({
+                        "incident_id": incident_id,
+                        "ip": ip,
+                        "action": action,
+                        "severity": result.get("severity", "low"),
+                        "status": result_status,
+                    })
+                else:
+                    publish_incident_sse({
+                        "incident_id": incident_id,
+                        "ip": ip,
+                        "action": action,
+                        "severity": result.get("severity", "low"),
+                        "status": result_status,
+                    }, "incident_updated")
                 status_code = result.get("status_code", 200)
                 self._send_json(result, status_code)
             except Exception as e:
