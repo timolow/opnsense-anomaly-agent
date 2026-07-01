@@ -6742,12 +6742,100 @@ def api_save_settings(data: dict):
 
 
 def api_pipeline_health():
-    """GET /api/pipeline-health — Real-time pipeline status."""
+    """GET /api/pipeline-health — Observability: pipeline health, throughput, errors, resources, TimescaleDB, Redis lag."""
+    result = {
+        "throughput": {},
+        "error_rates": {},
+        "resources": {},
+        "timescaledb": {},
+        "redis_stream": {},
+        "events_processed": 0,
+        "anomalies_detected": 0,
+        "db_connected": False,
+        "anomaly_rate": 0,
+        "last_event": "",
+    }
     try:
         state = load_state()
         counters = state.get("agent_counters", {}) if state else {}
 
-        # Check DB connectivity
+        # --- Throughput ---
+        events = counters.get("event_count", 0)
+        anomalies = counters.get("anomaly_count", 0)
+        alerts = counters.get("alert_count", 0)
+        uptime = _calc_uptime(counters)
+
+        # Compute rates from uptime
+        events_per_sec = round(events / max(uptime, 1), 2)
+        anomalies_per_sec = round(anomalies / max(uptime, 1), 4)
+        alerts_per_sec = round(alerts / max(uptime, 1), 4)
+
+        result["throughput"] = {
+            "events_per_sec": events_per_sec,
+            "anomalies_per_sec": anomalies_per_sec,
+            "alerts_per_sec": alerts_per_sec,
+            "total_events": events,
+            "total_anomalies": anomalies,
+            "total_alerts": alerts,
+            "uptime_seconds": uptime,
+        }
+        result["events_processed"] = events
+        result["anomalies_detected"] = anomalies
+        result["anomaly_rate"] = round(anomalies / max(events, 1) * 100, 2)
+        result["last_event"] = state.get("last_event_timestamp", "") if state else ""
+
+        # --- Throughput timeline (last 60 minutes, 1-min buckets) ---
+        result["throughput_timeline"] = []
+        try:
+            conn = get_db()
+            if conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT
+                        date_trunc('minute', timestamp) AS bucket,
+                        COUNT(*) AS event_count,
+                        SUM(CASE WHEN is_anomaly THEN 1 ELSE 0 END) AS anomaly_count
+                    FROM normalized_events
+                    WHERE timestamp >= NOW() - INTERVAL '60 minutes'
+                    GROUP BY bucket
+                    ORDER BY bucket
+                """)
+                rows = cur.fetchall()
+                for row in rows:
+                    result["throughput_timeline"].append({
+                        "timestamp": row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0]),
+                        "events": row[1],
+                        "anomalies": row[2],
+                    })
+                cur.close()
+                close_db(conn)
+        except Exception:
+            pass
+
+        # --- Error rates ---
+        db_errors = counters.get("db_error_count", 0)
+        dns_errors = 0
+        discord_errors = 0
+        try:
+            from reverse_dns import RESOLVER as dns_resolver
+            if dns_resolver:
+                dns_stats = dns_resolver.get_stats()
+                dns_errors = dns_stats.get("error_count", 0)
+        except Exception:
+            pass
+        try:
+            discord_errors = counters.get("discord_error_count", 0)
+        except Exception:
+            pass
+
+        result["error_rates"] = {
+            "db_errors": db_errors,
+            "dns_errors": dns_errors,
+            "discord_errors": discord_errors,
+            "total_errors": db_errors + dns_errors + discord_errors,
+        }
+
+        # --- DB connectivity ---
         db_ok = False
         try:
             conn = get_db()
@@ -6756,26 +6844,85 @@ def api_pipeline_health():
                 db_ok = True
         except Exception:
             pass
+        result["db_connected"] = db_ok
 
-        events = counters.get("event_count", 0)
-        anomalies = counters.get("anomaly_count", 0)
+        # --- Resources (reuse health_monitor) ---
+        try:
+            from health_monitor import get_system_metrics
+            metrics = get_system_metrics(db_size=True, disk=True, redis_memory=True)
+            result["resources"] = metrics
+        except Exception:
+            result["resources"] = {"error": "health_monitor unavailable"}
 
-        return {
-            "events_processed": events,
-            "anomalies_detected": anomalies,
-            "db_connected": db_ok,
-            "anomaly_rate": round(anomalies / max(events, 1) * 100, 2),
-            "last_event": state.get("last_event_timestamp", "") if state else "",
-        }
+        # --- TimescaleDB chunk info ---
+        try:
+            conn = get_db()
+            if conn:
+                cur = conn.cursor()
+                cur.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')")
+                has_ts = cur.fetchone()[0]
+                ts_info = {"enabled": has_ts, "hypertable": False, "chunks": 0, "version": ""}
+                if has_ts:
+                    cur.execute("""
+                        SELECT hypertable_schema, hypertable_name
+                        FROM timescaledb_information.hypertables
+                        WHERE hypertable_schema = 'public' AND hypertable_name = 'normalized_events'
+                    """)
+                    ht = cur.fetchone()
+                    ts_info["hypertable"] = ht is not None
+                    if ht:
+                        cur.execute("""
+                            SELECT count(*) FROM timescaledb_information.chunks
+                            WHERE table_name = 'normalized_events'
+                        """)
+                        ts_info["chunks"] = cur.fetchone()[0]
+                        cur.execute("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
+                        ts_info["version"] = cur.fetchone()[0] or ""
+                cur.close()
+                close_db(conn)
+                result["timescaledb"] = ts_info
+        except Exception:
+            result["timescaledb"] = {"enabled": False, "error": "TimescaleDB check failed"}
+
+        # --- Redis Stream consumer lag ---
+        try:
+            redis_client = get_redis()
+            if redis_client:
+                stream_name = os.environ.get("REDIS_STREAM_NAME", "event_ingest")
+                stream_group = os.environ.get("REDIS_STREAM_GROUP", "agent_group")
+                stream_len = redis_client.xlen(stream_name)
+                # Consumer group info
+                try:
+                    group_info = redis_client.xinfo_groups(stream_name)
+                    group_lag = 0
+                    pending_count = 0
+                    for g in group_info:
+                        if g.get("name") == stream_group or (g[0] if isinstance(g, tuple) else "") == stream_group:
+                            # Redis-py returns dict in newer versions
+                            if isinstance(g, dict):
+                                group_lag = g.get("lag", 0)
+                                pending_count = g.get("pending", 0)
+                            else:
+                                # tuple format: (name, consumers, pending, lag, last-delivery)
+                                group_lag = g[3] if len(g) > 3 else 0
+                                pending_count = g[2] if len(g) > 2 else 0
+                    result["redis_stream"] = {
+                        "enabled": True,
+                        "stream_length": stream_len,
+                        "group_lag": group_lag,
+                        "pending_messages": pending_count,
+                    }
+                except Exception:
+                    result["redis_stream"] = {"enabled": True, "stream_length": stream_len, "group_lag": "unknown"}
+            else:
+                result["redis_stream"] = {"enabled": False}
+        except Exception:
+            result["redis_stream"] = {"enabled": False, "error": "Redis unavailable"}
+
     except Exception as e:
         logger.error("api_pipeline_health failed: %s", e)
-        return {
-            "events_processed": 0,
-            "anomalies_detected": 0,
-            "db_connected": False,
-            "anomaly_rate": 0,
-            "last_event": "",
-        }
+
+    return result
 
 
 def api_behavior_overview():

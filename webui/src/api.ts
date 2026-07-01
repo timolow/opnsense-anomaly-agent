@@ -19,6 +19,7 @@ import type {
   BehaviorOverviewData, BehaviorProfile, IncidentStats,
   ThreatCanvasData,
   IpTimelineData,
+  PipelineHealthData,
 } from '@/types';
 
 const BASE = '/api';
@@ -769,4 +770,7 @@ export const api = {
       };
     }
   },
+
+  // Observability / Pipeline Health (P7-T6)
+  pipelineHealth: () => json<PipelineHealthData>('/pipeline-health'),
 };

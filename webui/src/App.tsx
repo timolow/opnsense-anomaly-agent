@@ -27,6 +27,7 @@ import FlowClassificationTab from './components/tabs/FlowClassificationTab';
 import IncidentTimelineTab from './components/tabs/IncidentTimelineTab';
 import BehavioralBaselinesTab from './components/tabs/BehavioralBaselinesTab';
 import ThreatCanvasTab from './components/tabs/ThreatCanvasTab';
+import ObservabilityTab from './components/tabs/ObservabilityTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Dashboard',
@@ -45,6 +46,7 @@ const TAB_TITLE: Record<string, string> = {
   'incident-timeline': 'Incidents',
   'behavioral-baselines': 'Baselines',
   'threat-canvas': 'Threat Canvas',
+  'observability': 'Observability',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -69,6 +71,7 @@ function TabContent({ tab }: { tab: string }) {
           case 'incident-timeline': return <IncidentTimelineTab />;
           case 'behavioral-baselines': return <BehavioralBaselinesTab />;
           case 'threat-canvas': return <ThreatCanvasTab />;
+          case 'observability': return <ObservabilityTab />;
           case '': return <OverviewTab />;
           default: return <OverviewTab />;
         }
