@@ -101,6 +101,14 @@ interface AppState {
   setTimeRange: (range: TimeRange) => void;
   customTimeRange?: CustomTimeRange;
   setCustomTimeRange: (range?: CustomTimeRange) => void;
+
+  // Threat Canvas state (P5-T2)
+  threatCanvasSelectedId: string | null;
+  setThreatCanvasSelectedId: (id: string | null) => void;
+  threatCanvasFilterActive: boolean;
+  setThreatCanvasFilterActive: (active: boolean) => void;
+  threatCanvasFilterThreat: string;
+  setThreatCanvasFilterThreat: (filter: string) => void;
 }
 
 const DEFAULT_TABS = [
@@ -148,4 +156,12 @@ export const useStore = create<AppState>((set) => ({
   setTimeRange: (range: TimeRange) => set({ timeRange: range }),
   customTimeRange: undefined,
   setCustomTimeRange: (range?: CustomTimeRange) => set({ customTimeRange: range }),
+
+  // Threat Canvas state (P5-T2)
+  threatCanvasSelectedId: null,
+  setThreatCanvasSelectedId: (id: string | null) => set({ threatCanvasSelectedId: id }),
+  threatCanvasFilterActive: true,
+  setThreatCanvasFilterActive: (active: boolean) => set({ threatCanvasFilterActive: active }),
+  threatCanvasFilterThreat: 'all',
+  setThreatCanvasFilterThreat: (filter: string) => set({ threatCanvasFilterThreat: filter }),
 }));
