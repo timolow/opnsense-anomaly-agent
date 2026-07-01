@@ -4644,9 +4644,10 @@ def _get_incident_manager():
             if _incident_manager_instance is None:
                 try:
                     db = EventDatabase()
+                    behavioral_engine = _get_behavioral_engine()
                     _incident_manager_instance = __import__(
                         "incident_manager", fromlist=["IncidentManager"]
-                    ).IncidentManager(db)
+                    ).IncidentManager(db, behavioral_engine=behavioral_engine)
                 except Exception as e:
                     logger.warning("Failed to create IncidentManager: %s", e)
                     _incident_manager_instance = __import__(

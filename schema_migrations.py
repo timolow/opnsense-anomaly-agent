@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Current target schema version
-CURRENT_SCHEMA_VERSION = 24
+CURRENT_SCHEMA_VERSION = 26
 
 # Migration version table — created before any migration runs
 CREATE_VERSION_TABLE_SQL = """
@@ -1221,6 +1221,22 @@ MIGRATIONS: List[Dict[str, Any]] = [
         "sql": [],
         "alter_columns": [
             ("adaptive_weights", "feature_alpha_multipliers", "JSONB DEFAULT NULL"),
+        ],
+    },
+    {
+        "version": 26,
+        "description": "Add dismissal_reason column to incidents and extend status enum",
+        "sql": [
+            """
+            ALTER TABLE incidents ADD COLUMN IF NOT EXISTS dismissal_reason TEXT DEFAULT '';
+            """,
+            """
+            COMMENT ON COLUMN incidents.dismissal_reason IS
+                'Reason provided when an incident is dismissed as false_positive.';
+            """,
+            """
+            ANALYZE incidents;
+            """,
         ],
     },
 ]
