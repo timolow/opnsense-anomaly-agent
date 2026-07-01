@@ -1239,6 +1239,22 @@ MIGRATIONS: List[Dict[str, Any]] = [
             """,
         ],
     },
+    {
+        "version": 27,
+        "description": "Add related_ips to incident_groups for cross-IP correlation",
+        "sql": [
+            """
+            ALTER TABLE incident_groups ADD COLUMN IF NOT EXISTS related_ips TEXT[] DEFAULT ARRAY[]::TEXT[];
+            """,
+            """
+            COMMENT ON COLUMN incident_groups.related_ips IS
+                'All source IPs in this group (supports cross-IP correlation groups).';
+            """,
+            """
+            ANALYZE incident_groups;
+            """,
+        ],
+    },
 ]
 
 # =============================================================================

@@ -167,6 +167,9 @@ class Incident:
         # Chain timeline: ordered list of {phase, signal_type, timestamp}
         self.chain_timeline: List[Dict[str, Any]] = []
 
+        # Deduplication: track (signal_type, source) with timestamps within 5min window
+        self._recent_signals: deque = deque()  # (timestamp, signal_type, source)
+
         # Metadata
         self.metadata: Dict[str, Any] = {
             "dst_ips": set(),
@@ -177,7 +180,32 @@ class Incident:
 
     def add_signal(self, signal_type: str, source: str,
                    severity: str, metadata: Optional[Dict[str, Any]] = None):
-        """Add a signal to this incident, updating severity and phases."""
+        """Add a signal to this incident, updating severity and phases.
+
+        Returns:
+            True if the signal was added, False if it was a duplicate
+            (same signal_type+source within 5 min).
+        """
+        now = time.time()
+
+        # ── Deduplication: same signal_type+source within 5 min = update, not create ──
+        dedup_key = (signal_type, source)
+        # Prune entries older than 5 min
+        while self._recent_signals and (now - self._recent_signals[0][0]) > 300:
+            self._recent_signals.popleft()
+
+        for _, st, src in self._recent_signals:
+            if st == signal_type and src == source:
+                # Duplicate signal — still update last_seen and severity
+                self.last_seen = now
+                sig_rank = SEVERITY_RANK.get(severity, 0)
+                if sig_rank > self.severity_rank:
+                    self.severity_rank = sig_rank
+                    self.severity = severity
+                return False
+
+        # Record this signal for dedup tracking
+        self._recent_signals.append((now, signal_type, source))
         self.signal_types.add(signal_type)
         self.sources.add(source)
         self.last_seen = time.time()
@@ -298,6 +326,56 @@ class Incident:
                 targets.append(f"{ip}:{port}")
         return targets[:20]  # Limit to 20 targets
 
+    def get_related_ips(self) -> Set[str]:
+        """Get all destination IPs associated with this incident (for cross-IP merging)."""
+        return self.metadata.get("dst_ips", set()).copy()
+
+    def merge(self, other: "Incident"):
+        """Merge another incident into this one (cross-IP correlation).
+
+        Called when two incidents share overlapping destination IPs.
+        This incident absorbs the other's signals, phases, and metadata.
+        """
+        self.signal_types.update(other.signal_types)
+        self.sources.update(other.sources)
+        self.phases.update(other.phases)
+        self.signal_count += other.signal_count
+
+        # Merge phase_first_seen (keep earliest)
+        for phase, ts in other.phase_first_seen.items():
+            if phase not in self.phase_first_seen or ts < self.phase_first_seen[phase]:
+                self.phase_first_seen[phase] = ts
+
+        # Merge chain timeline (deduplicate by phase+signal_type)
+        existing_keys = {(e["phase"], e["signal_type"]) for e in self.chain_timeline}
+        for entry in other.chain_timeline:
+            key = (entry["phase"], entry["signal_type"])
+            if key not in existing_keys:
+                self.chain_timeline.append(entry)
+                existing_keys.add(key)
+
+        # Merge metadata
+        self.metadata["dst_ips"].update(other.metadata.get("dst_ips", set()))
+        self.metadata["dst_ports"].update(other.metadata.get("dst_ports", set()))
+        self.metadata["protocols"].update(other.metadata.get("protocols", set()))
+        self.metadata["countries"].update(other.metadata.get("countries", set()))
+
+        # Update severity (take max)
+        if other.severity_rank > self.severity_rank:
+            self.severity_rank = other.severity_rank
+            self.severity = other.severity
+
+        # Update timestamps
+        self.last_seen = max(self.last_seen, other.last_seen)
+        if other.first_seen < self.first_seen:
+            self.first_seen = other.first_seen
+
+        # Mark other as inactive (absorbed)
+        other.is_active = False
+
+        # Re-escalate after merge
+        self._escalate_by_pattern()
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for API response."""
         return {
@@ -314,6 +392,7 @@ class Incident:
             "auto_resolved": self.auto_resolved,
             "description": self.get_description(),
             "affected_targets": self.get_affected_targets(),
+            "related_ips": sorted(self.get_related_ips()),
             "chain_timeline": self.chain_timeline,
             "metadata": {
                 k: sorted(v) if isinstance(v, set) else v
@@ -557,7 +636,7 @@ class CorrelationEngine:
         now = time.time()
         for inc in incidents:
             if inc.is_active and (now - inc.last_seen) < self.correlation_window:
-                # Add signal to existing incident
+                # Add signal to existing incident (dedup handled inside)
                 old_severity = inc.severity
                 old_escalated = inc.is_escalated
                 inc.add_signal(
@@ -565,6 +644,10 @@ class CorrelationEngine:
                     signal.severity, signal.metadata
                 )
                 self._persist_incident(inc)
+
+                # ── Cross-IP merge: check for overlapping dst_ips ──
+                self._try_merge_with_related(inc)
+
                 # Emit correlation signal if severity escalated or attack chain detected
                 if self.signal_bus and inc.is_active:
                     # Full chain escalation — highest priority signal
@@ -629,6 +712,10 @@ class CorrelationEngine:
         self._incidents[ip] = self._incidents[ip][-50:]
 
         self._persist_incident(new_incident)
+
+        # ── Cross-IP merge: check for overlapping dst_ips with new incident ──
+        self._try_merge_with_related(new_incident)
+
         # Emit incident_created signal
         if self.signal_bus:
             self.signal_bus.emit(
@@ -645,6 +732,67 @@ class CorrelationEngine:
                 },
             )
         return new_incident
+
+    def _try_merge_with_related(self, incident: Incident):
+        """Check if this incident shares dst_ips with other active incidents and merge.
+
+        Called with self._lock held. When two incidents target the same
+        destination IP(s), they likely belong to the same attack campaign
+        even if sourced from different IPs (e.g., distributed scanning).
+        """
+        my_dst_ips = incident.get_related_ips()
+        if not my_dst_ips:
+            return
+
+        merged_any = False
+        for ip, incidents in list(self._incidents.items()):
+            # Skip the incident's own IP list
+            if ip == incident.ip:
+                continue
+
+            for other in incidents:
+                if not other.is_active or other is incident:
+                    continue
+
+                # Check for overlapping destination IPs
+                other_dst_ips = other.get_related_ips()
+                overlap = my_dst_ips & other_dst_ips
+                if not overlap:
+                    continue
+
+                # Merge the older/larger incident into the newer one (or vice versa)
+                # Keep the one with more signals as the survivor
+                if incident.signal_count >= other.signal_count:
+                    incident.merge(other)
+                else:
+                    other.merge(incident)
+                    # Update the reference — 'other' is now the survivor
+                    incident = other
+
+                merged_any = True
+                logger.info(
+                    "Cross-IP merge: incidents from %s and %s merged "
+                    "(overlapping dst_ips: %s)",
+                    ip, incident.ip, sorted(overlap),
+                )
+                self._persist_incident(incident)
+
+        if merged_any:
+            # Emit cross-IP correlation signal
+            if self.signal_bus and incident.is_active:
+                self.signal_bus.emit(
+                    source="correlation",
+                    signal_type="cross_ip_merge",
+                    severity=incident.severity,
+                    ip=incident.ip,
+                    metadata={
+                        "signal_types": sorted(incident.signal_types),
+                        "sources": sorted(incident.sources),
+                        "related_ips": sorted(incident.get_related_ips()),
+                        "signal_count": incident.signal_count,
+                        "description": incident.get_description(),
+                    },
+                )
 
     def _persist_incident(self, incident: Incident):
         """Persist incident to PostgreSQL."""

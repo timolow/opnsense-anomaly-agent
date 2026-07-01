@@ -144,11 +144,17 @@ class IncidentRecord:
 # ── Incident Group ───────────────────────────────────────────────────
 
 class IncidentGroup:
-    """Groups related incidents (same IP within a time window)."""
+    """Groups related incidents by IP and cross-source correlation.
+
+    Supports multi-IP groups: when incidents from different source IPs
+    target overlapping destination IPs, they are merged into a single
+    group representing a coordinated attack campaign.
+    """
 
     def __init__(self, group_id: int, ip: str):
         self.group_id = group_id
-        self.ip = ip
+        self.ip = ip  # Primary IP
+        self.related_ips: Set[str] = {ip}  # All source IPs in this group
         self.incident_ids: List[str] = []
         self.created_at = time.time()
         self.resolved_at: Optional[float] = None
@@ -165,25 +171,29 @@ class IncidentGroup:
         if SEVERITY_RANK.get(record.severity, 0) > self.severity_rank:
             self.severity_rank = SEVERITY_RANK[record.severity]
             self.severity = record.severity
-        self.description = f"Grouped incident for {self.ip}: {len(self.incident_ids)} related incidents, {self.signal_count} total signals"
+        # Track all source IPs in the group
+        self.related_ips.add(record.ip)
+        ips_str = ", ".join(sorted(self.related_ips))
+        self.description = f"Grouped incident for {ips_str}: {len(self.incident_ids)} related incidents, {self.signal_count} total signals"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "group_id": self.group_id,
             "ip": self.ip,
+            "related_ips": sorted(self.related_ips),
             "incident_ids": self.incident_ids,
             "incident_count": len(self.incident_ids),
             "created_at": datetime.fromtimestamp(self.created_at, tz=timezone.utc).isoformat(),
             "resolved_at": (
                 datetime.fromtimestamp(self.resolved_at, tz=timezone.utc).isoformat()
-                if self.resolved_at else None
+                if self.resolved_at is not None
+                else None
             ),
             "severity": self.severity,
             "signal_count": self.signal_count,
             "signal_types": sorted(self.signal_types),
             "description": self.description,
         }
-
 
 # ── IncidentManager ──────────────────────────────────────────────────
 
@@ -857,7 +867,13 @@ class IncidentManager:
             logger.warning("DB connection error persisting feedback: %s", e)
 
     def _try_group_incident(self, record: IncidentRecord):
-        """Try to add an incident to an existing group or create a new one."""
+        """Try to add an incident to an existing group or create a new one.
+
+        Supports two grouping strategies:
+        1. Same source IP within the grouping window (original behavior)
+        2. Cross-IP correlation: incidents sharing destination IPs are
+           merged into a single group representing a coordinated campaign.
+        """
         ip = record.ip
         now = time.time()
 
@@ -871,10 +887,33 @@ class IncidentManager:
                     target_group = group
                     break
 
+            # ── Cross-IP grouping: check for groups with overlapping dst_ips ──
+            if target_group is None:
+                record_dst_ips = set(record.metadata.get("dst_ips", []))
+                if record_dst_ips:
+                    for group in self._groups.values():
+                        if group.resolved_at is not None:
+                            continue
+                        if (now - group.created_at) > self.grouping_window:
+                            continue
+                        # Check if any incident in the group shares dst_ips
+                        for existing_inc_id in group.incident_ids:
+                            existing = self._incidents.get(existing_inc_id)
+                            if not existing:
+                                continue
+                            existing_dst_ips = set(existing.metadata.get("dst_ips", []))
+                            if record_dst_ips & existing_dst_ips:
+                                target_group = group
+                                break
+                        if target_group:
+                            break
+
             if target_group:
                 target_group.add_incident(record)
                 record.group_id = target_group.group_id
-                logger.debug("Added incident %s to existing group %d", record.id, target_group.group_id)
+                logger.debug("Added incident %s to existing group %d (IP: %s, related: %s)",
+                             record.id, target_group.group_id, target_group.ip,
+                             sorted(target_group.related_ips))
             else:
                 # Create new group
                 group_id = self._get_next_group_id()
@@ -906,7 +945,7 @@ class IncidentManager:
             return int(time.time())
 
     def _persist_group(self, group: IncidentGroup):
-        """Persist incident group to DB."""
+        """Persist incident group to DB with related_ips for cross-IP correlation."""
         if not self.db:
             return
         try:
@@ -921,10 +960,15 @@ class IncidentManager:
                         if rec and rec.db_id:
                             db_ids.append(rec.db_id)
 
+                # Use UPSERT: update existing group or insert new one
                 cur.execute(
-                    """INSERT INTO incident_groups (ip, incident_ids)
-                       VALUES (%s, %s)""",
-                    (group.ip, db_ids if db_ids else '{}'),
+                    """INSERT INTO incident_groups (ip, incident_ids, related_ips)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (id) DO UPDATE SET
+                           incident_ids = EXCLUDED.incident_ids,
+                           related_ips = EXCLUDED.related_ips""",
+                    (group.ip, db_ids if db_ids else '{}',
+                     sorted(group.related_ips) if group.related_ips else []),
                 )
                 conn.commit()
             except Exception as e:
