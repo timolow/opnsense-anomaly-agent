@@ -764,18 +764,24 @@ class StatePersistence:
         """Save reverse DNS cache."""
         if not hasattr(agent, "reverse_dns") or not agent.reverse_dns:
             return {}
-        
+
         cache = agent.reverse_dns._cache
         if not cache:
             return {}
-        
+
         data = {}
         for ip, (hostname, expiry) in cache.items():
             data[ip] = {
                 "hostname": hostname,
                 "expiry": expiry.isoformat() if hasattr(expiry, "isoformat") else expiry,
             }
-        
+
+        # Include resolver stats
+        try:
+            data["_stats"] = agent.reverse_dns.get_stats()
+        except Exception:
+            pass
+
         return data
     
     def _load_reverse_dns(self, agent, saved_data: Dict) -> None:

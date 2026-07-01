@@ -2505,6 +2505,17 @@ def query_health():
             redis_dns_count = len(keys)
         except Exception:
             pass
+
+    # P7-T3: Include detailed DNS resolution stats from persisted state
+    rdns_stats = rdns_cache.get("_stats", {}) if rdns_cache else {}
+    dns_resolution = {
+        "enabled": rdns_stats.get("enabled", os.environ.get("REVERSE_DNS_ENABLED", "true").lower() == "true"),
+        "cache_hits": rdns_stats.get("cache_hits", 0),
+        "cache_misses": rdns_stats.get("cache_misses", 0),
+        "failures": rdns_stats.get("failures", 0),
+        "avg_latency_ms": rdns_stats.get("avg_latency_ms", 0.0),
+    }
+
     subsystems["reverse_dns"] = {
         "status": "active",
         "message": f"Caching enabled (default), in-memory={rdns_cache_size}, redis_entries={redis_dns_count}",
@@ -2512,6 +2523,7 @@ def query_health():
         "dns_server": os.environ.get("REVERSE_DNS_SERVER", "system-default"),
         "cache_size": rdns_cache_size,
         "redis_entries": redis_dns_count,
+        "dns_resolution": dns_resolution,
     }
     
     # --- OPNsense API ---
@@ -3518,6 +3530,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         metrics["system"]["redis"]["pct_of_max"] = rinfo.get("pct_of_max", 0)
             except Exception as res_err:
                 logger.debug("Could not add resource metrics: %s", res_err)
+
+            # P7-T3: DNS resolution metrics
+            rdns_cache_data = state.get("reverse_dns", {}) if state else {}
+            rdns_stats = rdns_cache_data.get("_stats", {}) if rdns_cache_data else {}
+            metrics["dns_resolution"] = {
+                "total": {
+                    "hit": rdns_stats.get("cache_hits", 0),
+                    "miss": rdns_stats.get("cache_misses", 0),
+                    "failure": rdns_stats.get("failures", 0),
+                },
+                "latency_seconds": rdns_stats.get("avg_latency_ms", 0.0) / 1000.0,
+                "enabled": rdns_stats.get("enabled", True),
+            }
 
         except Exception as e:
             logger.error("Metrics generation failed: %s", e)
