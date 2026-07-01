@@ -19,8 +19,6 @@ import { CYBER, severityStyle } from '@/utils/colors';
 import { ThreatCanvasSkeleton } from '@/components/SkeletonLoaders';
 import { TabQueryError } from '@/components/TabShell';
 import CanvasBarChart from '@/components/charts/CanvasBarChart';
-import CanvasScoreGauge from '@/components/charts/CanvasScoreGauge';
-import CanvasAreaChart from '@/components/charts/CanvasAreaChart';
 import ThreatTimeline from '@/components/charts/ThreatTimeline';
 import { useThreatCanvasSSE } from '@/hooks/useThreatCanvasSSE';
 import {
@@ -102,7 +100,7 @@ function PhaseBadge({ phase, active }: { phase: string; active: boolean }) {
   );
 }
 
-// ── Behavior Score Bar (legacy) ──
+// ── Behavior Score Bar ──
 function ScoreBar({ score }: { score: number }) {
   const color = score >= 90 ? CYBER.red : score >= 70 ? CYBER.orange : score >= 40 ? CYBER.yellow : CYBER.green;
   return (
@@ -116,298 +114,6 @@ function ScoreBar({ score }: { score: number }) {
       <span className="text-sm font-mono font-bold" style={{ color }}>
         {score}
       </span>
-    </div>
-  );
-}
-
-// ── IP Drill-down Panel (P5-T5) ──
-// Shows: IP + DNS + geo, behavioral gauge, threat badge, baseline summary,
-// historical score chart (24h), signal breakdown, threat indicators.
-// Responsive: collapses on mobile.
-function IpDrillDown({ incident }: { incident: ThreatCanvasIncident }) {
-  const color = threatColor(incident.threat_level);
-
-  // Fetch comprehensive IP detail from backend
-  const { data: ipDetail } = useQuery({
-    queryKey: ['ip-detail', incident.ip],
-    queryFn: () => api.ipDetail(incident.ip),
-    enabled: !!incident.ip,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  });
-
-  // Signal breakdown data for Canvas bar chart
-  const signalBreakdown = useMemo(() => {
-    const counts: Record<string, number> = {};
-    incident.sources.forEach(s => { counts[s] = 0; });
-    incident.timeline?.forEach(evt => {
-      if (counts[evt.source] !== undefined) counts[evt.source]++;
-    });
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    if (total === 0) {
-      const per = Math.floor(incident.signal_count / Math.max(incident.sources.length, 1));
-      incident.sources.forEach(s => { counts[s] = per; });
-    }
-    return incident.sources.map(src => ({
-      name: src,
-      value: counts[src],
-      color: SOURCE_COLORS[src] || CYBER.textMuted,
-    }));
-  }, [incident]);
-
-  // Historical score timeline from ip-detail timeline data
-  const historicalScoreData = useMemo(() => {
-    if (!ipDetail?.timeline?.length) return [];
-    return ipDetail.timeline.map((pt: { hour: string; count: number }) => ({
-      x: new Date(pt.hour).getTime(),
-      value: pt.count,
-    }));
-  }, [ipDetail]);
-
-  // Baseline comparison: derive from ip-detail stats
-  const baselineSummary = useMemo(() => {
-    if (!ipDetail) return null;
-    const total = ipDetail.total_events || 0;
-    const blocked = ipDetail.total_blocked || 0;
-    const passed = ipDetail.total_passed || 0;
-    // Heuristic baseline: typical ratio is ~70% pass, 30% block for normal traffic
-    const baselinePassRate = 0.7;
-    const currentPassRate = total > 0 ? passed / total : 0;
-    const deviation = Math.abs(currentPassRate - baselinePassRate) * 100;
-    return {
-      totalEvents: total,
-      blocked,
-      passed,
-      uniquePorts: ipDetail.unique_ports,
-      uniqueDestinations: ipDetail.unique_destinations,
-      currentPassRate: Math.round(currentPassRate * 100),
-      baselinePassRate: Math.round(baselinePassRate * 100),
-      deviation: Math.round(deviation),
-      threatIndicators: ipDetail.threat_indicators.length,
-    };
-  }, [ipDetail]);
-
-  return (
-    <div className="space-y-4 lg:space-y-4">
-      {/* ── Header: IP + DNS + Geo ── */}
-      <div className="bg-cyber-panel border rounded-lg p-4" style={{ borderColor: `${color}30` }}>
-        {/* IP address with DNS reverse */}
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-mono text-lg font-bold text-cyber-text">{incident.ip}</h3>
-              {incident.src_hostname && (
-                <span className="text-sm text-cyber-accent font-mono">({incident.src_hostname})</span>
-              )}
-              {ipDetail?.dns_reverse && ipDetail.dns_reverse !== incident.src_hostname && (
-                <span className="text-xs px-2 py-0.5 rounded font-mono bg-cyber-darker border border-cyber-border text-cyber-textMuted">
-                  ↩ {ipDetail.dns_reverse}
-                </span>
-              )}
-              {ipDetail?.is_private && (
-                <span className="text-xs px-2 py-0.5 rounded font-mono bg-cyber-accent/10 border border-cyber-accent/30 text-cyber-accent">
-                  private
-                </span>
-              )}
-            </div>
-            {/* Geo hint */}
-            {ipDetail?.geo_hint && (
-              <p className="text-xs text-cyber-textMuted mt-1">🌍 {ipDetail.geo_hint}</p>
-            )}
-          </div>
-        </div>
-
-        {/* ── Gauge + Threat Level row ── */}
-        <div className="flex items-center gap-4">
-          {/* Behavioral score gauge */}
-          <div className="flex-shrink-0">
-            <CanvasScoreGauge score={incident.behavior_score} size={120} label="SCORE" />
-          </div>
-
-          {/* Threat level + key stats */}
-          <div className="flex-1 space-y-2">
-            {/* Threat level badge */}
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-cyber-textMuted uppercase">Threat Level</span>
-              <span
-                className="px-3 py-1 text-sm font-bold font-mono uppercase rounded border"
-                style={{ color, backgroundColor: `${color}15`, borderColor: `${color}40` }}
-              >
-                {incident.threat_level}
-              </span>
-            </div>
-
-            {/* First/Last seen */}
-            <div className="flex justify-between">
-              <span className="text-xs text-cyber-textMuted">First Seen</span>
-              <span className="text-xs font-mono text-cyber-text">
-                {incident.first_seen ? new Date(incident.first_seen).toLocaleString() : 'N/A'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-xs text-cyber-textMuted">Last Seen</span>
-              <span className="text-xs font-mono text-cyber-text">
-                {incident.last_seen ? new Date(incident.last_seen).toLocaleString() : 'N/A'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-xs text-cyber-textMuted">Time Active</span>
-              <span className="text-xs font-mono font-bold" style={{ color: CYBER.accent }}>
-                {timeActive(incident.last_seen)}
-              </span>
-            </div>
-
-            {/* Mute/Watch status */}
-            <div className="flex gap-2 mt-1">
-              {ipDetail?.is_muted && (
-                <span className="text-xs px-2 py-0.5 rounded bg-cyber-yellow/10 border border-cyber-yellow/30 text-cyber-yellow">
-                  muted
-                </span>
-              )}
-              {ipDetail?.is_watched && (
-                <span className="text-xs px-2 py-0.5 rounded bg-cyber-accent/10 border border-cyber-accent/30 text-cyber-accent">
-                  watched
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Quick Stats Grid ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Signals', value: incident.signal_count, color: CYBER.accent },
-          { label: 'Sources', value: incident.source_count, color: CYBER.purple },
-          { label: 'Types', value: incident.signal_types.length, color: CYBER.orange },
-          { label: 'Phases', value: incident.phases.length, color: '#ff00ff' },
-        ].map(s => (
-          <div key={s.label} className="bg-cyber-panel border border-cyber-border rounded-lg p-3 text-center">
-            <span className="text-xs text-cyber-textMuted uppercase">{s.label}</span>
-            <div className="text-lg font-mono font-bold" style={{ color: s.color }}>{s.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Baseline Summary ── */}
-      {baselineSummary && (
-        <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
-          <h4 className="text-xs text-cyber-textMuted uppercase tracking-wider mb-3">Baseline Summary</h4>
-          <div className="space-y-3">
-            {/* Pass/Block ratio */}
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="text-cyber-textMuted">Pass Rate</span>
-                <span className="font-mono">
-                  <span className="text-cyber-text">Current: {baselineSummary.currentPassRate}%</span>
-                  <span className="text-cyber-textMuted ml-2">vs Baseline: {baselineSummary.baselinePassRate}%</span>
-                </span>
-              </div>
-              <div className="h-2 bg-cyber-darker rounded-full overflow-hidden border border-cyber-border/30">
-                <div className="h-full rounded-full bg-cyber-green/60" style={{ width: `${baselineSummary.baselinePassRate}%` }} />
-              </div>
-              <div className="h-2 bg-cyber-darker rounded-full overflow-hidden border border-cyber-border/30 mt-1">
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${baselineSummary.currentPassRate}%`,
-                    backgroundColor: baselineSummary.deviation > 30 ? CYBER.red : CYBER.accent,
-                    boxShadow: `0 0 6px ${baselineSummary.deviation > 30 ? CYBER.red : CYBER.accent}60`,
-                  }}
-                />
-              </div>
-              {baselineSummary.deviation > 30 && (
-                <p className="text-xs text-cyber-red mt-1">⚠ {baselineSummary.deviation}% deviation from baseline</p>
-              )}
-            </div>
-
-            {/* Event breakdown */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-cyber-darker rounded p-2">
-                <span className="text-xs text-cyber-textMuted">Blocked</span>
-                <div className="text-sm font-mono font-bold text-cyber-red">{baselineSummary.blocked.toLocaleString()}</div>
-              </div>
-              <div className="bg-cyber-darker rounded p-2">
-                <span className="text-xs text-cyber-textMuted">Passed</span>
-                <div className="text-sm font-mono font-bold text-cyber-green">{baselineSummary.passed.toLocaleString()}</div>
-              </div>
-              <div className="bg-cyber-darker rounded p-2">
-                <span className="text-xs text-cyber-textMuted">Unique Ports</span>
-                <div className="text-sm font-mono font-bold text-cyber-orange">{baselineSummary.uniquePorts}</div>
-              </div>
-              <div className="bg-cyber-darker rounded p-2">
-                <span className="text-xs text-cyber-textMuted">Destinations</span>
-                <div className="text-sm font-mono font-bold text-cyber-accent">{baselineSummary.uniqueDestinations}</div>
-              </div>
-            </div>
-
-            {/* Threat indicators count */}
-            {baselineSummary.threatIndicators > 0 && (
-              <div className="flex items-center gap-2">
-                <AlertTriangle size={12} style={{ color: CYBER.orange }} />
-                <span className="text-xs text-cyber-textMuted">
-                  {baselineSummary.threatIndicators} threat indicators detected
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── Historical Score Chart (24h timeline) ── */}
-      {historicalScoreData.length > 0 && (
-        <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
-          <h4 className="text-xs text-cyber-textMuted uppercase tracking-wider mb-2">24h Activity Timeline</h4>
-          <CanvasAreaChart
-            data={historicalScoreData}
-            height={140}
-            color={color}
-          />
-        </div>
-      )}
-
-      {/* ── Narrative ── */}
-      {incident.narrative && (
-        <div className="rounded-lg border border-cyber-accent/20 bg-cyber-accent/5 p-3">
-          <h4 className="text-xs text-cyber-accent uppercase tracking-wider mb-1 font-semibold">Narrative</h4>
-          <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.narrative}</p>
-        </div>
-      )}
-
-      {/* ── Signal Breakdown (Canvas 2D) ── */}
-      {signalBreakdown.length > 0 && (
-        <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
-          <h4 className="text-xs text-cyber-textMuted uppercase tracking-wider mb-2">Signal Breakdown</h4>
-          <CanvasBarChart data={signalBreakdown} height={120} barSize={80} />
-        </div>
-      )}
-
-      {/* ── Threat Indicators ── */}
-      {ipDetail?.threat_indicators?.length > 0 && (
-        <div className="bg-cyber-panel border border-cyber-border rounded-lg p-4">
-          <h4 className="text-xs text-cyber-textMuted uppercase tracking-wider mb-3">Threat Indicators</h4>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {ipDetail.threat_indicators.map((indicator: { type: string; severity: string; description: string; timestamp: string }, i: number) => {
-              const sevColor = severityStyle(indicator.severity.toLowerCase()).color;
-              return (
-                <div key={i} className="flex items-start gap-2 p-2 bg-cyber-darker rounded border border-cyber-border/30">
-                  <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: sevColor }} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono font-semibold" style={{ color: sevColor }}>{indicator.type}</span>
-                      <span className="text-xs text-cyber-textMuted font-mono">
-                        {indicator.timestamp ? new Date(indicator.timestamp).toLocaleString() : ''}
-                      </span>
-                    </div>
-                    <p className="text-xs text-cyber-textMuted truncate">{indicator.description}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -467,6 +173,10 @@ function IncidentRow({ incident, isSelected, onClick }: { incident: ThreatCanvas
         {incident.narrative && (
           <p className="text-xs text-cyber-textMuted mt-1 truncate">{incident.narrative}</p>
         )}
+        {/* Explanation preview */}
+        {incident.explanation && (
+          <p className="text-xs text-cyber-accent/70 mt-0.5 truncate">{incident.explanation}</p>
+        )}
       </div>
 
       {/* Right column: stats */}
@@ -488,6 +198,120 @@ function IncidentRow({ incident, isSelected, onClick }: { incident: ThreatCanvas
       <div className="flex-shrink-0 text-cyber-textMuted">
         {isSelected ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </div>
+    </div>
+  );
+}
+
+// ── IP Drill-down Panel (Right side) ──
+function IpDrillDown({ incident }: { incident: ThreatCanvasIncident }) {
+  const color = threatColor(incident.threat_level);
+
+  // Signal breakdown data for Canvas bar chart
+  const signalBreakdown = useMemo(() => {
+    const counts: Record<string, number> = {};
+    incident.sources.forEach(s => { counts[s] = 0; });
+    incident.timeline?.forEach(evt => {
+      if (counts[evt.source] !== undefined) counts[evt.source]++;
+    });
+    // Fallback: distribute signal_count across sources
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total === 0) {
+      const per = Math.floor(incident.signal_count / incident.sources.length);
+      incident.sources.forEach(s => { counts[s] = per; });
+    }
+    return incident.sources.map(src => ({
+      name: src,
+      value: counts[src],
+      color: SOURCE_COLORS[src] || CYBER.textMuted,
+    }));
+  }, [incident]);
+
+  return (
+    <div className="bg-cyber-panel border rounded-lg p-4 space-y-4" style={{ borderColor: `${color}30` }}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
+          <h3 className="font-mono text-lg font-bold text-cyber-text">{incident.ip}</h3>
+          {incident.src_hostname && (
+            <span className="text-sm text-cyber-accent font-mono">({incident.src_hostname})</span>
+          )}
+          {incident.dst_hostname && (
+            <span className="text-xs text-cyber-textMuted">→ {incident.dst_hostname}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Score + Level */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <span className="text-xs text-cyber-textMuted uppercase">Behavior Score</span>
+          <ScoreBar score={incident.behavior_score} />
+        </div>
+        <div className="space-y-2">
+          <div className="flex justify-between">
+            <span className="text-xs text-cyber-textMuted">Threat Level</span>
+            <span className="text-xs font-bold font-mono uppercase" style={{ color }}>{incident.threat_level}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-xs text-cyber-textMuted">First Seen</span>
+            <span className="text-xs font-mono text-cyber-text">
+              {incident.first_seen ? new Date(incident.first_seen).toLocaleString() : 'N/A'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-xs text-cyber-textMuted">Last Seen</span>
+            <span className="text-xs font-mono text-cyber-text">
+              {incident.last_seen ? new Date(incident.last_seen).toLocaleString() : 'N/A'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-xs text-cyber-textMuted">Time Active</span>
+            <span className="text-xs font-mono font-bold" style={{ color: CYBER.accent }}>
+              {timeActive(incident.last_seen)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Signal count stats */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Signals', value: incident.signal_count, color: CYBER.accent },
+          { label: 'Sources', value: incident.source_count, color: CYBER.purple },
+          { label: 'Types', value: incident.signal_types.length, color: CYBER.orange },
+          { label: 'Phases', value: incident.phases.length, color: '#ff00ff' },
+        ].map(s => (
+          <div key={s.label} className="bg-cyber-darker rounded p-2 text-center">
+            <span className="text-xs text-cyber-textMuted uppercase">{s.label}</span>
+            <div className="text-lg font-mono font-bold" style={{ color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Narrative */}
+      {incident.narrative && (
+        <div className="rounded-lg border border-cyber-accent/20 bg-cyber-accent/5 p-3">
+          <h4 className="text-xs text-cyber-accent uppercase tracking-wider mb-1 font-semibold">Narrative</h4>
+          <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.narrative}</p>
+        </div>
+      )}
+
+      {/* Explanation */}
+      {incident.explanation && (
+        <div className="rounded-lg border border-cyber-purple/20 bg-cyber-purple/5 p-3">
+          <h4 className="text-xs text-cyber-purple uppercase tracking-wider mb-1 font-semibold">Why Flagged</h4>
+          <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.explanation}</p>
+        </div>
+      )}
+
+      {/* Signal breakdown bar chart (Canvas 2D) */}
+      {signalBreakdown.length > 0 && (
+        <div>
+          <h4 className="text-xs text-cyber-textMuted uppercase tracking-wider mb-2">Signal Breakdown</h4>
+          <CanvasBarChart data={signalBreakdown} height={120} barSize={80} />
+        </div>
+      )}
     </div>
   );
 }

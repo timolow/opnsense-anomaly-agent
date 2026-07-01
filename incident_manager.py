@@ -79,7 +79,7 @@ class IncidentRecord:
         "first_seen", "last_seen", "description", "metadata",
         "is_active", "auto_resolved", "resolved_at", "group_id",
         "feedback_count", "feedback_score",
-        "dismissal_reason",
+        "dismissal_reason", "explanation",
     )
 
     def __init__(self, db_id: int, ip: str, severity: str = "low",
@@ -91,7 +91,7 @@ class IncidentRecord:
                  description: str = "", metadata: Optional[Dict] = None,
                  is_active: bool = True, auto_resolved: bool = False,
                  resolved_at: Optional[float] = None,
-                 dismissal_reason: str = ""):
+                 dismissal_reason: str = "", explanation: str = ""):
         self.id = f"inc_{uuid.uuid4().hex[:8]}"
         self.db_id = db_id
         self.ip = ip
@@ -112,6 +112,7 @@ class IncidentRecord:
         self.feedback_count = 0
         self.feedback_score = 0.0  # avg thumbs_up ratio
         self.dismissal_reason = dismissal_reason
+        self.explanation = explanation
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -127,6 +128,7 @@ class IncidentRecord:
             "first_seen": datetime.fromtimestamp(self.first_seen, tz=timezone.utc).isoformat(),
             "last_seen": datetime.fromtimestamp(self.last_seen, tz=timezone.utc).isoformat(),
             "description": self.description,
+            "explanation": self.explanation,
             "metadata": self.metadata,
             "is_active": self.is_active,
             "auto_resolved": self.auto_resolved,

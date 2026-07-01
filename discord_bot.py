@@ -387,6 +387,7 @@ class DiscordClient:
         behavioral_score = incident_dict.get('behavioral_score')
         dns_name = incident_dict.get('dns_name')
         chain_timeline = incident_dict.get('chain_timeline', [])
+        explanation = incident_dict.get('explanation', '')
 
         # Dedup: per-IP within DEDUP_SECONDS (use IP as the signal key for incident dedup)
         dedup_key = f"INCIDENT:{ip}"
@@ -465,6 +466,10 @@ class DiscordClient:
         # Recommended actions
         if actions:
             fields.append({'name': 'Recommended Actions', 'value': '\n'.join(actions), 'inline': False})
+
+        # Explanation field (prominent)
+        if explanation:
+            fields.append({'name': 'Why Flagged', 'value': explanation[:500], 'inline': False})
 
         # Narrative as description (truncated to Discord's 4096-char limit)
         description = narrative[:3500] if narrative else f'Incident detected for {ip}.'
