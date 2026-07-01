@@ -22,7 +22,7 @@ class ReverseDNSResolver:
     def __init__(
         self,
         dns_server: str = "",
-        enabled: bool = False,
+        enabled: bool = True,
         cache_ttl: int = 3600,
         redis_url: str = "redis://redis:6379/0",
         static_map_file: Optional[str] = None,
@@ -70,13 +70,13 @@ class ReverseDNSResolver:
         self._resolver.timeout = 2  # 2 second timeout per query
         self._resolver.lifetime = 4  # 4 second total lifetime
 
-        # Try to connect to Redis
+        # Always initialize Redis when enabled (default: yes)
         if enabled:
             self._init_redis()
         else:
             logger.info(
                 "Reverse DNS resolver disabled "
-                "(set REVERSE_DNS_ENABLED=true to enable)"
+                "(set REVERSE_DNS_ENABLED=false is active)"
             )
 
     def _init_redis(self):

@@ -60,7 +60,7 @@ services:
       - DB_USER=${DB_USER:-opnsense}
       - DB_PASSWORD=${DB_PASSWORD:-opnsense}
       # Reverse DNS (persistent cache via Redis)
-      - REVERSE_DNS_ENABLED=${REVERSE_DNS_ENABLED:-false}
+      - REVERSE_DNS_ENABLED=${REVERSE_DNS_ENABLED:-true}
       - REVERSE_DNS_SERVER=${REVERSE_DNS_SERVER:-}
       - REVERSE_DNS_CACHE_TTL=${REVERSE_DNS_CACHE_TTL:-3600}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}

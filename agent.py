@@ -166,7 +166,7 @@ class Config:
         self.db_retention_incident_days = int(os.getenv("DB_RETENTION_INCIDENT_DAYS", "14"))
         # Reverse DNS
         # Reverse DNS (persistent cache via Redis)
-        self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "false").lower() == "true"
+        self.reverse_dns_enabled = os.getenv("REVERSE_DNS_ENABLED", "true").lower() == "true"
         self.reverse_dns_server = os.getenv("REVERSE_DNS_SERVER", "")
         self.reverse_dns_cache_ttl = int(os.getenv("REVERSE_DNS_CACHE_TTL", "3600"))
         self.reverse_dns_static_map = os.getenv("REVERSE_DNS_STATIC_MAP", "")

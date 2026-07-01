@@ -222,7 +222,7 @@ Key environment variables (full list in `.env.example`):
 | `OWN_WAN_IPS` | *(required)* | Your WAN IPs (comma-separated) |
 | `SYSLOG_ENABLED` | `true` | Built-in UDP syslog listener |
 | `SYSLOG_UDP_PORT` | `1514` | Syslog receive port |
-| `REVERSE_DNS_ENABLED` | `false` | PTR lookups with Redis cache |
+| `REVERSE_DNS_ENABLED` | `true`  | PTR lookups with Redis cache |
 | `BATCH_SIZE` | `100` | Event batch processing size |
 | `PORTSCAN_THRESHOLD` | `10` | Unique destinations to flag scan |
 | `STAT_ZSCORE` | `3.0` | Z-score anomaly threshold |
