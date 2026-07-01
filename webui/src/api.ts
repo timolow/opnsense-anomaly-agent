@@ -19,6 +19,7 @@ import type {
   BehaviorOverviewData, BehaviorProfile, IncidentStats,
   ThreatCanvasData,
   IpTimelineData,
+  IpDetailData,
 } from '@/types';
 
 const BASE = '/api';
@@ -766,6 +767,37 @@ export const api = {
         profile_threat_level: 'unknown',
         profile_behavior_score: 0,
         error: 'Failed to fetch timeline data',
+      };
+    }
+  },
+
+  // IP Detail (P5-T5)
+  ipDetail: async (ip: string): Promise<IpDetailData> => {
+    try {
+      return json<IpDetailData>(`/ip-detail/${encodeURIComponent(ip)}`);
+    } catch {
+      return {
+        ip,
+        category: 'unknown',
+        is_private: false,
+        dns_reverse: null,
+        geo_hint: null,
+        total_events: 0,
+        total_blocked: 0,
+        total_passed: 0,
+        unique_sources: 0,
+        unique_destinations: 0,
+        unique_ports: 0,
+        protocols: [],
+        top_ports: [],
+        top_counterparts: [],
+        interfaces: [],
+        recent_events: [],
+        timeline: [],
+        threat_indicators: [],
+        is_muted: false,
+        is_watched: false,
+        error: 'Failed to fetch IP detail data',
       };
     }
   },

@@ -806,3 +806,54 @@ export interface ThreatCanvasData {
   data_source_status?: 'configured' | 'no_data' | 'not_configured' | 'error';
   empty_message?: string;
 }
+
+// ═══════════════════════════════════════════════════
+// IP Detail types (P5-T5) — /api/ip-detail/{ip}
+// ═══════════════════════════════════════════════════
+
+export interface IpDetailRecentEvent {
+  timestamp: string;
+  action: string;
+  protocol: string;
+  src_ip: string;
+  dst_ip: string;
+  dst_port: number | null;
+  rule: string;
+  interface: string;
+}
+
+export interface IpDetailTimelinePoint {
+  hour: string;
+  count: number;
+}
+
+export interface IpDetailThreatIndicator {
+  type: string;
+  severity: string;
+  description: string;
+  timestamp: string;
+}
+
+export interface IpDetailData {
+  ip: string;
+  category: string;
+  is_private: boolean;
+  dns_reverse: string | null;
+  geo_hint: string | null;
+  total_events: number;
+  total_blocked: number;
+  total_passed: number;
+  unique_sources: number;
+  unique_destinations: number;
+  unique_ports: number;
+  protocols: Array<{ protocol: string; count: number }>;
+  top_ports: Array<{ port: number; count: number }>;
+  top_counterparts: Array<{ ip: string; count: number; role: string }>;
+  interfaces: Array<{ name: string; count: number }>;
+  recent_events: IpDetailRecentEvent[];
+  timeline: IpDetailTimelinePoint[];
+  threat_indicators: IpDetailThreatIndicator[];
+  is_muted: boolean;
+  is_watched: boolean;
+  error?: string;
+}
