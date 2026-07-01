@@ -9,11 +9,21 @@ to the specified DNS server.
 import time
 import logging
 import ipaddress
-from typing import Optional, Dict
+import threading
+from typing import Optional, Dict, List
 
 import dns.resolver
 
 logger = logging.getLogger(__name__)
+
+
+def _get_slog():
+    """Lazy import StructuredLogger to avoid circular deps."""
+    try:
+        from json_logging import get_structured_logger
+        return get_structured_logger(__name__)
+    except Exception:
+        return None
 
 
 class ReverseDNSResolver:
@@ -62,6 +72,14 @@ class ReverseDNSResolver:
         self._miss_count = 0
         self._error_count = 0
         self._redis_hits = 0
+
+        # Detailed stats (thread-safe)
+        self._stats_lock = threading.Lock()
+        self._cache_hit_count = 0       # Redis + in-memory cache hits
+        self._cache_miss_count = 0      # Resolutions that required actual DNS query
+        self._failure_count = 0         # DNS resolution failures (timeout, NXDOMAIN, etc.)
+        self._latency_samples: List[float] = []  # Rolling window of latencies (seconds)
+        self._max_latency_samples = 1000  # Cap to avoid unbounded growth
 
         # Always initialize resolver (used when lookups happen)
         self._resolver = dns.resolver.Resolver()
@@ -138,6 +156,8 @@ class ReverseDNSResolver:
             hostname = self._redis.get(f"dns:{ip}")
             if hostname:
                 self._redis_hits += 1
+                with self._stats_lock:
+                    self._cache_hit_count += 1
                 return hostname
         except Exception as e:
             logger.debug("Redis GET failed for %s: %s", ip, e)
@@ -157,6 +177,8 @@ class ReverseDNSResolver:
         if ip in self._cache:
             hostname, cached_at = self._cache[ip]
             if time.time() - float(cached_at) < self.cache_ttl:
+                with self._stats_lock:
+                    self._cache_hit_count += 1
                 return hostname
             else:
                 del self._cache[ip]
@@ -203,6 +225,7 @@ class ReverseDNSResolver:
             return hostname
 
         # Attempt resolution via dnspython
+        start_time = time.monotonic()
         try:
             addr = ipaddress.ip_address(ip)
             # in-addr.arpa for IPv4
@@ -218,30 +241,84 @@ class ReverseDNSResolver:
                 self._set_redis(ip, hostname)
                 self._set_memory(ip, hostname)
                 self._resolve_count += 1
-                logger.debug("Resolved %s -> %s via %s", ip, hostname, self.dns_server)
+
+                # Track latency
+                latency = time.monotonic() - start_time
+                with self._stats_lock:
+                    self._latency_samples.append(latency)
+                    if len(self._latency_samples) > self._max_latency_samples:
+                        self._latency_samples = self._latency_samples[-self._max_latency_samples:]
+
+                logger.debug("Resolved %s -> %s via %s (%.3fs)", ip, hostname, self.dns_server, latency)
+
+                # Structured logging
+                slog = _get_slog()
+                if slog:
+                    slog.info("DNS resolution successful",
+                              component="reverse_dns",
+                              ip=ip,
+                              hostname=hostname,
+                              dns_server=self.dns_server,
+                              latency_seconds=round(latency, 4),
+                              cache_result="miss_resolved")
+
                 return hostname
             else:
                 self._miss_count += 1
+                with self._stats_lock:
+                    self._cache_miss_count += 1
+
                 logger.debug("No PTR record for %s (%s)", ip, self.dns_server)
                 return None
 
         except dns.resolver.NoAnswer:
             self._miss_count += 1
+            with self._stats_lock:
+                self._cache_miss_count += 1
+
             logger.debug("No PTR record for %s (%s)", ip, self.dns_server)
             return None
 
         except dns.resolver.NXDOMAIN:
             self._miss_count += 1
+            with self._stats_lock:
+                self._cache_miss_count += 1
+
             logger.debug("NXDOMAIN for %s (%s)", ip, self.dns_server)
             return None
 
         except dns.exception.Timeout:
             self._error_count += 1
+            latency = time.monotonic() - start_time
+            with self._stats_lock:
+                self._failure_count += 1
+                self._latency_samples.append(latency)
+                if len(self._latency_samples) > self._max_latency_samples:
+                    self._latency_samples = self._latency_samples[-self._max_latency_samples:]
+
             logger.debug("DNS timeout resolving %s via %s", ip, self.dns_server)
+
+            # Structured logging
+            slog = _get_slog()
+            if slog:
+                slog.warning("DNS resolution timeout",
+                             component="reverse_dns",
+                             ip=ip,
+                             dns_server=self.dns_server,
+                             latency_seconds=round(latency, 4),
+                             error="timeout")
+
             return None
 
         except dns.resolver.NoNameservers:
             self._error_count += 1
+            latency = time.monotonic() - start_time
+            with self._stats_lock:
+                self._failure_count += 1
+                self._latency_samples.append(latency)
+                if len(self._latency_samples) > self._max_latency_samples:
+                    self._latency_samples = self._latency_samples[-self._max_latency_samples:]
+
             logger.warning(
                 "No nameservers available for %s (%s)", ip, self.dns_server
             )
@@ -249,16 +326,52 @@ class ReverseDNSResolver:
 
         except dns.exception.DNSException as e:
             self._error_count += 1
+            latency = time.monotonic() - start_time
+            with self._stats_lock:
+                self._failure_count += 1
+                self._latency_samples.append(latency)
+                if len(self._latency_samples) > self._max_latency_samples:
+                    self._latency_samples = self._latency_samples[-self._max_latency_samples:]
+
             logger.debug("DNS error resolving %s via %s: %s", ip, self.dns_server, e)
+
+            # Structured logging
+            slog = _get_slog()
+            if slog:
+                slog.warning("DNS resolution error",
+                             component="reverse_dns",
+                             ip=ip,
+                             dns_server=self.dns_server,
+                             latency_seconds=round(latency, 4),
+                             error=str(e))
+
             return None
 
         except Exception as e:
             self._error_count += 1
+            latency = time.monotonic() - start_time
+            with self._stats_lock:
+                self._failure_count += 1
+                self._latency_samples.append(latency)
+                if len(self._latency_samples) > self._max_latency_samples:
+                    self._latency_samples = self._latency_samples[-self._max_latency_samples:]
+
             logger.warning("Unexpected error resolving %s via %s: %s", ip, self.dns_server, e)
             return None
 
     def get_stats(self) -> dict:
         """Return resolver statistics."""
+        with self._stats_lock:
+            hits = self._cache_hit_count
+            misses = self._cache_miss_count
+            failures = self._failure_count
+            samples = list(self._latency_samples)
+
+        # Compute latency stats
+        avg_latency_ms = 0.0
+        if samples:
+            avg_latency_ms = round(sum(samples) / len(samples) * 1000, 2)
+
         return {
             "enabled": self.enabled,
             "dns_server": self.dns_server,
@@ -267,6 +380,11 @@ class ReverseDNSResolver:
             "resolve_count": self._resolve_count,
             "miss_count": self._miss_count,
             "error_count": self._error_count,
+            # New detailed stats
+            "cache_hits": hits,
+            "cache_misses": misses,
+            "failures": failures,
+            "avg_latency_ms": avg_latency_ms,
         }
 
     def is_available(self) -> bool:
