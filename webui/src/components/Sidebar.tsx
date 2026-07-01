@@ -80,6 +80,7 @@ const NAV_GROUPS: NavGroup[] = [
     name: 'Config',
     icon: <Settings size={16} />,
     items: [
+      { id: 'observability', label: 'Observability', icon: <Activity size={14} /> },
       { id: 'settings', label: 'Settings', icon: <Settings size={14} /> },
     ],
   },
@@ -105,6 +106,7 @@ export default function Sidebar() {
     'wan-flap': 'Network',
     logs: 'Logs',
     services: 'Services',
+    observability: 'Config',
     settings: 'Config',
   };
 

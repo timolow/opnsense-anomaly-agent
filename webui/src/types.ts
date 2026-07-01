@@ -857,3 +857,44 @@ export interface IpDetailData {
   is_watched: boolean;
   error?: string;
 }
+
+// ── Observability / Pipeline Health ──
+export interface PipelineHealthData {
+  throughput: {
+    events_per_sec: number;
+    anomalies_per_sec: number;
+    alerts_per_sec: number;
+    total_events: number;
+    total_anomalies: number;
+    total_alerts: number;
+    uptime_seconds: number;
+  };
+  error_rates: {
+    db_errors: number;
+    dns_errors: number;
+    discord_errors: number;
+    total_errors: number;
+  };
+  resources: Record<string, any>;
+  timescaledb: {
+    enabled: boolean;
+    hypertable: boolean;
+    chunks: number;
+    version: string;
+    error?: string;
+  };
+  redis_stream: {
+    enabled: boolean;
+    stream_length?: number;
+    group_lag?: number | string;
+    pending_messages?: number;
+    error?: string;
+  };
+  events_processed: number;
+  anomalies_detected: number;
+  db_connected: boolean;
+  anomaly_rate: number;
+  last_event: string;
+  throughput_timeline: Array<{ timestamp: string; events: number; anomalies: number }>;
+
+}
