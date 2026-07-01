@@ -26,6 +26,7 @@ import IpProfilesTab from './components/tabs/IpProfilesTab';
 import FlowClassificationTab from './components/tabs/FlowClassificationTab';
 import IncidentTimelineTab from './components/tabs/IncidentTimelineTab';
 import BehavioralBaselinesTab from './components/tabs/BehavioralBaselinesTab';
+import ThreatCanvasTab from './components/tabs/ThreatCanvasTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Dashboard',
@@ -43,6 +44,7 @@ const TAB_TITLE: Record<string, string> = {
   'flow-classification': 'Flow ML',
   'incident-timeline': 'Incidents',
   'behavioral-baselines': 'Baselines',
+  'threat-canvas': 'Threat Canvas',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -66,6 +68,7 @@ function TabContent({ tab }: { tab: string }) {
           case 'flow-classification': return <FlowClassificationTab />;
           case 'incident-timeline': return <IncidentTimelineTab />;
           case 'behavioral-baselines': return <BehavioralBaselinesTab />;
+          case 'threat-canvas': return <ThreatCanvasTab />;
           case '': return <OverviewTab />;
           default: return <OverviewTab />;
         }

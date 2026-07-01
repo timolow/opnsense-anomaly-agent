@@ -17,6 +17,7 @@ import type {
   WhatChangedData,
   DnsQueryData,
   BehaviorOverviewData, BehaviorProfile, IncidentStats,
+  ThreatCanvasData,
 } from '@/types';
 
 const BASE = '/api';
@@ -719,6 +720,32 @@ export const api = {
       return json<{ incidents: any[]; count: number; active: number }>('/incidents');
     } catch {
       return { incidents: [], count: 0, active: 0 };
+    }
+  },
+
+  // Threat Canvas (P5-T1)
+  threatCanvas: async (): Promise<ThreatCanvasData> => {
+    try {
+      return json<ThreatCanvasData>('/threat-canvas');
+    } catch {
+      return {
+        incidents: [],
+        actions: [],
+        summary: {
+          total_active: 0,
+          total_incidents: 0,
+          critical_count: 0,
+          high_count: 0,
+          medium_count: 0,
+          low_count: 0,
+          unique_ips: 0,
+          unique_sources: 0,
+          top_source: 'firewall',
+          top_source_count: 0,
+        },
+        data_source_status: 'no_data',
+        empty_message: 'No threat data available yet',
+      };
     }
   },
 };
