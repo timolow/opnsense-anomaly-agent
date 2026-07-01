@@ -32,6 +32,7 @@ interface IncidentDetail {
   first_seen: string;
   last_seen: string;
   description: string;
+  narrative: string;
   metadata: Record<string, any>;
   is_active: boolean;
   auto_resolved: boolean;
@@ -49,6 +50,7 @@ interface Incident {
   first_seen: string;
   last_seen: string;
   description: string;
+  narrative: string;
   metadata: Record<string, any>;
   is_active: boolean;
   auto_resolved: boolean;
@@ -160,6 +162,14 @@ function IncidentDetailModal({ incident, onClose }: { incident: IncidentDetail; 
             </span>
             <p className="text-sm text-cyber-text mt-2">{incident.description}</p>
           </div>
+
+          {/* Narrative */}
+          {incident.narrative && (
+            <div className="rounded-lg border border-cyber-accent/20 bg-cyber-accent/5 p-4">
+              <h4 className="text-xs text-cyber-accent uppercase tracking-wider mb-2 font-semibold">Incident Narrative</h4>
+              <p className="text-sm text-cyber-text/90 leading-relaxed">{incident.narrative}</p>
+            </div>
+          )}
 
           {/* Attack Chain */}
           <div>

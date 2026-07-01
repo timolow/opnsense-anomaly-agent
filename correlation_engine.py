@@ -318,6 +318,151 @@ class Incident:
 
         return f"Multi-source signals from {len(self.sources)} sources: {', '.join(sorted(self.signal_types))}"
 
+    def get_narrative(self, dns_resolver=None) -> str:
+        """Generate a human-readable narrative of this incident.
+
+        Produces prose like:
+            'IP 203.0.113.42 (scanner.example.com) is actively scanning:
+             blocked ports on firewall (15 ports in 2 min), generating 404s
+             on nginx, matching IDS signature ET SCAN Nmap SYN.'
+
+        Args:
+            dns_resolver: Optional ReverseDNSResolver instance for IP-to-hostname
+                resolution. If not provided, narrative uses IP only.
+
+        Returns:
+            Human-readable narrative string.
+        """
+        # ── Header: IP + optional hostname ──
+        hostname = None
+        if dns_resolver is not None:
+            try:
+                hostname = dns_resolver.lookup(self.ip)
+            except Exception:
+                pass
+
+        if hostname:
+            ip_header = f"IP {self.ip} ({hostname})"
+        else:
+            ip_header = f"IP {self.ip}"
+
+        # ── Time window ──
+        duration = self.last_seen - self.first_seen
+        if duration < 60:
+            time_str = f"{int(duration)}s"
+        elif duration < 3600:
+            time_str = f"{int(duration // 60)} min"
+        else:
+            hrs = int(duration // 3600)
+            mins = int((duration % 3600) // 60)
+            time_str = f"{hrs}h {mins}m" if mins else f"{hrs}h"
+
+        # ── Geo context ──
+        countries = sorted(self.metadata.get("countries", set()))
+        geo_str = ""
+        if countries:
+            country_str = ", ".join(countries)
+            geo_str = f" from {country_str}"
+
+        # ── Attack chain ──
+        chain = self.get_attack_chain()
+
+        # ── Activity description ──
+        activity_clauses = self._build_activity_clauses()
+
+        # ── Severity / escalation prefix ──
+        severity_upper = self.severity.upper()
+
+        if self.is_escalated and self.is_full_chain():
+            chain_label = " \u2192 ".join(chain)
+            opening = f"{ip_header} has progressed through a full attack chain ({chain_label}){geo_str} over {time_str} [{severity_upper}]"
+        elif len(chain) >= 2:
+            chain_label = " \u2192 ".join(chain)
+            opening = f"{ip_header} is advancing through an attack chain ({chain_label}){geo_str} over {time_str} [{severity_upper}]"
+        elif "attack" in self.phases:
+            opening = f"{ip_header} is actively attacking{geo_str} over {time_str} [{severity_upper}]"
+        elif "recon" in self.phases:
+            opening = f"{ip_header} is scanning and probing{geo_str} over {time_str} [{severity_upper}]"
+        else:
+            opening = f"{ip_header} triggered {self.signal_count} signal(s) from {len(self.sources)} source(s){geo_str} over {time_str} [{severity_upper}]"
+
+        # ── Combine ──
+        if activity_clauses:
+            narrative = f"{opening}: {', '.join(activity_clauses)}."
+        else:
+            narrative = f"{opening}."
+
+        return narrative
+
+    def _build_activity_clauses(self) -> List[str]:
+        """Build per-source activity clauses for the narrative."""
+        clauses = []
+
+        # ── Firewall activity ──
+        fw_signals = [st for st in self.signal_types if st.startswith("firewall_") or st in ("repeated_blocks", "multi_port_blocks")]
+        if fw_signals:
+            ports = sorted(self.metadata.get("dst_ports", set()))
+            port_count = len(ports)
+            if "firewall_port_scan" in self.signal_types or "multi_port_blocks" in self.signal_types:
+                clauses.append(f"scanning {port_count} port(s) on the firewall")
+            elif "firewall_block" in self.signal_types or "repeated_blocks" in self.signal_types:
+                clauses.append(f"blocked by the firewall ({', '.join(fw_signals)})")
+
+        # ── Nginx / web activity ──
+        nginx_signals = [st for st in self.signal_types if st.startswith("http_") or st.startswith("path_") or st == "invalid_ua"]
+        if nginx_signals:
+            nginx_desc_parts = []
+            if "path_traversal" in self.signal_types:
+                nginx_desc_parts.append("path traversal attempts")
+            if "http_404_spike" in self.signal_types or "http_scan" in self.signal_types:
+                nginx_desc_parts.append("web path scanning")
+            if "http_brute_force" in self.signal_types:
+                nginx_desc_parts.append("brute force login attempts")
+            if "http_ddos" in self.signal_types:
+                nginx_desc_parts.append("HTTP flood")
+            if "invalid_ua" in self.signal_types:
+                nginx_desc_parts.append("suspicious user agents")
+            nginx_desc = nginx_desc_parts or nginx_signals
+            clauses.append(f"targeting web services ({', '.join(nginx_desc)})")
+
+        # ── IDS signatures ──
+        ids_signals = [st for st in self.signal_types if st.startswith("ids_")]
+        if ids_signals:
+            clauses.append(f"matching IDS signatures ({', '.join(ids_signals)})")
+
+        # ── Port scanning ──
+        scan_signals = [st for st in self.signal_types if st in ("port_scan", "vertical_scan", "horizontal_scan", "xmas_scan", "null_scan", "fin_scan", "icmp_scan")]
+        if scan_signals:
+            scan_types_str = ", ".join(scan_signals)
+            ports = len(self.metadata.get("dst_ports", set()))
+            clauses.append(f"performing port scans ({scan_types_str}, {ports} ports targeted)")
+
+        # ── Anomaly / behavioral ──
+        anomaly_signals = [st for st in self.signal_types if st.startswith("anomaly_") or st.startswith("deviation_") or st == "volume_spike"]
+        if anomaly_signals:
+            clauses.append(f"exhibiting anomalous behavior ({', '.join(anomaly_signals[:3])})")
+
+        # ── Geo / country signals ──
+        geo_signals = [st for st in self.signal_types if st.startswith("geo_") or st in ("new_country", "high_risk_country")]
+        if geo_signals:
+            countries = sorted(self.metadata.get("countries", set()))
+            if countries:
+                clauses.append(f"originating from {', '.join(countries)}")
+
+        # ── Service / infrastructure ──
+        infra_signals = [st for st in self.signal_types if st in ("service_down", "wan_flap")]
+        if infra_signals:
+            clauses.append(f"infrastructure impact ({', '.join(infra_signals)})")
+
+        # ── Signal count summary (if no specific clauses built) ──
+        if not clauses:
+            signal_summary = ", ".join(sorted(self.signal_types)[:5])
+            if len(self.signal_types) > 5:
+                signal_summary += f" (+{len(self.signal_types) - 5} more)"
+            clauses.append(signal_summary)
+
+        return clauses
+
     def get_affected_targets(self) -> List[str]:
         """Get list of affected target IPs/ports."""
         targets = []
@@ -376,7 +521,7 @@ class Incident:
         # Re-escalate after merge
         self._escalate_by_pattern()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, dns_resolver=None) -> Dict[str, Any]:
         """Convert to dict for API response."""
         return {
             "ip": self.ip,
@@ -391,6 +536,7 @@ class Incident:
             "is_escalated": self.is_escalated,
             "auto_resolved": self.auto_resolved,
             "description": self.get_description(),
+            "narrative": self.get_narrative(dns_resolver),
             "affected_targets": self.get_affected_targets(),
             "related_ips": sorted(self.get_related_ips()),
             "chain_timeline": self.chain_timeline,
@@ -822,30 +968,32 @@ class CorrelationEngine:
 
             if row:
                 # Update existing
+                narrative_text = incident.get_narrative()
                 cur.execute(
                     """UPDATE incidents SET
                        severity = %s, signal_count = %s, signal_types = %s::text[],
                        sources = %s::text[], phases = %s::text[],
                        last_seen = to_timestamp(%s),
-                       description = %s, metadata = %s::jsonb
+                       description = %s, narrative = %s, metadata = %s::jsonb
                        WHERE id = %s""",
                     (incident.severity, incident.signal_count,
                      signal_types, sources, phases,
                      incident.last_seen, incident.get_description(),
-                     metadata, row[0]),
+                     narrative_text, metadata, row[0]),
                 )
             else:
                 # Insert new
+                narrative_text = incident.get_narrative()
                 cur.execute(
                     """INSERT INTO incidents
                        (ip, severity, signal_count, signal_types, sources,
-                        phases, first_seen, last_seen, description, metadata)
+                        phases, first_seen, last_seen, description, narrative, metadata)
                        VALUES (%s, %s, %s, %s::text[], %s::text[], %s::text[],
-                               to_timestamp(%s), to_timestamp(%s), %s, %s::jsonb)""",
+                               to_timestamp(%s), to_timestamp(%s), %s, %s, %s::jsonb)""",
                     (incident.ip, incident.severity, incident.signal_count,
                      signal_types, sources, phases,
                      incident.first_seen, incident.last_seen,
-                     incident.get_description(), metadata),
+                     incident.get_description(), narrative_text, metadata),
                 )
             cur.close()
 
