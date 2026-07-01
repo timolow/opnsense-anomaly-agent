@@ -862,6 +862,9 @@ class CorrelationEngine:
         # ── Cross-IP merge: check for overlapping dst_ips with new incident ──
         self._try_merge_with_related(new_incident)
 
+        # ── SSE: publish new_incident event ──
+        self._publish_sse_new_incident(new_incident)
+
         # Emit incident_created signal
         if self.signal_bus:
             self.signal_bus.emit(
@@ -999,3 +1002,21 @@ class CorrelationEngine:
 
         except Exception as e:
             logger.warning("Failed to persist incident for %s: %s", incident.ip, e)
+
+    def _publish_sse_new_incident(self, incident: Incident):
+        """Publish a new_incident SSE event. Lazy-imports server to avoid circular dep."""
+        try:
+            from server import publish_new_incident as _publish
+            _publish({
+                "incident_id": f"inc_{incident.ip}",
+                "ip": incident.ip,
+                "severity": incident.severity,
+                "signal_count": incident.signal_count,
+                "signal_types": sorted(incident.signal_types),
+                "sources": sorted(incident.sources),
+                "phases": incident.get_attack_chain(),
+            })
+        except ImportError:
+            logger.debug("server module not available for SSE publish")
+        except Exception as e:
+            logger.debug("Failed to publish new_incident SSE: %s", e)

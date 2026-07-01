@@ -228,5 +228,147 @@ class TestSseBackgroundCleaner(unittest.TestCase):
         self.assertIn('_incident_sse_clients', source)
 
 
+class TestTypedIncidentPublish(unittest.TestCase):
+    """Test publish_new_incident and publish_incident_resolved helpers."""
+
+    def setUp(self):
+        """Clear the incident SSE queue before each test."""
+        from server import _incident_sse_queue
+        while not _incident_sse_queue.empty():
+            try:
+                _incident_sse_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def test_publish_new_incident_type(self):
+        """publish_new_incident emits event_type=new_incident."""
+        from server import publish_new_incident, _incident_sse_queue
+        publish_new_incident({
+            "incident_id": "inc_test",
+            "ip": "10.0.0.5",
+            "severity": "critical",
+        })
+        event = _incident_sse_queue.get_nowait()
+        self.assertEqual(event["type"], "new_incident")
+        self.assertEqual(event["incident_id"], "inc_test")
+        self.assertEqual(event["ip"], "10.0.0.5")
+        self.assertEqual(event["severity"], "critical")
+
+    def test_publish_incident_resolved_type(self):
+        """publish_incident_resolved emits event_type=incident_resolved."""
+        from server import publish_incident_resolved, _incident_sse_queue
+        publish_incident_resolved({
+            "incident_id": "inc_res",
+            "ip": "10.0.0.6",
+            "status": "resolved",
+        })
+        event = _incident_sse_queue.get_nowait()
+        self.assertEqual(event["type"], "incident_resolved")
+        self.assertEqual(event["incident_id"], "inc_res")
+        self.assertEqual(event["status"], "resolved")
+
+    def test_publish_incident_updated_default(self):
+        """publish_incident_sse defaults to incident_updated."""
+        from server import publish_incident_sse, _incident_sse_queue
+        publish_incident_sse({
+            "incident_id": "inc_upd",
+            "ip": "10.0.0.7",
+            "action": "escalate",
+        })
+        event = _incident_sse_queue.get_nowait()
+        self.assertEqual(event["type"], "incident_updated")
+        self.assertEqual(event["action"], "escalate")
+
+    def test_all_three_types_have_timestamp(self):
+        """All three publish helpers include an ISO timestamp."""
+        from server import publish_new_incident, publish_incident_sse, publish_incident_resolved, _incident_sse_queue
+        import re
+        iso_pattern = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')
+
+        publish_new_incident({"incident_id": "a", "ip": "1.1.1.1"})
+        e1 = _incident_sse_queue.get_nowait()
+        self.assertTrue(iso_pattern.search(e1["timestamp"]), f"new_incident missing valid timestamp: {e1['timestamp']}")
+
+        publish_incident_sse({"incident_id": "b", "ip": "2.2.2.2"})
+        e2 = _incident_sse_queue.get_nowait()
+        self.assertTrue(iso_pattern.search(e2["timestamp"]), f"incident_updated missing valid timestamp: {e2['timestamp']}")
+
+        publish_incident_resolved({"incident_id": "c", "ip": "3.3.3.3"})
+        e3 = _incident_sse_queue.get_nowait()
+        self.assertTrue(iso_pattern.search(e3["timestamp"]), f"incident_resolved missing valid timestamp: {e3['timestamp']}")
+
+
+class TestMultiplexedSSEHandler(unittest.TestCase):
+    """Test that _handle_sse drains both anomaly and incident queues."""
+
+    def test_sse_handler_source_references_both_queues(self):
+        """_handle_sse source code references both _sse_queue and _incident_sse_queue."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DashboardHandler._handle_sse)
+        self.assertIn('_sse_queue', source, "_handle_sse must drain anomaly queue")
+        self.assertIn('_incident_sse_queue', source, "_handle_sse must drain incident queue")
+
+    def test_sse_handler_registers_both_client_lists(self):
+        """_handle_sse registers client on both _sse_clients and _incident_sse_clients."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DashboardHandler._handle_sse)
+        self.assertIn('_sse_clients', source)
+        self.assertIn('_incident_sse_clients', source)
+
+    def test_sse_handler_connected_event_has_streams(self):
+        """Connected event includes 'streams' key with both anomaly and incident."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DashboardHandler._handle_sse)
+        self.assertIn('streams', source)
+        self.assertIn('anomaly', source)
+        self.assertIn('incident', source)
+
+
+class TestCorrelationEngineSSE(unittest.TestCase):
+    """Test that CorrelationEngine publishes SSE on new incident."""
+
+    def test_publish_sse_new_incident_exists(self):
+        """CorrelationEngine has _publish_sse_new_incident method."""
+        from correlation_engine import CorrelationEngine
+        self.assertTrue(hasattr(CorrelationEngine, '_publish_sse_new_incident'))
+
+    def test_publish_sse_new_incident_calls_server(self):
+        """_publish_sse_new_incident calls server.publish_new_incident."""
+        from correlation_engine import CorrelationEngine
+        import inspect
+        source = inspect.getsource(CorrelationEngine._publish_sse_new_incident)
+        self.assertIn('publish_new_incident', source)
+
+    def test_group_signals_calls_publish(self):
+        """_group_signals calls _publish_sse_new_incident after creating a new incident."""
+        from correlation_engine import CorrelationEngine
+        import inspect
+        source = inspect.getsource(CorrelationEngine._group_signals)
+        self.assertIn('_publish_sse_new_incident', source)
+
+
+class TestIncidentActionEventMapping(unittest.TestCase):
+    """Test that api_incident_actions maps actions to correct SSE event types."""
+
+    def test_resolve_emits_incident_resolved(self):
+        """Resolve action triggers publish_incident_resolved (checked via source)."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DashboardHandler.do_POST)
+        # The do_POST handler for /api/incident-actions should check for resolve/resolved
+        self.assertIn('publish_incident_resolved', source)
+        self.assertIn('incident_resolved', source)
+
+    def test_other_actions_emit_updated(self):
+        """Non-resolve actions trigger publish_incident_sse with incident_updated."""
+        import server
+        import inspect
+        source = inspect.getsource(server.DashboardHandler.do_POST)
+        self.assertIn('incident_updated', source)
+
+
 if __name__ == '__main__':
     unittest.main()
