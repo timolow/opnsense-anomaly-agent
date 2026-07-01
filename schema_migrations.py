@@ -1011,7 +1011,7 @@ MIGRATIONS: List[Dict[str, Any]] = [
         "sql": [
             """
             CREATE TABLE IF NOT EXISTS normalized_events (
-                id BIGSERIAL PRIMARY KEY,
+                id BIGSERIAL,
                 -- Core temporal + network fields (present in ALL sources)
                 timestamp TIMESTAMPTZ NOT NULL,
                 src_ip TEXT,
