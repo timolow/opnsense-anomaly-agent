@@ -88,6 +88,7 @@ export default function HeatmapTab() {
         matrix: sliced.map(i => matrix[i]),
         labels: data.labels,
         rowLabels: sliced.map(i => data.rowLabels[i]),
+        hostnames: sliced.map(i => data.hostnames?.[i] ?? null),
       };
     }
 
@@ -96,6 +97,7 @@ export default function HeatmapTab() {
       matrix: matrix.slice(0, n),
       labels: data.labels,
       rowLabels: data.rowLabels.slice(0, n),
+      hostnames: (data.hostnames ?? []).slice(0, n),
     };
   }, [data, topN, behaviorFilter, ipBehaviorMap]);
 
@@ -233,11 +235,10 @@ export default function HeatmapTab() {
     ctx.fillText(maxVal.toLocaleString(), w, h + 14);
   }, [filteredData]);
 
-    const hostnames = data.hostnames_y || [];
-    const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!filteredData || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const { matrix, labels, rowLabels } = filteredData;
+    const { matrix, labels, rowLabels, hostnames } = filteredData;
     const numCols = labels.length;
     const numRows = rowLabels.length;
     const cellW = rect.width / numCols;
@@ -250,7 +251,7 @@ export default function HeatmapTab() {
         y: e.clientY,
         val: matrix[row][col],
         ip: rowLabels[row],
-        hostname: hostnames[row] || null,
+        hostname: hostnames?.[row] || null,
         hour: labels[col],
       });
     } else {

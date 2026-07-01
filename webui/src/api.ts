@@ -251,7 +251,7 @@ export const api = {
       matrix: rows as any[],
       labels: labels_x as string[],
       rowLabels: labels_y as string[],
-      hostnames_y: (raw.hostnames_y as (string | null)[]) || undefined,
+      hostnames: (raw.hostnames_y as (string | null)[]) || undefined,
       ip: labels_y as string[],
       hour: labels_x as number[],
       value: rows.map((r: any) => typeof r === 'number' ? r : (r.value || 0)),

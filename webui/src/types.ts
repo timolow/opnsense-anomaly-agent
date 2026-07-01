@@ -42,7 +42,7 @@ export interface HeatmapData {
   matrix: number[][];
   labels: string[];
   rowLabels: string[];
-  hostnames_y?: (string | null)[];
+  hostnames?: (string | null)[];
   ip: string[];
   hour: number[];
   value: number[];
