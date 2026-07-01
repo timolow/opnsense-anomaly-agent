@@ -480,6 +480,7 @@ const SKELETON_MAP: Record<string, React.ComponentType> = {
   'flow-classification': FlowClassificationSkeleton,
   'incident-timeline': IncidentTimelineSkeleton,
   'behavioral-baselines': BehavioralBaselinesSkeleton,
+  'threat-canvas': ThreatCanvasSkeleton,
 };
 
 /**
@@ -489,6 +490,31 @@ const SKELETON_MAP: Record<string, React.ComponentType> = {
 export function TabSkeleton({ tab }: { tab: string }) {
   const Skeleton = SKELETON_MAP[tab] || GenericSkeleton;
   return <Skeleton />;
+}
+
+// ── Threat Canvas Skeleton ──
+// Layout: header → stat cards → filter bar → 3-panel (incidents | timeline | detail) → actions
+export function ThreatCanvasSkeleton() {
+  return (
+    <div className="space-y-4">
+      <TabHeaderSkeleton />
+      <StatCardSkeleton count={6} cols="lg:grid-cols-6" />
+      <FilterBarSkeleton />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left: incidents list */}
+        <div className="bg-cyber-panel border border-cyber-border rounded-lg">
+          <SkeletonBlock className="h-10 mx-3 mt-3 mb-2" />
+          {[1,2,3,4,5].map(i => <SkeletonBlock key={i} className="h-16 mx-3 mb-2" />)}
+        </div>
+        {/* Center: IP timeline */}
+        <SkeletonBlock style={{ height: 400 }} />
+        {/* Right: detail panel */}
+        <SkeletonBlock style={{ height: 400 }} />
+      </div>
+      {/* Recommended actions */}
+      <ChartSkeleton height={120} />
+    </div>
+  );
 }
 
 // ── Generic fallback skeleton ──
