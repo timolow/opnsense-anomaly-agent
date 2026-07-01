@@ -720,12 +720,27 @@ def query_heatmap():
     if not conn: return _fallback_heatmap()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Two-pass: first get top 50 IPs by total count, then hourly breakdown for those only.
+        # This avoids sorting 330K+ rows and reduces data volume dramatically.
         cur.execute("""
-            SELECT src_ip, MAX(src_hostname) as src_hostname,
-                   EXTRACT(HOUR FROM timestamp) as hour, COUNT(*) as event_count
-            FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
-            GROUP BY src_ip, EXTRACT(HOUR FROM timestamp)
-            ORDER BY src_ip, hour
+            WITH top_ips AS (
+                SELECT src_ip
+                FROM normalized_events
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY src_ip
+                ORDER BY COUNT(*) DESC
+                LIMIT 50
+            ),
+            hourly AS (
+                SELECT ne.src_ip, ne.src_hostname,
+                       EXTRACT(HOUR FROM ne.timestamp) as hour, COUNT(*) as event_count
+                FROM normalized_events ne
+                JOIN top_ips ti ON ti.src_ip = ne.src_ip
+                WHERE ne.timestamp > NOW() - INTERVAL '24 hours'
+                GROUP BY ne.src_ip, ne.src_hostname, EXTRACT(HOUR FROM ne.timestamp)
+                ORDER BY ne.src_ip, hour
+            )
+            SELECT * FROM hourly
         """)
         rows = cur.fetchall()
         ip_hour = defaultdict(lambda: defaultdict(int))
