@@ -1384,6 +1384,24 @@ def _safe_create_hypertable(
             logger.info("%s is already a hypertable — skipping", table)
             return False
 
+        # Drop FK constraints that reference this table's PK (must go before PK drop)
+        cur.execute("""
+            SELECT tc.table_name, tc.constraint_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_schema = current_schema()
+                AND ccu.table_name = %s
+        """, (table,))
+        fk_rows = cur.fetchall()
+        for (fk_table, fk_name) in fk_rows:
+            logger.info("Dropping FK %s on %s (references %s PK)", fk_name, fk_table, table)
+            cur.execute(f"ALTER TABLE {fk_table} DROP CONSTRAINT {fk_name}")
+
         # Find and drop the existing primary key constraint
         cur.execute("""
             SELECT conname
@@ -1411,6 +1429,17 @@ def _safe_create_hypertable(
                 chunk_time_interval => INTERVAL %s
             )
         """, (table, time_column, chunk_interval))
+
+        # Re-create FK constraints that were dropped before PK change
+        # Note: FK column types must match the new composite PK structure
+        # For now, FKs referencing the old single-column PK are dropped permanently
+        # since TimescaleDB composite PKs don't support standard FK references
+        for (fk_table, fk_name) in fk_rows:
+            logger.info(
+                "Note: FK %s on %s was dropped to allow PK change. "
+                "Re-create manually if referential integrity is required.",
+                fk_name, fk_table,
+            )
 
         conn.commit()
         logger.info("Hypertable conversion complete for %s", table)
