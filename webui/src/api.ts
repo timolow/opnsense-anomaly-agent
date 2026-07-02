@@ -7,7 +7,7 @@ import type {
   StatsData, HeatmapData, IpFlowData, EventsData, MutesData,
   GeoData, GeoHotspot, HealthData, AlertsData, OpnsenseStatusData,
   ZenArmorData, IdsData, ServiceStatusData, RulesClassifiedData,
-  Event, Stats, RuleFeedback,
+  RuleFeedback,
   TrafficFlow, ProtocolDistribution, ActionDistribution,
   Timeline, BlockedIps, TopPorts, RuleHeatmap,
   DirectionDistribution, RuleActionBreakdown,
@@ -66,85 +66,6 @@ async function json<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── /Elasticsearch ──
-const _BASE = import.meta.env.VITE__HOST
-  ? `${import.meta.env.VITE__HOST}/_search`
-  : null;
-
-export async function fetchEvents(params: {
-  query?: Record<string, unknown>;
-  size?: number;
-  sort?: string;
-  hours?: number;
-}): Promise<{ hits: Event[]; total: number }> {
-  if (!_BASE) {
-    return { hits: [], total: 0 };
-  }
-
-  const query = params.query || {
-    bool: {
-      should: [
-        { term: { 'event.action': 'pass' } },
-        { term: { 'event.action': 'block' } },
-      ],
-      minimum_should_match: 1,
-    },
-  };
-
-  if (params.hours) {
-    (query as any).bool.filter = [{
-      range: {
-        '@timestamp': {
-          gte: `now-${params.hours}h`,
-          lte: 'now',
-        },
-      },
-    }];
-  }
-
-  const body = {
-    query,
-    size: params.size || 100,
-    sort: [{ '@timestamp': { order: 'desc' } }],
-    _source: true,
-  };
-
-  const res = await fetch(_BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) return { hits: [], total: 0 };
-  const data = await res.json();
-  const hits = data.hits.hits.map((h: { _source: Event }) => h._source);
-  return { hits, total: data.hits.total.value };
-}
-
-export async function fetchStats(): Promise<Stats | null> {
-  if (!_BASE) return null;
-  try {
-    const res = await fetch(`${import.meta.env.VITE__HOST}/-firewall-*/_stats`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const idxStats = data.indices;
-    let totalDocs = 0;
-    let totalStore = 0;
-    for (const name in idxStats) {
-      totalDocs += idxStats[name].total?.docs?.count || 0;
-      totalStore += idxStats[name].store?.size_in_bytes || 0;
-    }
-    return {
-      indices: Object.keys(idxStats),
-      total_documents: totalDocs,
-      total_store_bytes: totalStore,
-      total_store_mb: Math.round(totalStore / (1024 * 1024) * 100) / 100,
-    };
-  } catch {
-    return null;
-  }
-}
-
 import type { SparklineData } from '@/types';
 
 // ── Dashboard API ──
@@ -172,64 +93,7 @@ function mapStats(raw: unknown): StatsData {
   };
 }
 
-// ── Behavioral Overview derivation (fallback when /behavior-overview missing) ──
-async function deriveBehaviorOverview(): Promise<BehaviorOverviewData> {
-  const { StatsData: _sd, ...rest } = await fetch(BASE + '/stats').then(r => r.json());
-  const data: any = rest.data || rest;
-  const counters = data.counters || {};
-  const byType = data.by_type || {};
-  const sparklines = data.sparklines || {};
-  const resourcesData = await fetch(BASE + '/resources').then(r => r.json()).catch(() => null);
-
-  // Derive behavior timeline from sparklines
-  const sparkData = sparklines.volume || [];
-  const behaviorTimeline = sparkData.map((val: number, i: number) => ({
-    time: new Date(Date.now() - (sparkData.length - i) * 3600000).toISOString(),
-    benign: Math.floor(val * 0.7),
-    suspicious: Math.floor(val * 0.2),
-    hostile: Math.floor(val * 0.1),
-    avg_score: 20 + Math.random() * 30,
-  }));
-
-  return {
-    active_ips_24h: data.unique_ips || counters['unique_ips'] || 0,
-    ip_breakdown: {
-      total: data.unique_ips || counters['unique_ips'] || 0,
-      benign: Math.floor((data.unique_ips || counters['unique_ips'] || 0) * 0.7),
-      suspicious: Math.floor((data.unique_ips || counters['unique_ips'] || 0) * 0.2),
-      hostile: Math.floor((data.unique_ips || counters['unique_ips'] || 0) * 0.1),
-    },
-    incident_stats: {
-      active: counters['anomalies_detected'] || 0,
-      escalated_24h: 0,
-      resolved_24h: 0,
-      by_severity: {
-        critical: data.threat_critical || 0,
-        high: data.threat_high || 0,
-        medium: data.threat_medium || 0,
-        low: data.threat_low || 0,
-      },
-      by_type: Object.entries(byType).map(([type, count]: [string, number]) => ({ type, count })),
-      recent: [],
-    },
-    top_threat_ips: [],
-    pipeline_health: {
-      events_per_second: resourcesData?.pipeline_events_per_second || 0,
-      last_event: resourcesData?.last_event || new Date().toISOString(),
-      db_connected: resourcesData?.db_connected !== false,
-      anomaly_rate: (counters['anomalies_detected'] || 0) / Math.max(counters['events_processed'] || 1, 1),
-    },
-    behavior_timeline: behaviorTimeline,
-    behavioral_changes: {
-      new_suspicious_ips: [],
-      escalated_incidents: [],
-      resolved_threats: [],
-    },
-    traffic_flows: [],
-    data_source_status: 'no_data',
-    empty_message: 'ML behavioral analysis not yet available — derived from current stats',
-  };
-}
+// ── Behavioral Overview (calls /behavior-overview) ──
 
 export const api = {
   // Stats & Overview
@@ -674,17 +538,30 @@ export const api = {
 
   // ── Behavioral Overview (ML-PIVOT) ──
   behaviorOverview: async (): Promise<BehaviorOverviewData> => {
-    try {
-      return json<BehaviorOverviewData>('/behavior-overview');
-    } catch {
-      // Fallback: derive from existing endpoints
-      return deriveBehaviorOverview();
-    }
+    return json<BehaviorOverviewData>('/behavior-overview');
   },
   behaviorProfiles: async (): Promise<BehaviorProfile[]> => {
     try {
-      const res = await json<{ profiles: BehaviorProfile[]; count: number }>('/behavior-profiles');
-      return res?.profiles || [];
+      const res = await json<{ profiles: Array<Record<string, unknown>>; count: number }>('/behavior-profiles');
+      return (res?.profiles || []).map(p => {
+        const pd = p.profile_data || {};
+        const actions = (pd as any).actions || {};
+        return {
+          ip: String(p.ip || ''),
+          hostname: p.hostname || null,
+          behavior_score: Number(p.behavior_score || 0),
+          threat_level: (p.threat_level as BehaviorLevel) || 'info',
+          event_count_24h: Number(p.total_events || 0),
+          unique_ports: Number(pd?.unique_dst_ports || Object.keys((pd as any).dst_ports || {}).length),
+          blocked_count: Number(actions.block || actions.BLOCK || pd?.blocked_events || 0),
+          passed_count: Number(actions.pass || actions.PASS || 0),
+          first_seen: p.first_seen ? new Date(p.first_seen).toISOString() : '',
+          last_seen: p.last_seen ? new Date(p.last_seen).toISOString() : '',
+          classification: p.threat_level === 'critical' || p.threat_level === 'high' ? 'ABUSIVE'
+            : p.threat_level === 'medium' ? 'SUSPICIOUS' : 'GOOD',
+          top_rules: [],
+        };
+      });
     } catch {
       return [];
     }

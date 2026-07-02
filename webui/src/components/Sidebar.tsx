@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════
 // Sidebar Component - Cyberpunk navigation
-// 10 focused tabs (consolidated from 19)
+// 11 focused tabs (consolidated from 19)
 // ═══════════════════════════════════════════════════
 
 import { useState, useEffect } from 'react';
@@ -34,8 +34,6 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'traffic', label: 'Traffic', icon: <Network size={14} /> },
       { id: 'behavioral-overview', label: 'Behavioral', icon: <Activity size={14} /> },
       { id: 'ip-profiles', label: 'IP Profiles', icon: <Network size={14} /> },
-      { id: 'flow-classification', label: 'Flow ML', icon: <Activity size={14} /> },
-      { id: 'incident-timeline', label: 'Incidents', icon: <ShieldAlert size={14} /> },
       { id: 'threat-canvas', label: 'Threat Canvas', icon: <ShieldAlert size={14} /> },
       { id: 'behavioral-baselines', label: 'Baselines', icon: <TrendingUp size={14} /> },
     ],
@@ -55,14 +53,6 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    name: 'Network',
-    icon: <Network size={16} />,
-    items: [
-      { id: 'network', label: 'Network', icon: <Network size={14} /> },
-      { id: 'wan-flap', label: 'WAN Flap', icon: <Radio size={14} /> },
-    ],
-  },
-  {
     name: 'Logs',
     icon: <FileText size={16} />,
     items: [
@@ -70,17 +60,9 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    name: 'Services',
-    icon: <Cpu size={16} />,
-    items: [
-      { id: 'services', label: 'Services', icon: <Cpu size={14} /> },
-    ],
-  },
-  {
     name: 'Config',
     icon: <Settings size={16} />,
     items: [
-      { id: 'observability', label: 'Observability', icon: <Activity size={14} /> },
       { id: 'settings', label: 'Settings', icon: <Settings size={14} /> },
     ],
   },
@@ -89,25 +71,26 @@ const NAV_GROUPS: NavGroup[] = [
 export default function Sidebar() {
   const { activeTab, setActiveTab, sidebarCollapsed, toggleSidebar, expandedGroups, toggleGroup, mobileMenuOpen, setMobileMenuOpen } = useStore();
 
-  // Map tab IDs to their group names — the active tab's group is always expanded
+  // Map tab IDs to their group names
   const tabToGroup: Record<string, string> = {
     overview: 'Overview',
     heatmap: 'Analytics',
     traffic: 'Analytics',
     'behavioral-overview': 'Analytics',
     'ip-profiles': 'Analytics',
-    'flow-classification': 'Analytics',
-    'incident-timeline': 'Analytics',
     'threat-canvas': 'Analytics',
     'behavioral-baselines': 'Analytics',
     alerts: 'Threats',
     'rules-classified': 'Rules',
-    network: 'Network',
-    'wan-flap': 'Network',
     logs: 'Logs',
-    services: 'Services',
-    observability: 'Config',
     settings: 'Config',
+    // Redirect removed tabs to their new homes
+    'flow-classification': 'Analytics',
+    'incident-timeline': 'Analytics',
+    network: 'Logs',
+    'wan-flap': 'Logs',
+    services: 'Logs',
+    observability: 'Config',
   };
 
   // Display-expanded groups: persisted state + always expand active tab's group

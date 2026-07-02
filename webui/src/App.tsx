@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════
 // Main App - React entry with sidebar and content area
-// 10 focused tabs (consolidated from 19)
+// 11 focused tabs (consolidated from 19)
 // ═══════════════════════════════════════════════════
 
 import { Suspense, useEffect } from 'react';
@@ -10,24 +10,18 @@ import TimeRangePicker from './components/TimeRangePicker';
 import { Menu } from 'lucide-react';
 import { TabShell } from './components/TabShell';
 
-// ── Tab Components (10 focused views) ──
+// ── Tab Components (11 focused views) ──
 import OverviewTab from './components/tabs/OverviewTab';
 import HeatmapTab from './components/tabs/HeatmapTab';
 import TrafficTab from './components/tabs/TrafficTab';
 import AlertsTab from './components/tabs/AlertsTab';
 import RulesClassifiedTab from './components/tabs/RulesClassifiedTab';
-import NetworkTab from './components/tabs/NetworkTab';
-import WanFlapTab from './components/tabs/WanFlapTab';
 import LogsTab from './components/tabs/LogsTab';
-import ServicesViewTab from './components/tabs/ServicesViewTab';
 import SettingsTab from './components/tabs/SettingsTab';
 import BehavioralOverviewTab from './components/tabs/BehavioralOverviewTab';
 import IpProfilesTab from './components/tabs/IpProfilesTab';
-import FlowClassificationTab from './components/tabs/FlowClassificationTab';
-import IncidentTimelineTab from './components/tabs/IncidentTimelineTab';
-import BehavioralBaselinesTab from './components/tabs/BehavioralBaselinesTab';
 import ThreatCanvasTab from './components/tabs/ThreatCanvasTab';
-import ObservabilityTab from './components/tabs/ObservabilityTab';
+import BehavioralBaselinesTab from './components/tabs/BehavioralBaselinesTab';
 
 const TAB_TITLE: Record<string, string> = {
   overview: 'Dashboard',
@@ -35,18 +29,12 @@ const TAB_TITLE: Record<string, string> = {
   traffic: 'Traffic',
   alerts: 'Alerts',
   'rules-classified': 'Rules ML',
-  network: 'Network',
-  'wan-flap': 'WAN Flap',
   logs: 'Logs',
-  services: 'Services',
   settings: 'Settings',
   'behavioral-overview': 'Behavioral Overview',
   'ip-profiles': 'IP Profiles',
-  'flow-classification': 'Flow ML',
-  'incident-timeline': 'Incidents',
-  'behavioral-baselines': 'Baselines',
   'threat-canvas': 'Threat Canvas',
-  'observability': 'Observability',
+  'behavioral-baselines': 'Baselines',
 };
 
 function TabContent({ tab }: { tab: string }) {
@@ -60,18 +48,15 @@ function TabContent({ tab }: { tab: string }) {
           case 'traffic': return <TrafficTab />;
           case 'alerts': return <AlertsTab />;
           case 'rules-classified': return <RulesClassifiedTab />;
-          case 'network': return <NetworkTab />;
-          case 'wan-flap': return <WanFlapTab />;
           case 'logs': return <LogsTab />;
-          case 'services': return <ServicesViewTab />;
           case 'settings': return <SettingsTab />;
           case 'behavioral-overview': return <BehavioralOverviewTab />;
           case 'ip-profiles': return <IpProfilesTab />;
-          case 'flow-classification': return <FlowClassificationTab />;
-          case 'incident-timeline': return <IncidentTimelineTab />;
-          case 'behavioral-baselines': return <BehavioralBaselinesTab />;
           case 'threat-canvas': return <ThreatCanvasTab />;
-          case 'observability': return <ObservabilityTab />;
+          case 'behavioral-baselines': return <BehavioralBaselinesTab />;
+          // Redirect removed tabs
+          case 'flow-classification': case 'incident-timeline': return <ThreatCanvasTab />;
+          case 'network': case 'wan-flap': case 'services': case 'observability': return <LogsTab />;
           case '': return <OverviewTab />;
           default: return <OverviewTab />;
         }
