@@ -531,8 +531,25 @@ def query_stats():
             cur.execute("SELECT reltuples::bigint FROM pg_class WHERE relname = 'normalized_events'")
             est = cur.fetchone()[0]
             db_event_count = max(int(est), counters.get("events_processed", 0))
+            # 24h counts
+            cur.execute("""
+                SELECT COUNT(*) FILTER (WHERE action = 'BLOCK'), COUNT(*) FILTER (WHERE action = 'PASS')
+                FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours'
+            """)
+            r = cur.fetchone()
+            blocked_24h = r[0]
+            passed_24h = r[1]
+            # Hourly sparklines
+            for series, col in [("events", "1"), ("blocked", "CASE WHEN action='BLOCK' THEN 1 END"), ("passed", "CASE WHEN action='PASS' THEN 1 END")]:
+                cur.execute(f"SELECT DATE_TRUNC('hour', timestamp)::text, COUNT({col}) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours' GROUP BY 1 ORDER BY 1")
+                for row in cur.fetchall():
+                    sparklines[series].append({"time": row[0], "count": row[1]})
+            cur.execute("SELECT DATE_TRUNC('hour', timestamp)::text, COUNT(DISTINCT src_ip) FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours' GROUP BY 1 ORDER BY 1")
+            for row in cur.fetchall():
+                sparklines["unique_ips"].append({"time": row[0], "count": row[1]})
             cur.close()
         except Exception:
+            import traceback; traceback.print_exc()
             db_event_count = counters.get("events_processed", 0)
 
     # Use in-memory state for top sources (fast, no DB)
